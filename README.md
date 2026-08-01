@@ -88,10 +88,12 @@ Generate an allowlisted Markdown summary instead:
 python3 adaptive-delegation/scripts/model_routing_audit.py issue-report
 ```
 
-The formatter reads the local ledger without modifying it, prints no task or
-session identifiers, paths, prompts, evidence text, commands, or URLs, and does
-not publish anything. Inspect the output before pasting it into the repository's
-routing-report issue template. See [`REPORTING.md`](REPORTING.md).
+The formatter reads the local ledger without modifying it and never creates a
+missing ledger or parent directory. Its Markdown report body prints no task or
+session identifiers, paths, prompts, evidence text, commands, or URLs; rejected
+input receives a generic error that does not echo ledger content or paths. It
+does not publish anything. Inspect the output before pasting it into the
+repository's routing-report issue template. See [`REPORTING.md`](REPORTING.md).
 
 ## Repository map
 

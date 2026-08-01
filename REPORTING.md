@@ -39,6 +39,10 @@ Do not paste workspace paths, evidence paths, URLs containing credentials or
 query/fragment data, or proprietary payloads. If any such value appears in a
 report, discard it and report the formatter defect without sharing the value.
 
+`issue-report` is read-only: it never creates a missing ledger or parent
+directory. Validation failures use a generic local error and do not echo ledger
+values, identifiers, or filesystem paths.
+
 ## What maintainers can use
 
 The report intentionally contains no task identifier or deterministic digest of

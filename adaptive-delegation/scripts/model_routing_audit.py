@@ -878,7 +878,10 @@ def _ensure_private_directory(path: Path) -> None:
 
 
 def _open_ledger(path: Path, writable: bool) -> int:
-    _ensure_private_directory(path.parent)
+    if writable:
+        _ensure_private_directory(path.parent)
+    else:
+        _check_existing_directory(path.parent, "ledger directory")
     flags = (os.O_RDWR if writable else os.O_RDONLY) | getattr(os, "O_NOFOLLOW", 0)
     if writable:
         flags |= os.O_APPEND | os.O_CREAT
@@ -1087,8 +1090,13 @@ def _check_sequence(events: list[dict[str, Any]]) -> tuple[list[tuple[dict[str, 
                 _check_current_transition(prior_history[-1], event, policy)
                 if current_policy_event:
                     trailing_stage_attempts = 0
-                    for prior_pre, _prior_post in reversed(prior_history):
-                        if prior_pre.get("route_id") != event["route_id"]:
+                    current_history = [
+                        pair
+                        for pair in prior_history
+                        if all(_is_current_policy_event(item, policy) for item in pair)
+                    ]
+                    for prior_pre, _prior_post in reversed(current_history):
+                        if prior_pre["route_id"] != event["route_id"]:
                             break
                         trailing_stage_attempts += 1
                     same_retries = max(0, trailing_stage_attempts - 1)
@@ -1834,7 +1842,12 @@ def main(argv: list[str] | None = None) -> int:
         else:
             raise AuditError(f"unsupported command: {args.command}")
     except (AuditError, OSError, ValueError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        message = (
+            "issue report could not be generated from the local ledger"
+            if args.command == "issue-report"
+            else str(exc)
+        )
+        print(f"error: {message}", file=sys.stderr)
         return 2
     return 0
 

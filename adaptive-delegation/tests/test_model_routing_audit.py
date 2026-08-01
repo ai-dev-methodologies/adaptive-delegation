@@ -907,6 +907,61 @@ class ModelRoutingAuditTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_interleaved_legacy_pair_does_not_reset_current_retry_budget(self):
+        task_id = "interleaved-retry-budget"
+
+        def retryable_post(dispatch_id, index):
+            event = self.current_post(dispatch_id, task_id, index=index)
+            event.update(
+                accepted=False,
+                failure_class="tool_or_environment",
+                oracle_verdict="fail",
+                integration_accepted=False,
+                post_result_detail={
+                    "observable_result_signals": ["tool_failure"],
+                    "evidence_references": [f"receipt-{dispatch_id}"],
+                    "route_assessment": "inconclusive",
+                    "next_action": "environment_retry",
+                },
+            )
+            return event
+
+        first = self.current_pre("interleaved-current-1", task_id)
+        self.record("interleaved-current-1-pre.json", first)
+        self.record(
+            "interleaved-current-1-post.json",
+            retryable_post("interleaved-current-1", 1),
+        )
+
+        legacy_pre = self.pre("interleaved-legacy", task_id)
+        self.record("interleaved-legacy-pre.json", legacy_pre)
+        second = self.current_pre("interleaved-current-2", task_id, index=2)
+        second["rationale"]["prior_failure_class"] = "tool_or_environment"
+        self.record("interleaved-current-2-pre.json", second)
+        self.record(
+            "interleaved-legacy-post.json",
+            self.post("interleaved-legacy", task_id),
+        )
+        self.record(
+            "interleaved-current-2-post.json",
+            retryable_post("interleaved-current-2", 2),
+        )
+
+        third = self.current_pre("interleaved-current-3", task_id, index=3)
+        third["rationale"]["prior_failure_class"] = "tool_or_environment"
+        result = self.run_cli(
+            "record",
+            "--event-file",
+            self.write_event("interleaved-current-3-pre.json", third),
+            "--ledger",
+            self.ledger,
+            "--review-dir",
+            self.review_dir,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("same route retry budget is exhausted", result.stderr)
+
     def test_same_route_retry_budget_resets_after_route_transition(self):
         task_id = "per-stage-retry-task"
 
@@ -1161,7 +1216,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
         before = self.ledger.read_bytes()
         incomplete = self.run_cli("issue-report", "--ledger", self.ledger)
         self.assertNotEqual(incomplete.returncode, 0)
-        self.assertIn("no completed task", incomplete.stderr)
+        self.assertIn("could not be generated", incomplete.stderr)
         self.assertEqual(before, self.ledger.read_bytes())
 
         sensitive_ledger = self.root / "sensitive" / "attempts.jsonl"
@@ -1199,6 +1254,14 @@ class ModelRoutingAuditTests(unittest.TestCase):
         rejected = self.run_cli("issue-report", "--ledger", duplicate_ledger)
         self.assertNotEqual(rejected.returncode, 0)
         self.assertNotIn(private_attempt, rejected.stderr)
+
+        missing_parent = self.root / "PRIVATE_LEDGER_PATH_MARKER" / "nested"
+        missing_ledger = missing_parent / "attempts.jsonl"
+        self.assertFalse(missing_parent.exists())
+        rejected = self.run_cli("issue-report", "--ledger", missing_ledger)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertNotIn("PRIVATE_LEDGER_PATH_MARKER", rejected.stderr)
+        self.assertFalse(missing_parent.exists())
 
 
 if __name__ == "__main__":
