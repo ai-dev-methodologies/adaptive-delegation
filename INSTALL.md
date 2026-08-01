@@ -17,7 +17,9 @@ The installer uses `$CODEX_HOME` when set and otherwise uses `~/.codex`.
 ## First installation
 
 Clone the repository, validate the package without writing, run the portable
-tests, and install:
+tests, then run the mandatory isolated promotion gate. Only after that gate
+passes and the user explicitly approves may this workflow write to the user
+Codex home:
 
 ```sh
 git clone https://github.com/ai-dev-methodologies/adaptive-delegation.git
@@ -25,6 +27,9 @@ cd adaptive-delegation
 python3 scripts/install.py --dry-run
 python3 -m unittest -v tests.test_install tests.test_dispatcher_gate
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
+python3 -m unittest -v tests.test_isolated_dogfood
+python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
+# With explicit user approval only:
 python3 scripts/install.py
 ```
 
@@ -36,6 +41,27 @@ python3 scripts/install.py --codex-home /path/to/.codex
 
 The dry run validates package completeness, Python source, and every
 policy-to-role model/effort binding without changing the target.
+
+## Mandatory isolated promotion gate
+
+`scripts/verify_isolated_dogfood.py` is a Python 3.11 stdlib-only gate for
+current POSIX macOS/Linux environments. It creates a temporary candidate
+`CODEX_HOME` and a separate temporary Git fixture, installs only into that
+candidate, and starts a fresh `codex exec --ephemeral --json` session with an
+objective lock limiting the task to `target.py`.
+
+The auth source is read only: the gate exposes it to the temporary candidate
+through a temporary symlink and never copies or changes credentials. The gate
+checks that only `target.py` changes, `.strip().lower()` is present, the exact
+targeted unittest passes, an adjacent intentional failure remains unchanged
+and failing, the fresh command exits zero, its output does not reference the
+user Codex home, and before/after fingerprints of managed user files/state
+match. Artifacts are removed by default; use `--keep-artifacts` only to retain
+a failed fixture for investigation.
+
+This is a same-user release-quality guard, not a security boundary. It never
+installs globally or creates a global canary. User-level installation is a
+separate, later approval step.
 
 ## Installed targets
 
@@ -68,6 +94,8 @@ cd adaptive-delegation
 python3 scripts/install.py --dry-run
 python3 -m unittest -v tests.test_install tests.test_dispatcher_gate
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
+python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
+# With explicit user approval only:
 python3 scripts/install.py
 ```
 
@@ -81,6 +109,8 @@ git pull --ff-only
 python3 scripts/install.py --dry-run
 python3 -m unittest -v tests.test_install tests.test_dispatcher_gate
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
+python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
+# With explicit user approval only:
 python3 scripts/install.py
 ```
 
@@ -96,6 +126,8 @@ git checkout <known-good-commit-or-tag>
 python3 scripts/install.py --dry-run
 python3 -m unittest -v tests.test_install tests.test_dispatcher_gate
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
+python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
+# With explicit user approval only:
 python3 scripts/install.py
 ```
 

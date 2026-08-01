@@ -55,6 +55,10 @@ Python 3.11 or newer is required.
 git clone https://github.com/ai-dev-methodologies/adaptive-delegation.git
 cd adaptive-delegation
 python3 scripts/install.py --dry-run
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_isolated_dogfood
+python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
+python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
+# With explicit user approval only:
 python3 scripts/install.py
 ```
 
@@ -66,6 +70,9 @@ installed package.
 
 The installer never copies authentication, audit logs, continuity records, or
 rollout/session data. Those remain local to the machine that created them.
+The isolated promotion gate is mandatory before user-level installation; it is
+a same-user quality guard, not a security boundary. See [`INSTALL.md`](INSTALL.md)
+for its temporary-auth-symlink workflow and the explicit later approval step.
 For the complete install, update, rollback, and second-PC workflow, see
 [`INSTALL.md`](INSTALL.md).
 

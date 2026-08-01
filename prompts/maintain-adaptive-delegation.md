@@ -46,6 +46,14 @@ session, or runtime state files are copied. Perform a secret/privacy scan of
 the diff and generated artifacts; redact or remove credentials, cookies,
 tokens, and machine-local paths before handoff.
 
+Before any user-level install or update, the isolated promotion gate is
+mandatory: run `python3 -m unittest -v tests.test_isolated_dogfood` and then
+`python3 scripts/verify_isolated_dogfood.py --auth-source <read-only-auth-file>`.
+It uses a temporary candidate home and auth symlink; it is a same-user quality
+guard, not a security boundary. Do not proceed from unit tests directly to a
+user-level install: request and receive explicit later user approval after the
+gate passes.
+
 Do not run Git/GitHub mutations (`git init`, `git add`, commits, remote setup,
 repository creation, or pushes) unless the user separately requests that
 scope. Finish with changed files, exact commands and results, link/test
