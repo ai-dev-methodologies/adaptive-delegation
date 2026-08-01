@@ -234,7 +234,14 @@ weak or the risk/contract is too high for a leaf to verify, keep authority at
 the main and use `gpt-5.6-sol/ultra`; never assign `ultra` to a leaf.
 
 Model or reasoning escalation changes capability, not authority or scope. Each
-route, including main takeover, inherits the packet's objective lock and stops
-when its acceptance evidence is proved. A weak oracle is a reason to retain
-authority at the main, not permission to redesign adjacent systems. Broader
-work requires a new, explicitly authorized task or packet.
+route, including main takeover, inherits the packet's canonical Objective Lock
+and stops when its acceptance evidence is proved. The lock digest excludes
+route, model, effort, attempt index, and resource budget, so capability changes
+cannot silently redefine the task. Linked `0.3.0` audit transitions require the
+same digest; legacy `0.1.0` and `0.2.0` records remain readable but cannot be
+mixed into a `0.3.0` task history.
+
+A weak oracle is a reason to retain authority at the main and repair the
+oracle or report an inconclusive result, not permission to redesign adjacent
+systems or accept solely because the model is stronger. Broader work requires
+a new, explicitly authorized task or packet.

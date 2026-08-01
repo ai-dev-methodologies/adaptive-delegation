@@ -27,8 +27,9 @@ except ImportError:  # pragma: no cover - package script is normally co-located
 
 
 SCHEMA_VERSION = "0.1.0"
-LINKED_SCHEMA_VERSION = "0.2.0"
-SUPPORTED_SCHEMA_VERSIONS = (SCHEMA_VERSION, LINKED_SCHEMA_VERSION)
+LINKED_SCHEMA_VERSION = "0.3.0"
+LEGACY_LINKED_SCHEMA_VERSION = "0.2.0"
+SUPPORTED_SCHEMA_VERSIONS = (SCHEMA_VERSION, LEGACY_LINKED_SCHEMA_VERSION, LINKED_SCHEMA_VERSION)
 _configured_codex_home = os.environ.get("CODEX_HOME")
 CODEX_HOME = (
     Path(_configured_codex_home).expanduser()
@@ -219,6 +220,7 @@ LINKED_COMMON_FIELDS = {
     "surface_identity",
     "surface_schema_fingerprint",
 }
+OBJECTIVE_LOCK_FIELDS = {"objective_lock_version", "objective_lock_digest"}
 LINKED_POST_FIELDS = {
     "execution_completed",
     "oracle_verdict",
@@ -522,7 +524,7 @@ def validate_event(event: Any) -> dict[str, Any]:
         raise AuditError("unsupported schema_version")
     _check_enum(event["event_type"], "event_type", ("pre_decision", "post_result"))
     type_fields = PRE_FIELDS if event["event_type"] == "pre_decision" else POST_FIELDS | LINKED_POST_FIELDS
-    allowed = COMMON_FIELDS | LINKED_COMMON_FIELDS | type_fields
+    allowed = COMMON_FIELDS | LINKED_COMMON_FIELDS | OBJECTIVE_LOCK_FIELDS | type_fields
     unknown = set(event) - allowed
     if unknown:
         raise AuditError(f"{event['event_type']} contains unknown fields")
@@ -543,9 +545,9 @@ def validate_event(event: Any) -> dict[str, Any]:
         raise AuditError("attempt_index must be between 1 and 1000000")
     _check_timestamp(event["timestamp"])
 
-    linked = event["schema_version"] == LINKED_SCHEMA_VERSION
+    linked = event["schema_version"] in {LEGACY_LINKED_SCHEMA_VERSION, LINKED_SCHEMA_VERSION}
     linked_fields_present = (LINKED_COMMON_FIELDS | LINKED_POST_FIELDS) & set(event)
-    if not linked and linked_fields_present:
+    if not linked and (linked_fields_present or OBJECTIVE_LOCK_FIELDS & set(event)):
         raise AuditError("legacy 0.1.0 events must not contain linked fields")
     if linked:
         missing_linked = LINKED_COMMON_FIELDS - set(event)
@@ -574,6 +576,14 @@ def validate_event(event: Any) -> dict[str, Any]:
             raise AuditError("workspace must be a bounded safe string")
         _check_enum(event["main_model"], "main_model", MAIN_MODELS)
         _check_enum(event["main_reasoning_effort"], "main_reasoning_effort", MAIN_EFFORTS)
+        if event["schema_version"] == LINKED_SCHEMA_VERSION:
+            missing_lock = OBJECTIVE_LOCK_FIELDS - set(event)
+            if missing_lock:
+                raise AuditError("missing objective lock field(s): " + ", ".join(sorted(missing_lock)))
+            if event["objective_lock_version"] != "1":
+                raise AuditError("unsupported objective_lock_version")
+            if not isinstance(event["objective_lock_digest"], str) or not _SHA256_RE.fullmatch(event["objective_lock_digest"]):
+                raise AuditError("objective_lock_digest must be a lowercase SHA-256 fingerprint")
 
     for key, value in event.items():
         if isinstance(value, str) and len(value) > MAX_STRING_LENGTH:
@@ -945,7 +955,7 @@ def _parse_ledger(fd: int) -> list[dict[str, Any]]:
 
 
 def _pair_key(event: dict[str, Any]) -> tuple[str, str]:
-    if event["schema_version"] == LINKED_SCHEMA_VERSION:
+    if event["schema_version"] in {LEGACY_LINKED_SCHEMA_VERSION, LINKED_SCHEMA_VERSION}:
         return ("linked", event["dispatch_id"])
     return ("legacy", event["attempt_id"])
 
@@ -955,12 +965,14 @@ def _check_pair(pre: dict[str, Any], post: dict[str, Any]) -> None:
         raise AuditError("paired events disagree")
     if pre["schema_version"] != post["schema_version"]:
         raise AuditError("paired events use different schema versions")
-    if pre["schema_version"] == LINKED_SCHEMA_VERSION:
+    if pre["schema_version"] in {LEGACY_LINKED_SCHEMA_VERSION, LINKED_SCHEMA_VERSION}:
         mismatch = [field for field in LINKED_COMMON_FIELDS if pre[field] != post[field]]
         if mismatch:
             raise AuditError(
                 f"linked events disagree: {', '.join(sorted(mismatch))}"
             )
+        if pre["schema_version"] == LINKED_SCHEMA_VERSION and pre["objective_lock_digest"] != post["objective_lock_digest"]:
+            raise AuditError("linked events disagree: objective_lock_digest")
     if _parse_timestamp(post["timestamp"]) < _parse_timestamp(pre["timestamp"]):
         raise AuditError("post_result timestamp precedes pre_decision")
     policy = _load_policy()
@@ -985,6 +997,11 @@ def _check_current_transition(previous: tuple[dict[str, Any], dict[str, Any]], c
         return
     if current["attempt_index"] != prior_pre["attempt_index"] + 1:
         raise AuditError("current-policy attempt_index must be contiguous")
+    if current["schema_version"] == LINKED_SCHEMA_VERSION:
+        if prior_pre["schema_version"] != LINKED_SCHEMA_VERSION:
+            raise AuditError("cannot continue a 0.2.0 chain into a 0.3.0 chain")
+        if current["objective_lock_digest"] != prior_pre["objective_lock_digest"]:
+            raise AuditError("objective lock digest must be preserved across attempt transitions")
     rationale = current["rationale"]
     prior_rationale = prior_pre["rationale"]
     if rationale.get("selection_basis") not in {"failure_action", "human_override"}:
@@ -1079,6 +1096,17 @@ def _check_sequence(events: list[dict[str, Any]]) -> tuple[list[tuple[dict[str, 
                         "first current-policy attempt must declare zero prior attempts"
                     )
             if prior_history:
+                previous_schema = prior_history[-1][0]["schema_version"]
+                current_schema = event["schema_version"]
+                linked_versions = {LEGACY_LINKED_SCHEMA_VERSION, LINKED_SCHEMA_VERSION}
+                if (
+                    previous_schema in linked_versions
+                    and current_schema in linked_versions
+                    and previous_schema != current_schema
+                ):
+                    raise AuditError(
+                        "linked task history cannot change schema version"
+                    )
                 previous_current = all(
                     _is_current_policy_event(item, policy)
                     for item in prior_history[-1]
@@ -1340,7 +1368,7 @@ def _make_review(
     linked_pairs = [
         (pre, post)
         for pre, post in pairs
-        if pre["schema_version"] == LINKED_SCHEMA_VERSION
+        if pre["schema_version"] in {LEGACY_LINKED_SCHEMA_VERSION, LINKED_SCHEMA_VERSION}
     ]
     linked_groups: dict[tuple[str, ...], dict[str, Any]] = {}
     for pre, post in linked_pairs:
@@ -1374,14 +1402,15 @@ def _make_review(
 
     current_pairs = [
         pair for pair in all_pairs
-        if pair[0].get("schema_version") == LINKED_SCHEMA_VERSION
+        if pair[0].get("schema_version") in {LEGACY_LINKED_SCHEMA_VERSION, LINKED_SCHEMA_VERSION}
         and pair[0].get("policy_id") == current_policy_id
         and pair[0].get("policy_fingerprint") == current_fingerprint
     ]
     # A legacy-only ledger remains readable and reviewable, but once current
     # records exist it is deliberately excluded from current recommendations.
     pairs = current_pairs or [
-        pair for pair in all_pairs if pair[0].get("schema_version") != LINKED_SCHEMA_VERSION
+        pair for pair in all_pairs
+        if pair[0].get("schema_version") not in {LEGACY_LINKED_SCHEMA_VERSION, LINKED_SCHEMA_VERSION}
     ]
 
     task_pairs: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
@@ -1749,7 +1778,7 @@ def _issue_report_markdown(
         f"- Effort escalations: `{last_post['effort_escalations']}`",
         f"- Model escalations: `{last_post['model_escalations']}`",
     ]
-    if last_post["schema_version"] == LINKED_SCHEMA_VERSION:
+    if last_post["schema_version"] in {LEGACY_LINKED_SCHEMA_VERSION, LINKED_SCHEMA_VERSION}:
         lines.extend(
             [
                 f"- Execution completed: `{'yes' if last_post['execution_completed'] else 'no'}`",

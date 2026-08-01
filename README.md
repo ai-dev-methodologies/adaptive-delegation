@@ -24,16 +24,17 @@ consistency checks; they are not an operating-system security boundary.
 - Leaf `ultra` and silent model substitution are forbidden.
 - Model or reasoning escalation changes capability, not authority or scope.
   The policy requires every child and main-authority takeover to stay inside
-  the original objective, write scope, acceptance evidence, and stop
-  condition. Once the declared evidence is satisfied, work stops; adjacent
-  redesign or polishing requires a new explicit task.
+  the canonical Objective Lock: objective, read/write/network authority,
+  intended behavior, acceptance evidence, verification ceiling, known side
+  effects, and stop condition. Once the declared evidence is satisfied, work
+  stops; adjacent redesign or polishing requires a new explicit task.
 - Retry and escalation decisions must follow observable failure evidence and a
   contiguous route history. Arbitrary jumps and exhausted same-route retries
   fail closed.
-- A successful child process is not local integration finalization. Optional local
-  integration receipts are evaluated only after execution and must match the
-  exact packet, child terminal result, output/worktree digests, route, and a
-  distinct Checker session.
+- A successful child process is not local integration finalization. Optional
+  local integration receipts are evaluated only after execution and must
+  match the exact packet, Objective Lock digest, child terminal result,
+  output/worktree digests, route, and a distinct-session Checker.
 - Successful execution remains pending in the append-only routing ledger until
   integration finalization succeeds; receipt or pre-gate finalization failures
   remain pending, and only a successful finalization records acceptance.
@@ -44,6 +45,13 @@ Local receipts provide same-user integrity and consistency checks; they are
 not signatures, remote attestation, proof of semantic correctness, or a
 security boundary against a malicious process running as the same
 operating-system user.
+
+The dispatcher renders one route-independent canonical Objective Lock JSON for
+both Native and typed execution. Its version and SHA-256 consistency digest
+remain identical across retries, effort/model escalation, and main takeover;
+linked audit schema `0.3.0` rejects a changed digest or mixed `0.2.0`/`0.3.0`
+task history. This detects local contract drift on dispatcher-owned paths; it
+does not prove semantic correctness or create a security principal.
 
 ## Activate the skill
 

@@ -146,6 +146,9 @@ class ModelRoutingAuditTests(unittest.TestCase):
         event = cls.linked_pre(dispatch_id, task_id, index=index)
         event.update(
             {
+                "schema_version": "0.3.0",
+                "objective_lock_version": "1",
+                "objective_lock_digest": "c" * 64,
                 "policy_fingerprint": contract.canonical_policy_fingerprint(policy),
                 "model": route["model"],
                 "model_tier": route["model_tier"],
@@ -173,6 +176,9 @@ class ModelRoutingAuditTests(unittest.TestCase):
         event = cls.linked_post(dispatch_id, task_id, index=index)
         event.update(
             {
+                "schema_version": pre["schema_version"],
+                "objective_lock_version": pre["objective_lock_version"],
+                "objective_lock_digest": pre["objective_lock_digest"],
                 "policy_fingerprint": pre["policy_fingerprint"],
                 "final_model": pre["model"],
                 "final_model_tier": pre["model_tier"],
@@ -209,6 +215,124 @@ class ModelRoutingAuditTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
+
+    def test_objective_lock_digest_must_match_linked_pair_and_transition(self):
+        pre = self.current_pre("lock-first", "objective-lock-history")
+        post = self.current_post("lock-first", "objective-lock-history")
+        post["post_result_detail"]["next_action"] = "raise_effort"
+        self.record("lock-first-pre.json", pre)
+        self.record("lock-first-post.json", post)
+
+        retry = self.current_pre(
+            "lock-second", "objective-lock-history", index=2, route_id="luna_xhigh"
+        )
+        retry["planned_effort_escalations"] = 1
+        retry["objective_lock_digest"] = "d" * 64
+        event_file = self.write_event("lock-second-pre.json", retry)
+        result = self.run_cli(
+            "record", "--event-file", event_file, "--ledger", self.ledger,
+            "--review-dir", self.review_dir,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("objective lock digest", result.stderr)
+
+        mismatch_post = self.current_post("lock-pair", "objective-lock-pair")
+        mismatch_pre = self.current_pre("lock-pair", "objective-lock-pair")
+        mismatch_post["objective_lock_digest"] = "d" * 64
+        with self.assertRaisesRegex(audit.AuditError, "objective_lock_digest"):
+            audit._check_pair(mismatch_pre, mismatch_post)
+
+    def test_linked_schema_cannot_upgrade_or_downgrade_within_task_history(self):
+        for direction in ("upgrade", "downgrade"):
+            with self.subTest(direction=direction):
+                ledger = self.root / f"{direction}.jsonl"
+                task_id = f"schema-{direction}"
+                if direction == "upgrade":
+                    first = self.linked_pre(f"{direction}-first", task_id)
+                    first_post = self.linked_post(f"{direction}-first", task_id)
+                    second = self.current_pre(
+                        f"{direction}-second", task_id, index=2
+                    )
+                else:
+                    first = self.current_pre(f"{direction}-first", task_id)
+                    first_post = self.current_post(f"{direction}-first", task_id)
+                    second = self.linked_pre(
+                        f"{direction}-second", task_id, index=2
+                    )
+                first_post["accepted"] = False
+                first_post["integration_accepted"] = False
+                first_post["oracle_verdict"] = "fail"
+                first_post["failure_class"] = "reasoning_insufficiency"
+                first_post["post_result_detail"] = {
+                    "observable_result_signals": ["tests_failed"],
+                    "evidence_references": ["schema-transition-evidence"],
+                    "route_assessment": "too-cheap",
+                    "next_action": "raise_effort",
+                }
+                audit.record_event(
+                    first, ledger, self.review_dir, auto_review=False
+                )
+                audit.record_event(
+                    first_post, ledger, self.review_dir, auto_review=False
+                )
+                with self.assertRaisesRegex(
+                    audit.AuditError, "cannot change schema version|current-policy transition"
+                ):
+                    audit.record_event(
+                        second, ledger, self.review_dir, auto_review=False
+                    )
+
+    def test_main_takeover_preserves_objective_lock_digest(self):
+        task_id = "objective-lock-main-takeover"
+        first = self.current_pre(
+            "objective-lock-leaf", task_id, route_id="luna_xhigh"
+        )
+        first["rationale"].update(
+            task_class="bounded_complex_implementation_or_verification",
+            oracle_strength="weak",
+        )
+        first_post = self.current_post("objective-lock-leaf", task_id)
+        first_post.update(
+            final_model=first["model"],
+            final_model_tier=first["model_tier"],
+            final_reasoning_effort=first["reasoning_effort"],
+            final_route_id=first["route_id"],
+            final_role=first["role"],
+            failure_class="weak_oracle",
+            post_result_detail={
+                "observable_result_signals": ["evidence_inconclusive"],
+                "evidence_references": ["objective-lock-takeover-evidence"],
+                "route_assessment": "inconclusive",
+                "next_action": "main_takeover",
+            },
+        )
+        self.record("objective-lock-leaf-pre.json", first)
+        self.record("objective-lock-leaf-post.json", first_post)
+
+        takeover = self.current_pre(
+            "objective-lock-main",
+            task_id,
+            index=2,
+            route_id="main_takeover_sol_ultra",
+        )
+        takeover["planned_model_escalations"] = 1
+        takeover["objective_lock_digest"] = "d" * 64
+        takeover["rationale"].update(
+            task_class="bounded_complex_implementation_or_verification",
+            oracle_strength="weak",
+            prior_failure_class="weak_oracle",
+        )
+        result = self.run_cli(
+            "record",
+            "--event-file",
+            self.write_event("objective-lock-main-pre.json", takeover),
+            "--ledger",
+            self.ledger,
+            "--review-dir",
+            self.review_dir,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("objective lock digest", result.stderr)
 
     def test_event_types_reject_cross_type_fields(self):
         cases = []

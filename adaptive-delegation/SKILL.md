@@ -35,7 +35,7 @@ Start implementation in a bounded leaf. When the evidence-classified ladder is
 exhausted, the main is the final escalator and may take over the unresolved
 slice without widening it. Model or reasoning escalation changes capability,
 never authority or scope. Use Maker/Checker separation when risk warrants it:
-a Maker makes the bounded change and an independent Checker checks it. Every
+a Maker makes the bounded change and a distinct-session Checker checks it. Every
 child is a leaf and reports evidence, conflicts, and its stop condition.
 
 ## Policy source and routing defaults
@@ -125,7 +125,7 @@ it returns at most the
 latest three accepted matching records. Never `tail`, `grep`, or `cat` a
 continuity ledger. Reuse valid decisions and evidence paths unless newer direct evidence invalidates them,
 and do not reload unrelated raw logs. At acceptance or handoff, exactly one
-designated recorder appends the compact record: the independent Checker when
+designated recorder appends the compact record: the distinct-session Checker when
 present, otherwise the sole verified executor. `token_budget` is
 optional/advisory; its absence preserves Native V2 eligibility and never
 triggers external rerouting.
@@ -199,17 +199,18 @@ for a narrower packet. Do not describe Native V2 caps as blanket hard-enforced.
 Completion is not integration. Child execution first records a dispatcher-
 captured terminal event. A separate `--finalize-integration` phase is the only
 path that reads an integration receipt. The receipt must match the exact packet
-digest, route/model/effort, child and rollout, terminal nonce/result/digest,
-captured output digest, declared worktree digest, verification checks, evidence
-artifact, and the package-declared `adaptive-terra-checker-high` session. The
-Checker session must differ from both the child and the declared main session.
-Pre-created, stale, mutable, or mismatched evidence fails closed.
+digest, canonical Objective Lock version/digest, route/model/effort, child and
+rollout, terminal nonce/result/digest, captured output digest, declared
+worktree digest, verification checks, evidence artifact, and the
+package-declared `adaptive-terra-checker-high` session. The Checker session
+must differ from both the child and the declared main session. Pre-created,
+stale, mutable, or mismatched evidence fails closed.
 
 The model-routing ledger appends `pre_decision` before execution. A failed
 execution closes that attempt immediately. A successful child remains pending
 with no `post_result` until integration finalization succeeds, at which point
 the accepted terminal result is appended. A failed receipt stays pending so a
-corrected, independently checked receipt can be submitted without rewriting
+corrected, distinct-session-checked receipt can be submitted without rewriting
 history. A failure before the receipt gate also remains pending for corrected
 finalization.
 
@@ -221,13 +222,21 @@ as cryptographic proof.
 
 ## Objective-bound verification
 
-Every task begins with an **IMPLEMENTATION ENVELOPE**: objective, owned
-mutable surfaces, intended behavior, acceptance evidence, verification
-ceiling, and known side effects. Verify the smallest path proving acceptance.
-These fields form the **OBJECTIVE LOCK** for the current attempt. The lock
-applies equally to Luna and Terra leaves, Checker routes, and a Sol
+Every task begins with an **IMPLEMENTATION ENVELOPE**: objective,
+read/write/network authority, intended behavior, acceptance evidence,
+verification ceiling, known side effects, and stop condition. Verify the
+smallest path proving acceptance. These fields form the **OBJECTIVE LOCK**.
+The dispatcher serializes one route-independent canonical v1 JSON object for
+both Native and typed execution and carries its SHA-256 consistency digest
+through Native admission, terminal/integration records, linked audit schema
+`0.3.0`, retry, escalation, and main takeover. Linked `0.2.0` records remain
+readable but cannot be continued into or from a `0.3.0` task history.
+
+The lock applies equally to Luna and Terra leaves, Checker routes, and a Sol
 main-authority takeover. A stronger model, higher reasoning effort, retry, or
 takeover can finish the unresolved slice but cannot broaden its authority.
+The digest is same-user drift evidence, not a signature or proof that the
+declared acceptance oracle is semantically adequate.
 
 Stop as soon as the required acceptance evidence passes and the stop condition
 applies. Do not continue into unrelated cleanup, refactoring, architectural

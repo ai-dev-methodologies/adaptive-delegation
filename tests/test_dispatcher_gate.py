@@ -96,12 +96,15 @@ class DispatcherGateTests(unittest.TestCase):
             "agent_type": "adaptive-luna-maker-xhigh",
             "model_tier": "spark-tier",
             "reasoning_effort": "xhigh",
+            "read_scope": [str(self.root)],
             "write_scope": [str(self.root)],
+            "intended_behavior": "Run the bounded smoke worker without adjacent changes.",
             "acceptance_evidence": [
                 "The typed child exits successfully.",
                 "The trusted rollout matches the declared model and effort.",
             ],
             "verification_ceiling": "Run the named acceptance evidence only; stop once it passes.",
+            "known_side_effects": [],
             "resource_cap": {
                 "processes": 1,
                 "network": False,
@@ -284,6 +287,8 @@ class DispatcherGateTests(unittest.TestCase):
             "receipt_version": module.RECEIPT_VERSION,
             "dispatch_id": packet["dispatch_id"],
             "packet_digest": module._canonical_digest(packet),
+            "objective_lock_version": module.OBJECTIVE_LOCK_VERSION,
+            "objective_lock_digest": module._objective_lock_digest(packet),
             "rollout_session_id": terminal_value["child"]["session_id"],
             "child_session_id": terminal_value["child"]["session_id"],
             "child_role": terminal_value["actual"],
@@ -553,7 +558,7 @@ class DispatcherGateTests(unittest.TestCase):
         objective = module._typed_objective(packet)
 
         self.assertTrue(objective.startswith(packet["objective"]))
-        self.assertIn("OBJECTIVE_LOCK (binding):", objective)
+        self.assertIn("OBJECTIVE_LOCK (canonical):", objective)
         self.assertIn(
             "Model or reasoning escalation changes capability, not authority or scope.",
             objective,
@@ -570,6 +575,60 @@ class DispatcherGateTests(unittest.TestCase):
         )
         self.assertEqual(contract["stop_condition"], packet["stop_condition"])
         self.assertEqual(contract["verification_ceiling"], packet["verification_ceiling"])
+        lock_text = objective.split("OBJECTIVE_LOCK (canonical):\n", 1)[1].split(
+            "\n\nOBJECTIVE_LOCK (binding):", 1
+        )[0]
+        self.assertEqual(lock_text, module._objective_lock_text(packet))
+
+    def test_objective_lock_digest_is_route_independent_and_authority_sensitive(self) -> None:
+        module = self.load_dispatcher_module()
+        packet = self.packet("objective-lock-digest", "gpt-5.6-sol", "high")
+        digest = module._objective_lock_digest(packet)
+        packet_digest = module._canonical_digest(packet)
+
+        for field, value in (
+            ("dispatch_id", "objective-lock-digest-retry"),
+            ("agent_type", "adaptive-terra-maker-xhigh"),
+            ("model_tier", "standard-tier"),
+            ("reasoning_effort", "high"),
+            ("token_budget", packet["token_budget"] + 1),
+            ("resource_cap", {**packet["resource_cap"], "max_tool_calls": 5}),
+            (
+                "routing_audit",
+                {**packet["routing_audit"], "attempt_index": 2},
+            ),
+        ):
+            changed = json.loads(json.dumps(packet))
+            changed[field] = value
+            self.assertEqual(module._objective_lock_digest(changed), digest)
+            self.assertNotEqual(module._canonical_digest(changed), packet_digest)
+
+        lock_mutations = (
+            ("objective", "Perform a broader task."),
+            ("read_scope", [str(self.root / "other")]),
+            ("write_scope", ["read-only"]),
+            ("network_access", True),
+            ("intended_behavior", "Redesign adjacent behavior."),
+            ("acceptance_evidence", ["An unrelated test passes."]),
+            ("verification_ceiling", "Run every repository test."),
+            ("known_side_effects", ["Modify adjacent files."]),
+            ("stop_condition", "Do not stop at the original condition."),
+        )
+        for field, value in lock_mutations:
+            with self.subTest(lock_field=field):
+                changed = json.loads(json.dumps(packet))
+                changed[field] = value
+                self.assertNotEqual(module._objective_lock_digest(changed), digest)
+
+    def test_packet_requires_explicit_objective_lock_envelope(self) -> None:
+        module = self.load_dispatcher_module()
+        packet = self.packet("objective-lock-envelope", "gpt-5.6-sol", "high")
+
+        for field in ("read_scope", "intended_behavior", "known_side_effects", "network_access"):
+            with self.subTest(field=field):
+                candidate = json.loads(json.dumps(packet))
+                candidate.pop(field)
+                self.assertIsNotNone(module._validate_packet(candidate, self.role))
 
     def test_packet_requires_typed_acceptance_evidence(self) -> None:
         module = self.load_dispatcher_module()
@@ -627,7 +686,7 @@ class DispatcherGateTests(unittest.TestCase):
             "developer_instructions=" + json.dumps(binding.instructions),
             "--",
             session_id,
-            packet["objective"],
+            module._objective_lock_text(packet),
         ]
         with mock.patch.dict(
             os.environ,
@@ -638,7 +697,7 @@ class DispatcherGateTests(unittest.TestCase):
                 [str(self.fake_codex), *expected_tail],
                 binding,
                 session_id,
-                packet["objective"],
+                module._objective_lock_text(packet),
             )
 
         self.assertEqual(canonical, [str(self.fake_codex.resolve()), *expected_tail])
@@ -720,6 +779,9 @@ class DispatcherGateTests(unittest.TestCase):
 
         mutations = {
             "packet": lambda value: value.__setitem__("packet_digest", "0" * 64),
+            "objective lock": lambda value: value.__setitem__(
+                "objective_lock_digest", "0" * 64
+            ),
             "child session": lambda value: value.__setitem__(
                 "child_session_id", str(uuid.uuid4())
             ),
@@ -1284,6 +1346,8 @@ class DispatcherGateTests(unittest.TestCase):
             "receipt_kind": "native_admission",
             "receipt_version": module.RECEIPT_VERSION,
             "dispatch_id": packet["dispatch_id"],
+            "objective_lock_version": module.OBJECTIVE_LOCK_VERSION,
+            "objective_lock_digest": module._objective_lock_digest(packet),
             "surface_identity": "codex-app.collaboration.spawn_agent",
             "original_callable_schema": {
                 "agent_type": "installed-role-enum",
@@ -1322,6 +1386,10 @@ class DispatcherGateTests(unittest.TestCase):
             "invalid_admission_receipt": None,
             "receipt_kind_or_version_invalid": {**base, "receipt_kind": "wrong"},
             "admission_dispatch_id_mismatch": {**base, "dispatch_id": "other"},
+            "admission_objective_lock_mismatch": {
+                **base,
+                "objective_lock_digest": "0" * 64,
+            },
             "trusted_precreation_issuer_missing": {
                 **base,
                 "issuer": {**base["issuer"], "rollout_session_id": "other-session"},
@@ -1344,6 +1412,8 @@ class DispatcherGateTests(unittest.TestCase):
                     envelope,
                     binding,
                     dispatch_id=packet["dispatch_id"],
+                    objective_lock_version=module.OBJECTIVE_LOCK_VERSION,
+                    objective_lock_digest=module._objective_lock_digest(packet),
                 )
                 provenance_value = None if value is None else envelope
                 receipt = module._native_admission_provenance(

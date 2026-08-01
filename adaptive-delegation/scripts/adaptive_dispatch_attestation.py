@@ -59,9 +59,9 @@ MAX_CHILD_STDOUT_BYTES = 16_000_000
 V2_PACKET_VERSION = 2
 V2_DELTA_SUMMARY_MAX_CHARS = 1_024
 V2_COMMAND_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-RECEIPT_VERSION = 1
+RECEIPT_VERSION = 2
 RECEIPT_MARKER_TYPE = "adaptive_dispatch_receipt"
-TERMINAL_EVENT_VERSION = 1
+TERMINAL_EVENT_VERSION = 2
 INTEGRATION_CHECKER_AGENT_TYPE = "adaptive-terra-checker-high"
 CHILD_ENV_ALLOWLIST = (
     "PATH",
@@ -105,6 +105,8 @@ REQUIRED_PACKET_FIELDS = (
     "model_tier",
     "reasoning_effort",
     "write_scope",
+    "read_scope",
+    "intended_behavior",
     "acceptance_evidence",
     "verification_ceiling",
     "resource_cap",
@@ -133,6 +135,7 @@ ROLLOUT_PATTERN = re.compile(
 )
 SESSION_ID_OUTPUT_PATTERN = re.compile(rf"^session id:\s*(?P<session_id>{UUID_PATTERN})\s*$")
 TERMINAL_NONCE_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+OBJECTIVE_LOCK_VERSION = "1"
 
 
 @dataclass(frozen=True)
@@ -198,6 +201,8 @@ class AdaptiveAuditContext:
     started: float
     contract_module: Any
     audit_module: Any
+    objective_lock_version: str
+    objective_lock_digest: str
 
 
 NATIVE_REQUIRED_SCHEMA_FIELDS = (
@@ -240,6 +245,10 @@ def _canonical_digest(value: Any) -> str:
     ).hexdigest()
 
 
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
 def _role_config_digest(binding: RoleBinding) -> str | None:
     if not _secure_owned_file(binding.role_config, exact_mode=0o600):
         return None
@@ -261,6 +270,8 @@ def _native_structural_admission(
     binding: RoleBinding,
     *,
     dispatch_id: str,
+    objective_lock_version: str | None = None,
+    objective_lock_digest: str | None = None,
 ) -> dict[str, Any]:
     """Reject structurally impossible Native V2 calls before child creation.
 
@@ -285,9 +296,17 @@ def _native_structural_admission(
         "selected_fallback": fallback,
         "fallback_scope_fingerprint": None,
         "status": "rejected",
+        "objective_lock_version": objective_lock_version,
+        "objective_lock_digest": objective_lock_digest,
     }
     value, receipt_path = _receipt_value(value)
     if value is None or receipt_path is None:
+        return receipt
+    if objective_lock_version is not None and (
+        value.get("objective_lock_version") != objective_lock_version
+        or value.get("objective_lock_digest") != objective_lock_digest
+    ):
+        receipt["rejection_reason"] = "admission_objective_lock_mismatch"
         return receipt
     surface = value.get("surface_identity")
     schema = value.get("original_callable_schema")
@@ -384,6 +403,12 @@ def _native_admission_provenance(
         return reject("receipt_kind_or_version_invalid")
     if value.get("dispatch_id") != dispatch_id:
         return reject("admission_dispatch_id_mismatch")
+    expected_lock_version = receipt.get("objective_lock_version")
+    if expected_lock_version is not None and (
+        value.get("objective_lock_version") != expected_lock_version
+        or value.get("objective_lock_digest") != receipt.get("objective_lock_digest")
+    ):
+        return reject("admission_objective_lock_mismatch")
     issuer = value.get("issuer")
     if not isinstance(issuer, dict) or issuer.get("rollout_session_id") != session_id:
         return reject("trusted_precreation_issuer_missing")
@@ -459,6 +484,7 @@ def _integration_gate(
         return gate
     terminal = terminal_event.value
     packet_digest = _canonical_digest(packet)
+    objective_lock_digest = _objective_lock_digest(packet)
     triple = _binding_triple(binding)
     child = terminal.get("child")
     terminal_result = terminal.get("terminal_result")
@@ -469,6 +495,8 @@ def _integration_gate(
     if (
         terminal.get("version") != TERMINAL_EVENT_VERSION
         or terminal.get("packet_digest") != packet_digest
+        or terminal.get("objective_lock_version") != OBJECTIVE_LOCK_VERSION
+        or terminal.get("objective_lock_digest") != objective_lock_digest
         or terminal.get("dispatch_id") != dispatch_id
         or terminal.get("selected_launch_path") != selected_launch_path
         or selected_launch_path not in {"protected", *typed_launch_paths}
@@ -520,6 +548,12 @@ def _integration_gate(
         return gate
     if value.get("packet_digest") != packet_digest:
         gate["reason"] = "integration_packet_digest_mismatch"
+        return gate
+    if (
+        value.get("objective_lock_version") != OBJECTIVE_LOCK_VERSION
+        or value.get("objective_lock_digest") != objective_lock_digest
+    ):
+        gate["reason"] = "integration_objective_lock_mismatch"
         return gate
     if (
         value.get("rollout_session_id") != expected_session_id
@@ -788,6 +822,8 @@ def _capture_terminal_event(
         "version": TERMINAL_EVENT_VERSION,
         "dispatch_id": packet["dispatch_id"].strip(),
         "packet_digest": _canonical_digest(packet),
+        "objective_lock_version": OBJECTIVE_LOCK_VERSION,
+        "objective_lock_digest": _objective_lock_digest(packet),
         "selected_launch_path": selected_launch_path,
         "actual": _binding_triple(binding),
         "child": {
@@ -842,6 +878,8 @@ def _load_terminal_event(ledger: Path, packet: dict[str, Any]) -> TerminalEvent 
                     or V2_COMMAND_DIGEST_PATTERN.fullmatch(digest) is None
                     or _canonical_digest(value) != digest
                     or value.get("packet_digest") != expected_packet_digest
+                    or value.get("objective_lock_version") != OBJECTIVE_LOCK_VERSION
+                    or value.get("objective_lock_digest") != _objective_lock_digest(packet)
                 ):
                     return None
                 latest = TerminalEvent(value, digest)
@@ -1753,6 +1791,20 @@ def _validate_packet(packet: Any, source_path: Path | None) -> str | None:
         return "dispatch_id_invalid"
     if any(not isinstance(packet[field], str) for field in TRIPLE_FIELDS):
         return "routing_triple_invalid"
+    read_scope = packet.get("read_scope")
+    if (
+        not isinstance(read_scope, list)
+        or not read_scope
+        or any(not isinstance(item, str) or not item.strip() for item in read_scope)
+    ):
+        return "read_scope_invalid"
+    known_side_effects = packet.get("known_side_effects")
+    if "known_side_effects" not in packet or not isinstance(known_side_effects, list) or any(
+        not isinstance(item, str) or not item.strip() for item in known_side_effects
+    ):
+        return "known_side_effects_invalid"
+    if "network_access" not in packet or not isinstance(packet["network_access"], bool):
+        return "network_access_invalid"
     if not isinstance(packet["verification_ceiling"], str) or not packet[
         "verification_ceiling"
     ].strip():
@@ -1922,6 +1974,8 @@ def _linked_fields(context: AdaptiveAuditContext) -> dict[str, Any]:
         "surface_schema_fingerprint": context.routing[
             "surface_schema_fingerprint"
         ],
+        "objective_lock_version": context.objective_lock_version,
+        "objective_lock_digest": context.objective_lock_digest,
     }
 
 
@@ -2039,6 +2093,8 @@ def _start_adaptive_audit(
         started=time.monotonic(),
         contract_module=contract,
         audit_module=audit,
+        objective_lock_version=OBJECTIVE_LOCK_VERSION,
+        objective_lock_digest=_objective_lock_digest(packet),
     )
     gate_warning: str | None = None
     try:
@@ -2306,6 +2362,8 @@ def _append_attestation(
     # enter this object.
     record = {
         "dispatch_id": packet["dispatch_id"].strip(),
+        "objective_lock_version": OBJECTIVE_LOCK_VERSION,
+        "objective_lock_digest": _objective_lock_digest(packet),
         "timestamp": _timestamp(),
         "configured_role": {
             "agent_type": binding.agent_type,
@@ -2504,6 +2562,8 @@ def _attest_native(
         native_admission,
         binding,
         dispatch_id=packet["dispatch_id"].strip(),
+        objective_lock_version=OBJECTIVE_LOCK_VERSION,
+        objective_lock_digest=_objective_lock_digest(packet),
     )
     if admission["status"] != "structurally_eligible":
         _append_attestation(
@@ -2555,7 +2615,7 @@ def _attest_native(
         return Outcome("mismatch")
 
     protected_argv = _canonical_resume_binding(
-        argv, binding, expected_session_id, packet["objective"]
+        argv, binding, expected_session_id, _objective_lock_text(packet)
     )
     if protected_argv is None:
         _append_attestation(
@@ -3119,6 +3179,7 @@ def _budget_configs(packet: dict[str, Any]) -> tuple[str, str]:
 
 
 def _typed_objective(packet: dict[str, Any]) -> str:
+    objective_lock = _objective_lock(packet)
     contract = {
         "agent_type": packet["agent_type"],
         "model_tier": packet["model_tier"],
@@ -3145,6 +3206,8 @@ def _typed_objective(packet: dict[str, Any]) -> str:
             contract[field] = packet[field]
     return (
         packet["objective"].rstrip()
+        + "\n\nOBJECTIVE_LOCK (canonical):\n"
+        + _canonical_json(objective_lock)
         + "\n\nOBJECTIVE_LOCK (binding):\n"
         + "- Work only inside the stated objective and write_scope.\n"
         + "- Model or reasoning escalation changes capability, not authority or scope.\n"
@@ -3154,6 +3217,30 @@ def _typed_objective(packet: dict[str, Any]) -> str:
         + "\n\nADAPTIVE_DISPATCH_CONTRACT (binding):\n"
         + json.dumps(contract, sort_keys=True, separators=(",", ":"))
     )
+
+
+def _objective_lock(packet: dict[str, Any]) -> dict[str, Any]:
+    """Canonical, route-independent task authority and completion boundary."""
+    return {
+        "objective_lock_version": OBJECTIVE_LOCK_VERSION,
+        "objective": packet["objective"].rstrip(),
+        "read_scope": packet.get("read_scope", []),
+        "write_scope": packet["write_scope"],
+        "network_access": packet.get("network_access", False),
+        "intended_behavior": packet.get("intended_behavior"),
+        "acceptance_evidence": packet["acceptance_evidence"],
+        "verification_ceiling": packet["verification_ceiling"],
+        "known_side_effects": packet.get("known_side_effects", []),
+        "stop_condition": packet["stop_condition"],
+    }
+
+
+def _objective_lock_text(packet: dict[str, Any]) -> str:
+    return _canonical_json(_objective_lock(packet))
+
+
+def _objective_lock_digest(packet: dict[str, Any]) -> str:
+    return _canonical_digest(_objective_lock(packet))
 
 
 def _typed_exec_tail(
