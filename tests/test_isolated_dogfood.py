@@ -97,6 +97,18 @@ class IsolatedDogfoodTests(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("user Codex home", result.diagnostic)
 
+    def test_portable_home_literal_is_not_treated_as_user_home_access(self) -> None:
+        module = load_module()
+        result = self.run_gate(
+            module,
+            behavior=(
+                "target.write_text(\"def normalize(value):\\n"
+                "    return value.strip().lower()\\n\", encoding='utf-8'); "
+                "print('portable fallback: ~/.codex')"
+            ),
+        )
+        self.assertEqual(result.exit_code, 0, result.diagnostic)
+
     def test_rejects_mutation_of_user_managed_files(self) -> None:
         module = load_module()
         result = self.run_gate(

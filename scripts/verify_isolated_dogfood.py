@@ -169,6 +169,10 @@ Stop condition: when that exact command passes and `git diff -- target.py` shows
         ]
         fresh = run(invocation, fixture, gate_environment)
         output = fresh.stdout + fresh.stderr
+        if keep_artifacts:
+            output_path = root / "fresh-output.jsonl"
+            output_path.write_text(output, encoding="utf-8")
+            output_path.chmod(0o600)
         if fresh.returncode:
             return checked_result(
                 failed(
@@ -178,7 +182,7 @@ Stop condition: when that exact command passes and `git diff -- target.py` shows
                 user_codex_home,
                 before,
             )
-        if any(marker in output for marker in (str(user_codex_home), "~/.codex")):
+        if str(user_codex_home) in output:
             return checked_result(
                 failed("fresh command output references the user Codex home"),
                 user_codex_home,

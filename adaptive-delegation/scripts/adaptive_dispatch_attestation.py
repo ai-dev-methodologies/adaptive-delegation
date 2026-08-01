@@ -428,36 +428,6 @@ def _native_admission_provenance(
     return receipt
 
 
-def _native_admission(
-    value: Any,
-    binding: RoleBinding,
-    *,
-    dispatch_id: str,
-    packet: dict[str, Any],
-    rollout: Path | None,
-    session_id: str | None,
-    require_provenance: bool = True,
-) -> dict[str, Any]:
-    """Complete gate with expected lock values derived from a validated packet."""
-    receipt = _native_structural_admission(
-        value,
-        binding,
-        dispatch_id=dispatch_id,
-        objective_lock_version=OBJECTIVE_LOCK_VERSION,
-        objective_lock_digest=_objective_lock_digest(packet),
-    )
-    if receipt["status"] != "structurally_eligible" or not require_provenance:
-        return receipt
-    return _native_admission_provenance(
-        value,
-        receipt,
-        binding,
-        dispatch_id=dispatch_id,
-        rollout=rollout,
-        session_id=session_id,
-    )
-
-
 def _integration_gate(
     value: Any,
     *,
@@ -1798,6 +1768,13 @@ def _validate_packet(packet: Any, source_path: Path | None) -> str | None:
         return "dispatch_id_invalid"
     if any(not isinstance(packet[field], str) for field in TRIPLE_FIELDS):
         return "routing_triple_invalid"
+    intended_behavior = packet.get("intended_behavior")
+    if (
+        not isinstance(intended_behavior, str)
+        or not intended_behavior.strip()
+        or len(intended_behavior) > PROJECT_DOC_MAX_BYTES
+    ):
+        return "intended_behavior_invalid"
     read_scope = packet.get("read_scope")
     if (
         not isinstance(read_scope, list)

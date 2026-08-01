@@ -608,6 +608,23 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertNotIn("pre_decision_detail", payload["recorded"])
         self.assertNotIn("post_result_detail", payload["recorded"])
 
+    def test_legacy_0_2_0_rejects_objective_lock_wire_fields(self):
+        for fields in (
+            {"objective_lock_version": "1"},
+            {"objective_lock_digest": "c" * 64},
+            {
+                "objective_lock_version": "1",
+                "objective_lock_digest": "c" * 64,
+            },
+        ):
+            with self.subTest(fields=sorted(fields)):
+                event = self.linked_pre("legacy-lock-shape", "legacy-lock-task")
+                event.update(fields)
+                with self.assertRaisesRegex(
+                    audit.AuditError, "objective lock fields require schema 0.3.0"
+                ):
+                    audit.validate_event(event)
+
     def test_unavailable_measurements_are_excluded_from_metric_coverage(self):
         pre = self.pre("unmeasured", "unmeasured-task")
         post = self.post(

@@ -57,7 +57,9 @@ targeted unittest passes, an adjacent intentional failure remains unchanged
 and failing, the fresh command exits zero, its output does not reference the
 user Codex home, and before/after fingerprints of managed user files/state
 match. Artifacts are removed by default; use `--keep-artifacts` only to retain
-a failed fixture for investigation.
+a failed fixture and its owner-only `fresh-output.jsonl` for local
+investigation. Treat that output as private session evidence and never publish
+it.
 
 This is a same-user release-quality guard, not a security boundary. It never
 installs globally or creates a global canary. User-level installation is a

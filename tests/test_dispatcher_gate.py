@@ -630,6 +630,25 @@ class DispatcherGateTests(unittest.TestCase):
                 candidate.pop(field)
                 self.assertIsNotNone(module._validate_packet(candidate, self.role))
 
+    def test_intended_behavior_requires_bounded_text(self) -> None:
+        module = self.load_dispatcher_module()
+        packet = self.packet("intended-behavior-contract", "gpt-5.6-sol", "high")
+
+        for value in (["behavior"], {"behavior": "text"}, True, 1):
+            with self.subTest(value=value):
+                candidate = json.loads(json.dumps(packet))
+                candidate["intended_behavior"] = value
+                self.assertEqual(
+                    module._validate_packet(candidate, self.role),
+                    "intended_behavior_invalid",
+                )
+
+        packet["intended_behavior"] = "x" * (module.PROJECT_DOC_MAX_BYTES + 1)
+        self.assertEqual(
+            module._validate_packet(packet, self.role),
+            "intended_behavior_invalid",
+        )
+
     def test_packet_requires_typed_acceptance_evidence(self) -> None:
         module = self.load_dispatcher_module()
         packet = self.packet("acceptance-evidence-contract", "gpt-5.6-sol", "high")
@@ -1283,90 +1302,6 @@ class DispatcherGateTests(unittest.TestCase):
         self.assertIsNone(admission["rejection_reason"])
         self.assertNotIn("model", receipt_value["original_callable_schema"])
 
-    def test_complete_native_admission_cannot_omit_or_change_objective_lock(self) -> None:
-        module = self.load_dispatcher_module()
-        packet = self.packet("complete-native-lock", "gpt-5.6-sol", "high")
-        binding = module._role_binding(packet)
-        self.assertIsNotNone(binding)
-        triple = module._binding_triple(binding)
-        receipt_value = {
-            "objective_lock_version": module.OBJECTIVE_LOCK_VERSION,
-            "objective_lock_digest": module._objective_lock_digest(packet),
-            "surface_identity": "codex-app.collaboration.spawn_agent",
-            "original_callable_schema": {
-                "agent_type": "installed-role-enum",
-                "reasoning_effort": "string",
-                "fork_turns": "none",
-            },
-            "selection_mode": "verified-fixed-agent-type",
-            "desired_route": "native_v2",
-            "explicit_route": "native_v2",
-            "installed_binding": {**triple, "fork_turns": "none"},
-            "explicit_arguments": {
-                "agent_type": binding.agent_type,
-                "reasoning_effort": binding.effort,
-                "fork_turns": "none",
-            },
-            "allowlist": [triple],
-            "gate_events": [
-                {"name": "pending_receipt", "monotonic_ns": 1},
-                {"name": "native_spawn_gate", "monotonic_ns": 2},
-                {"name": "child_creation_eligibility", "monotonic_ns": 3},
-            ],
-        }
-        receipt_path = self.root / "complete-native-lock.json"
-        receipt_path.write_text(json.dumps(receipt_value), encoding="utf-8")
-        receipt_path.chmod(0o600)
-        envelope = module.ReceiptEnvelope(receipt_value, receipt_path)
-
-        accepted = module._native_admission(
-            envelope,
-            binding,
-            dispatch_id=packet["dispatch_id"],
-            packet=packet,
-            rollout=None,
-            session_id=None,
-            require_provenance=False,
-        )
-        self.assertEqual(accepted["status"], "structurally_eligible")
-
-        missing_value = dict(receipt_value)
-        missing_value.pop("objective_lock_digest")
-        missing_path = self.root / "complete-native-lock-missing.json"
-        missing_path.write_text(json.dumps(missing_value), encoding="utf-8")
-        missing_path.chmod(0o600)
-        missing = module._native_admission(
-            module.ReceiptEnvelope(missing_value, missing_path),
-            binding,
-            dispatch_id=packet["dispatch_id"],
-            packet=packet,
-            rollout=None,
-            session_id=None,
-            require_provenance=False,
-        )
-        self.assertEqual(missing["status"], "rejected")
-        self.assertEqual(
-            missing["rejection_reason"], "admission_objective_lock_mismatch"
-        )
-
-        mismatched_value = {**receipt_value, "objective_lock_digest": "0" * 64}
-        mismatched_path = self.root / "complete-native-lock-mismatch.json"
-        mismatched_path.write_text(json.dumps(mismatched_value), encoding="utf-8")
-        mismatched_path.chmod(0o600)
-        rejected = module._native_admission(
-            module.ReceiptEnvelope(mismatched_value, mismatched_path),
-            binding,
-            dispatch_id=packet["dispatch_id"],
-            packet=packet,
-            rollout=None,
-            session_id=None,
-            require_provenance=False,
-        )
-        self.assertEqual(rejected["status"], "rejected")
-        self.assertEqual(
-            rejected["rejection_reason"], "admission_objective_lock_mismatch"
-        )
-
     def test_schema_cutover_rejects_legacy_pending_chain_and_fresh_chain_finalizes(self) -> None:
         module = self.load_dispatcher_module()
         legacy_packet = self.packet("legacy-pending-cutover", "gpt-5.6-sol", "high")
@@ -1470,7 +1405,28 @@ class DispatcherGateTests(unittest.TestCase):
 
         fresh_packet = self.packet("fresh-after-cutover", "gpt-5.6-sol", "high")
         fresh_packet["write_scope"] = ["read-only"]
-        executed, fresh_model_ledger = self.run_packet(fresh_packet)
+        fresh_packet_path = self.root / "fresh-after-cutover.json"
+        fresh_packet_path.write_text(json.dumps(fresh_packet), encoding="utf-8")
+        fresh_packet_path.chmod(0o600)
+        executed = subprocess.run(
+            [
+                sys.executable,
+                str(self.dispatcher),
+                "--packet",
+                str(fresh_packet_path),
+                "--ledger",
+                str(legacy_dispatch_ledger),
+                "--model-routing-ledger",
+                str(legacy_model_ledger),
+                "--model-routing-review-dir",
+                str(self.root / "reviews"),
+                "--direct-typed",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=self.environment,
+        )
         self.assertEqual(executed.returncode, 0, executed.stderr + executed.stdout)
         fresh_terminal = module._load_terminal_event(
             legacy_dispatch_ledger, fresh_packet
@@ -1481,7 +1437,6 @@ class DispatcherGateTests(unittest.TestCase):
         _receipt, fresh_receipt, _rollout, _artifact = self.receipt_fixture(
             module, fresh_packet, binding, fresh_terminal
         )
-        fresh_packet_path = self.root / "fresh-after-cutover.json"
         finalized = subprocess.run(
             [
                 sys.executable,
@@ -1491,7 +1446,7 @@ class DispatcherGateTests(unittest.TestCase):
                 "--ledger",
                 str(legacy_dispatch_ledger),
                 "--model-routing-ledger",
-                str(fresh_model_ledger),
+                str(legacy_model_ledger),
                 "--model-routing-review-dir",
                 str(self.root / "reviews"),
                 "--finalize-integration",
@@ -1504,14 +1459,17 @@ class DispatcherGateTests(unittest.TestCase):
             env=self.environment,
         )
         self.assertEqual(finalized.returncode, 0, finalized.stderr)
-        fresh_rows = [
-            json.loads(line) for line in fresh_model_ledger.read_text().splitlines()
-        ]
+        final_model_bytes = legacy_model_ledger.read_bytes()
+        self.assertTrue(final_model_bytes.startswith(before_model))
+        fresh_rows = [json.loads(line) for line in final_model_bytes.splitlines()]
         self.assertEqual(
             [row["event_type"] for row in fresh_rows],
-            ["pre_decision", "post_result"],
+            ["pre_decision", "pre_decision", "post_result"],
         )
-        self.assertTrue(all(row["schema_version"] == "0.3.0" for row in fresh_rows))
+        self.assertEqual(fresh_rows[0]["schema_version"], "0.2.0")
+        self.assertTrue(
+            all(row["schema_version"] == "0.3.0" for row in fresh_rows[1:])
+        )
 
     def test_recovery_launch_is_bound_to_dispatched_packet_and_route(self) -> None:
         module = self.load_dispatcher_module()
@@ -1616,30 +1574,41 @@ class DispatcherGateTests(unittest.TestCase):
         path = self.root / "provenance-receipt.json"
         path.write_text("{}", encoding="utf-8")
         path.chmod(0o600)
-        cases = {
-            "invalid_admission_receipt": None,
-            "receipt_kind_or_version_invalid": {**base, "receipt_kind": "wrong"},
-            "admission_dispatch_id_mismatch": {**base, "dispatch_id": "other"},
-            "admission_objective_lock_mismatch": {
+        lock_missing = dict(base)
+        lock_missing.pop("objective_lock_digest")
+        cases = [
+            ("invalid-envelope", None, "invalid_admission_receipt"),
+            (
+                "receipt-version",
+                {**base, "receipt_kind": "wrong"},
+                "receipt_kind_or_version_invalid",
+            ),
+            (
+                "dispatch-id",
+                {**base, "dispatch_id": "other"},
+                "admission_dispatch_id_mismatch",
+            ),
+            ("objective-lock-missing", lock_missing, "admission_objective_lock_mismatch"),
+            ("objective-lock-mismatch", {
                 **base,
                 "objective_lock_digest": "0" * 64,
-            },
-            "trusted_precreation_issuer_missing": {
+            }, "admission_objective_lock_mismatch"),
+            ("issuer-session", {
                 **base,
                 "issuer": {**base["issuer"], "rollout_session_id": "other-session"},
-            },
-            "admission_issuer_binding_mismatch": {
+            }, "trusted_precreation_issuer_missing"),
+            ("issuer-binding", {
                 **base,
                 "issuer": {**base["issuer"], "role_config": str(self.role) + ".wrong"},
-            },
-            "admission_role_config_digest_invalid": {
+            }, "admission_issuer_binding_mismatch"),
+            ("issuer-digest", {
                 **base,
                 "issuer": {**base["issuer"], "role_config_digest": "0" * 64},
-            },
-            "trusted_precreation_marker_missing": base,
-        }
-        for reason, value in cases.items():
-            with self.subTest(reason=reason):
+            }, "admission_role_config_digest_invalid"),
+            ("marker", base, "trusted_precreation_marker_missing"),
+        ]
+        for label, value, reason in cases:
+            with self.subTest(case=label):
                 structural_value = base if value is None else value
                 envelope = module.ReceiptEnvelope(structural_value, path)
                 structural = module._native_structural_admission(

@@ -95,8 +95,9 @@ observation before freezing a weak rule. Prefer an auditable observation to a
 confident rule unsupported by evidence.
 
 The resolved runtime home is `$CODEX_HOME` when it is set, otherwise
-`~/.codex`; in a shell, set `RUNTIME_HOME="${CODEX_HOME:-$HOME/.codex}"` once
-from that rule and never read or fall back outside it. Central
+`$HOME/.codex`; in a shell, set and export it before using it:
+`RUNTIME_HOME="${CODEX_HOME:-$HOME/.codex}"; export RUNTIME_HOME`. Never read or
+fall back outside it. Central
 append-only attempt records live at `$RUNTIME_HOME/state/model-routing/attempts.jsonl`;
 review records live at `$RUNTIME_HOME/state/model-routing/reviews/`. Every attempt record has a
 `pre_decision` or `post_result` type. Linked v0.2 records capture the declared
@@ -119,7 +120,7 @@ never publishes or uploads the ledger.
 
 Before routing, consult
 [TOKEN_EFFICIENCY_CONTINUITY.md](TOKEN_EFFICIENCY_CONTINUITY.md):
-run `python3 "$RUNTIME_HOME/skills/adaptive-delegation/scripts/read_continuity.py"
+after exporting `RUNTIME_HOME`, run `python3 "$RUNTIME_HOME/skills/adaptive-delegation/scripts/read_continuity.py"
 --workspace "$WORKSPACE" --objective-key "$OBJECTIVE_KEY"` with exact values;
 it returns at most the
 latest three accepted matching records. Never `tail`, `grep`, or `cat` a

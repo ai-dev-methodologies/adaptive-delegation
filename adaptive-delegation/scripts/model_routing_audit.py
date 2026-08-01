@@ -547,7 +547,10 @@ def validate_event(event: Any) -> dict[str, Any]:
 
     linked = event["schema_version"] in {LEGACY_LINKED_SCHEMA_VERSION, LINKED_SCHEMA_VERSION}
     linked_fields_present = (LINKED_COMMON_FIELDS | LINKED_POST_FIELDS) & set(event)
-    if not linked and (linked_fields_present or OBJECTIVE_LOCK_FIELDS & set(event)):
+    lock_fields_present = OBJECTIVE_LOCK_FIELDS & set(event)
+    if event["schema_version"] != LINKED_SCHEMA_VERSION and lock_fields_present:
+        raise AuditError("objective lock fields require schema 0.3.0")
+    if not linked and linked_fields_present:
         raise AuditError("legacy 0.1.0 events must not contain linked fields")
     if linked:
         missing_linked = LINKED_COMMON_FIELDS - set(event)

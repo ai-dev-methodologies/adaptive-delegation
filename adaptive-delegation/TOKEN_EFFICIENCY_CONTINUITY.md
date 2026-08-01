@@ -4,9 +4,10 @@ This continuity guidance is part of the Codex-only `adaptive-delegation`
 skill and applies to Codex native subagents.
 
 The resolved runtime home is `$CODEX_HOME` when it is set, otherwise
-`~/.codex`; in a shell, set `RUNTIME_HOME="${CODEX_HOME:-$HOME/.codex}"` once
-from that rule and never read or fall back outside it. Before routing,
-run `python3 "$RUNTIME_HOME/skills/adaptive-delegation/scripts/read_continuity.py"
+`$HOME/.codex`; in a shell, run
+`RUNTIME_HOME="${CODEX_HOME:-$HOME/.codex}"; export RUNTIME_HOME` before any
+command that expands `$RUNTIME_HOME`, and never read or fall back outside it.
+Before routing, run `python3 "$RUNTIME_HOME/skills/adaptive-delegation/scripts/read_continuity.py"
 --workspace "$WORKSPACE" --objective-key "$OBJECTIVE_KEY"`. It reads only
 `$RUNTIME_HOME/state/adaptive-delegation/continuity.jsonl` and returns at most
 the latest 3 accepted exact workspace/objective_key matches. Never use raw
