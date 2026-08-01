@@ -1,0 +1,488 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://adaptive-delegation.local/schemas/model-routing-attempt.schema.json",
+  "title": "Adaptive delegation model-routing audit event",
+  "description": "A bounded, structured event for comparing a routing rationale with an observed result. Free-form prompts, transcripts, logs, credentials, and request or response bodies are intentionally not part of this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_type",
+    "attempt_id",
+    "task_id",
+    "attempt_index",
+    "timestamp"
+  ],
+  "properties": {
+    "schema_version": {
+      "enum": ["0.1.0", "0.2.0"]
+    },
+    "event_type": {
+      "enum": ["pre_decision", "post_result"]
+    },
+    "attempt_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "attempt_index": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "maxLength": 40
+    },
+    "dispatch_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "policy_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "policy_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "workspace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "main_session_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "main_model": {
+      "enum": ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "unknown"]
+    },
+    "main_reasoning_effort": {
+      "enum": ["low", "medium", "high", "xhigh", "max", "ultra", "unknown"]
+    },
+    "surface_identity": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "surface_schema_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "model": {
+      "enum": ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]
+    },
+    "model_tier": {
+      "enum": ["spark-tier", "standard-tier", "frontier-tier"]
+    },
+    "reasoning_effort": {
+      "enum": ["low", "medium", "high", "xhigh", "max", "ultra"]
+    },
+    "rationale": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_class", "oracle_strength", "risk_class"],
+      "properties": {
+        "task_class": {
+          "enum": [
+            "simple_lookup_or_extraction",
+            "clear_implementation_or_transformation",
+            "bounded_complex_implementation_or_verification",
+            "former_terra_bounded",
+            "former_sol_bounded_with_strong_oracle",
+            "weak_oracle_ambiguous_high_risk_or_long_contract"
+          ]
+        },
+        "oracle_strength": {
+          "enum": ["strong", "weak", "ambiguous"]
+        },
+        "risk_class": {
+          "enum": ["low", "medium", "high"]
+        },
+        "prior_failure_class": {
+          "anyOf": [
+            {
+              "enum": [
+                "none",
+                "reasoning_insufficiency",
+                "context_ceiling",
+                "scope_or_retrieval_overbreadth",
+                "tool_or_environment",
+                "capability_ceiling",
+                "weak_oracle",
+                "policy_gate",
+                "other"
+              ]
+            },
+            { "type": "null" }
+          ]
+        },
+        "prior_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "selection_basis": {
+          "enum": ["policy_default", "failure_action", "human_override"]
+        }
+      }
+    },
+    "pre_decision_detail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "boundedness",
+        "context_pressure",
+        "constraint_count",
+        "task_shape_signals",
+        "expected_oracle_types",
+        "cheaper_route_not_chosen_because"
+      ],
+      "properties": {
+        "boundedness": {
+          "enum": ["bounded", "partially_bounded", "unbounded"]
+        },
+        "context_pressure": {
+          "enum": ["low", "medium", "high", "critical"]
+        },
+        "constraint_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "task_shape_signals": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "single_step",
+              "multi_step",
+              "lookup",
+              "extraction",
+              "implementation",
+              "transformation",
+              "verification",
+              "multi_file",
+              "api_contract",
+              "schema_contract",
+              "strict_output",
+              "ambiguous_requirements",
+              "long_context",
+              "security_sensitive",
+              "tool_dependent"
+            ]
+          }
+        },
+        "expected_oracle_types": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "unit_test",
+              "integration_test",
+              "schema_validation",
+              "compile_check",
+              "lint_check",
+              "deterministic_diff",
+              "runtime_smoke_test",
+              "human_review",
+              "benchmark",
+              "none"
+            ]
+          }
+        },
+        "cheaper_route_not_chosen_because": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "not_applicable",
+              "context_pressure",
+              "constraint_density",
+              "task_complexity",
+              "weak_oracle",
+              "failure_history",
+              "risk_exposure",
+              "quality_bar",
+              "tooling_risk",
+              "human_override"
+            ]
+          }
+        }
+      }
+    },
+    "planned_effort_escalations": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "planned_model_escalations": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "premium_call_justified": {
+      "type": "boolean"
+    },
+    "price_change_observed": {
+      "type": "boolean"
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "failure_class": {
+      "enum": [
+        "none",
+        "reasoning_insufficiency",
+        "context_ceiling",
+        "scope_or_retrieval_overbreadth",
+        "tool_or_environment",
+        "capability_ceiling",
+        "weak_oracle",
+        "policy_gate",
+        "other"
+      ]
+    },
+    "execution_completed": {
+      "type": "boolean"
+    },
+    "oracle_verdict": {
+      "enum": ["pass", "fail", "inconclusive", "not_run"]
+    },
+    "integration_accepted": {
+      "type": "boolean"
+    },
+    "effort_escalations": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "model_escalations": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "final_model": {
+      "enum": ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]
+    },
+    "final_model_tier": {
+      "enum": ["spark-tier", "standard-tier", "frontier-tier"]
+    },
+    "final_reasoning_effort": {
+      "enum": ["low", "medium", "high", "xhigh", "max", "ultra"]
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 604800000
+    },
+    "input_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000000
+    },
+    "output_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000000
+    },
+    "weighted_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000000
+    },
+    "cost_proxy": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000000000
+    },
+    "sol_rescue": {
+      "type": "boolean"
+    },
+    "avoidable_premium_call": {
+      "type": "boolean"
+    },
+    "false_cheap_route": {
+      "type": "boolean"
+    },
+    "post_result_detail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observable_result_signals",
+        "evidence_references",
+        "route_assessment",
+        "next_action"
+      ],
+      "properties": {
+        "observable_result_signals": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "accepted_by_oracle",
+              "rejected_by_oracle",
+              "tests_passed",
+              "tests_failed",
+              "constraints_met",
+              "constraints_missed",
+              "output_complete",
+              "output_incomplete",
+              "budget_within_bound",
+              "budget_exhausted",
+              "escalation_required",
+              "tool_failure",
+              "regression_observed",
+              "no_regression_observed",
+              "evidence_inconclusive",
+              "human_review_required"
+            ]
+          }
+        },
+        "evidence_references": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^(?!.*[?#@:])(?!.*://)(?!.*(?:/|\\\\){2})(?:[A-Za-z0-9][A-Za-z0-9._/\\\\+ ~-]*|/[A-Za-z0-9][A-Za-z0-9._/\\\\+ ~-]*)$"
+          }
+        },
+        "route_assessment": {
+          "enum": ["correct", "too-cheap", "too-premium", "inconclusive"]
+        },
+        "next_action": {
+          "enum": [
+            "retain_route",
+            "lower_effort",
+            "lower_model",
+            "raise_effort",
+            "raise_model",
+            "retry_same_route",
+            "narrow_scope",
+            "split_task",
+            "environment_retry",
+            "main_takeover",
+            "collect_more_evidence",
+            "human_review",
+            "stop"
+          ]
+        },
+        "token_observation": {
+          "enum": ["exact", "lower_bound", "estimated", "unavailable"]
+        },
+        "elapsed_observation": {
+          "enum": ["exact", "estimated", "unavailable"]
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "schema_version": { "const": "0.2.0" } },
+        "required": ["schema_version"]
+      },
+      "then": {
+        "required": [
+          "dispatch_id",
+          "policy_id",
+          "policy_fingerprint",
+          "workspace",
+          "main_session_id",
+          "main_model",
+          "main_reasoning_effort",
+          "surface_identity",
+          "surface_schema_fingerprint"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": { "event_type": { "const": "pre_decision" } }
+      },
+      "then": {
+        "required": [
+          "model",
+          "model_tier",
+          "reasoning_effort",
+          "rationale"
+        ],
+        "not": { "required": ["post_result_detail"] }
+      }
+    },
+    {
+      "if": {
+        "properties": { "event_type": { "const": "post_result" } }
+      },
+      "then": {
+        "required": [
+          "accepted",
+          "failure_class",
+          "effort_escalations",
+          "model_escalations",
+          "final_model",
+          "elapsed_ms",
+          "weighted_tokens",
+          "cost_proxy"
+        ],
+        "not": { "required": ["pre_decision_detail"] }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "schema_version": { "const": "0.2.0" },
+          "event_type": { "const": "post_result" }
+        },
+        "required": ["schema_version", "event_type"]
+      },
+      "then": {
+        "required": [
+          "execution_completed",
+          "oracle_verdict",
+          "integration_accepted"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "schema_version": { "const": "0.2.0" },
+          "accepted": { "const": true }
+        },
+        "required": ["schema_version", "accepted"]
+      },
+      "then": {
+        "properties": { "integration_accepted": { "const": true } }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "schema_version": { "const": "0.2.0" },
+          "accepted": { "const": false }
+        },
+        "required": ["schema_version", "accepted"]
+      },
+      "then": {
+        "properties": { "integration_accepted": { "const": false } }
+      }
+    }
+  ]
+}
