@@ -181,8 +181,9 @@ def validate_route_selection(policy: Mapping[str, Any], *, route_id: str, task_c
 
 
 def route_transition(policy: Mapping[str, Any], task_class: str, oracle_strength: str,
-                     previous_route: str, next_action: str) -> str:
-    """Return the only route allowed by one observed failure action."""
+                     previous_route: str, next_action: str,
+                     failure_class: str | None = None) -> str:
+    """Return the route allowed by one observed, classed failure action."""
     ladder = applicable_ladder(policy, task_class, oracle_strength)
     try:
         index = ladder.index(previous_route)
@@ -196,6 +197,11 @@ def route_transition(policy: Mapping[str, Any], task_class: str, oracle_strength
             raise _route_error("LADDER_EXHAUSTED", "main authority is already selected")
         if route_for(policy, candidate)["authority"] != "main":
             raise _route_error("TRANSITION_KIND_MISMATCH", "main_takeover must end at main authority")
+        if failure_class != "weak_oracle" and index != len(ladder) - 2:
+            raise _route_error(
+                "TRANSITION_KIND_MISMATCH",
+                "main_takeover must be adjacent unless failure_class is weak_oracle",
+            )
         return candidate
     if next_action in {"raise_effort", "raise_model"}:
         if index + 1 >= len(ladder):

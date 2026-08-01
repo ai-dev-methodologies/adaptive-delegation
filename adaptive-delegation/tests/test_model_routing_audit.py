@@ -793,6 +793,120 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("raise_model cannot select", result.stderr)
 
+    def test_main_takeover_rejects_main_repeat_and_non_weak_skip(self):
+        main_task = "main-repeat-task"
+        main_pre = self.current_pre(
+            "main-repeat-first",
+            main_task,
+            route_id="main_takeover_sol_ultra",
+        )
+        main_pre["rationale"].update(
+            task_class="weak_oracle_ambiguous_high_risk_or_long_contract",
+            oracle_strength="weak",
+        )
+        self.record("main-repeat-first-pre.json", main_pre)
+        main_post = self.current_post("main-repeat-first", main_task)
+        main_post.update(
+            final_model=main_pre["model"],
+            final_model_tier=main_pre["model_tier"],
+            final_reasoning_effort=main_pre["reasoning_effort"],
+            final_route_id=main_pre["route_id"],
+            final_role=main_pre["role"],
+            failure_class="weak_oracle",
+            post_result_detail={
+                "observable_result_signals": ["evidence_inconclusive"],
+                "evidence_references": ["receipt-main-repeat-first"],
+                "route_assessment": "inconclusive",
+                "next_action": "main_takeover",
+            },
+        )
+        self.record("main-repeat-first-post.json", main_post)
+        repeated_main = self.current_pre(
+            "main-repeat-second",
+            main_task,
+            index=2,
+            route_id="main_takeover_sol_ultra",
+        )
+        repeated_main["rationale"].update(
+            task_class="weak_oracle_ambiguous_high_risk_or_long_contract",
+            oracle_strength="weak",
+            prior_failure_class="weak_oracle",
+        )
+        result = self.run_cli(
+            "record",
+            "--event-file",
+            self.write_event("main-repeat-second-pre.json", repeated_main),
+            "--ledger",
+            self.ledger,
+            "--review-dir",
+            self.review_dir,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("main authority is already selected", result.stderr)
+
+        skip_task = "non-weak-main-skip"
+        leaf = self.current_pre("non-weak-leaf", skip_task)
+        self.record("non-weak-leaf-pre.json", leaf)
+        leaf_post = self.current_post("non-weak-leaf", skip_task)
+        leaf_post.update(
+            failure_class="capability_ceiling",
+            post_result_detail={
+                "observable_result_signals": ["constraints_missed"],
+                "evidence_references": ["receipt-non-weak-leaf"],
+                "route_assessment": "inconclusive",
+                "next_action": "main_takeover",
+            },
+        )
+        self.record("non-weak-leaf-post.json", leaf_post)
+        skipped_main = self.current_pre(
+            "non-weak-main",
+            skip_task,
+            index=2,
+            route_id="main_takeover_sol_ultra",
+        )
+        skipped_main["planned_model_escalations"] = 1
+        skipped_main["rationale"]["prior_failure_class"] = "capability_ceiling"
+        result = self.run_cli(
+            "record",
+            "--event-file",
+            self.write_event("non-weak-main-pre.json", skipped_main),
+            "--ledger",
+            self.ledger,
+            "--review-dir",
+            self.review_dir,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("main_takeover must be adjacent", result.stderr)
+
+    def test_route_less_legacy_history_does_not_crash_retry_accounting(self):
+        task_id = "mixed-history-retry"
+        legacy_pre = self.pre("mixed-legacy", task_id)
+        current_pre = self.current_pre("mixed-current", task_id)
+        self.record("mixed-legacy-pre.json", legacy_pre)
+        self.record("mixed-current-pre.json", current_pre)
+        self.record("mixed-legacy-post.json", self.post("mixed-legacy", task_id))
+
+        current_post = self.current_post("mixed-current", task_id)
+        current_post.update(
+            accepted=False,
+            failure_class="tool_or_environment",
+            oracle_verdict="fail",
+            integration_accepted=False,
+            post_result_detail={
+                "observable_result_signals": ["tool_failure"],
+                "evidence_references": ["receipt-mixed-current"],
+                "route_assessment": "inconclusive",
+                "next_action": "environment_retry",
+            },
+        )
+        self.record("mixed-current-post.json", current_post)
+        retry = self.current_pre("mixed-current-retry", task_id, index=2)
+        retry["rationale"]["prior_failure_class"] = "tool_or_environment"
+
+        result = self.record("mixed-current-retry-pre.json", retry)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_same_route_retry_budget_resets_after_route_transition(self):
         task_id = "per-stage-retry-task"
 
@@ -1061,6 +1175,30 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertNotEqual(rejected.returncode, 0)
         self.assertNotIn("private prompt payload", rejected.stderr)
         self.assertEqual(sensitive_before, sensitive_ledger.read_bytes())
+
+        attacker_key = "BEGIN_FAKE_TRANSCRIPT https://secret.example/?token=private END"
+        attacker_ledger = self.root / "attacker-key" / "attempts.jsonl"
+        attacker_ledger.parent.mkdir(parents=True)
+        attacker_ledger.write_text(
+            json.dumps({attacker_key: 1}) + "\n", encoding="utf-8"
+        )
+        os.chmod(attacker_ledger, 0o600)
+        rejected = self.run_cli("issue-report", "--ledger", attacker_ledger)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertNotIn(attacker_key, rejected.stderr)
+        self.assertNotIn("secret.example", rejected.stderr)
+
+        private_attempt = "MARKLEGATT1.sk-live-4242"
+        duplicate_ledger = self.root / "duplicate" / "attempts.jsonl"
+        duplicate_ledger.parent.mkdir(parents=True)
+        duplicated = json.dumps(
+            self.pre(private_attempt, "private-duplicate-task"), sort_keys=True
+        )
+        duplicate_ledger.write_text(duplicated + "\n" + duplicated + "\n", encoding="utf-8")
+        os.chmod(duplicate_ledger, 0o600)
+        rejected = self.run_cli("issue-report", "--ledger", duplicate_ledger)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertNotIn(private_attempt, rejected.stderr)
 
 
 if __name__ == "__main__":

@@ -3257,6 +3257,7 @@ def _typed_launch_binding(
         return None
     if (
         _validate_packet(dispatched_packet, None) is not None
+        or _canonical_digest(packet) != _canonical_digest(dispatched_packet)
         or packet["dispatch_id"].strip() != dispatched_packet["dispatch_id"].strip()
         or _intended_triple(packet) != _intended_triple(dispatched_packet)
     ):
@@ -3869,6 +3870,8 @@ def _dispatch_main(
                 args.native_admission_receipt,
             )
         ) or args.direct_typed or args.validate_only:
+            if execution_status is not None:
+                execution_status["finalize_precondition_failed"] = True
             _print_error("unsafe finalization path")
             return EXIT_UNSAFE_LAUNCH_PATH
         return _finalize_integration(

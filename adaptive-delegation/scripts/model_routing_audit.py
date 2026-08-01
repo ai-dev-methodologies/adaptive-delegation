@@ -310,7 +310,7 @@ def _reject_sensitive_names(value: Any) -> None:
             if normalized in {
                 _normal_field_name(item) for item in FORBIDDEN_EXACT_FIELDS
             } or any(part in normalized for part in FORBIDDEN_FIELD_PARTS):
-                raise AuditError(f"sensitive field is not allowed: {key}")
+                raise AuditError("sensitive field name is not allowed")
             _reject_sensitive_names(child)
     elif isinstance(value, list):
         for child in value:
@@ -371,9 +371,7 @@ def _check_detail_object(
     required = allowed_fields if required_fields is None else required_fields
     unknown = set(value) - allowed_fields
     if unknown:
-        raise AuditError(
-            f"unknown {name} field(s): {', '.join(sorted(unknown))}"
-        )
+        raise AuditError(f"{name} contains unknown fields")
     missing = required - set(value)
     if missing:
         raise AuditError(
@@ -527,8 +525,7 @@ def validate_event(event: Any) -> dict[str, Any]:
     allowed = COMMON_FIELDS | LINKED_COMMON_FIELDS | type_fields
     unknown = set(event) - allowed
     if unknown:
-        names = ", ".join(sorted(str(name) for name in unknown))
-        raise AuditError(f"unknown {event['event_type']} field(s): {names}")
+        raise AuditError(f"{event['event_type']} contains unknown fields")
     for field in ("attempt_id", "task_id"):
         value = event[field]
         if (
@@ -611,8 +608,7 @@ def validate_event(event: Any) -> dict[str, Any]:
         if not isinstance(rationale, dict):
             raise AuditError("rationale must be a structured JSON object")
         if set(rationale) - RATIONALE_FIELDS:
-            names = ", ".join(sorted(set(rationale) - RATIONALE_FIELDS))
-            raise AuditError(f"unknown rationale field(s): {names}")
+            raise AuditError("rationale contains unknown fields")
         required_rationale = {"task_class", "oracle_strength", "risk_class"}
         missing = required_rationale - set(rationale)
         if missing:
@@ -952,33 +948,32 @@ def _pair_key(event: dict[str, Any]) -> tuple[str, str]:
 
 
 def _check_pair(pre: dict[str, Any], post: dict[str, Any]) -> None:
-    label = post.get("dispatch_id", post["attempt_id"])
     if pre["task_id"] != post["task_id"] or pre["attempt_index"] != post["attempt_index"]:
-        raise AuditError(f"paired events disagree for {label}")
+        raise AuditError("paired events disagree")
     if pre["schema_version"] != post["schema_version"]:
-        raise AuditError(f"paired events use different schema versions for {label}")
+        raise AuditError("paired events use different schema versions")
     if pre["schema_version"] == LINKED_SCHEMA_VERSION:
         mismatch = [field for field in LINKED_COMMON_FIELDS if pre[field] != post[field]]
         if mismatch:
             raise AuditError(
-                f"linked events disagree for {label}: {', '.join(sorted(mismatch))}"
+                f"linked events disagree: {', '.join(sorted(mismatch))}"
             )
     if _parse_timestamp(post["timestamp"]) < _parse_timestamp(pre["timestamp"]):
-        raise AuditError(f"post_result timestamp precedes pre_decision for {label}")
+        raise AuditError("post_result timestamp precedes pre_decision")
     policy = _load_policy()
     strict = _is_current_policy_event(pre, policy) and _is_current_policy_event(post, policy)
     if not strict:
         return
     if post["effort_escalations"] != pre["planned_effort_escalations"] or post["model_escalations"] != pre["planned_model_escalations"]:
-        raise AuditError(f"route counters disagree for {label}")
+        raise AuditError("route counters disagree")
     for field in ("model", "reasoning_effort"):
         final_field = "final_" + field
         if final_field in post and post[final_field] != pre[field]:
-            raise AuditError(f"final route disagrees with pre_decision for {label}")
+            raise AuditError("final route disagrees with pre_decision")
     if "final_route_id" in post and post["final_route_id"] != pre["route_id"]:
-        raise AuditError(f"final route id disagrees with pre_decision for {label}")
+        raise AuditError("final route id disagrees with pre_decision")
     if "final_role" in post and post["final_role"] != pre["role"]:
-        raise AuditError(f"final role disagrees with pre_decision for {label}")
+        raise AuditError("final role disagrees with pre_decision")
 
 
 def _check_current_transition(previous: tuple[dict[str, Any], dict[str, Any]], current: dict[str, Any], policy: dict[str, Any]) -> None:
@@ -1013,6 +1008,14 @@ def _check_current_transition(previous: tuple[dict[str, Any], dict[str, Any]], c
         if not same_route:
             raise AuditError("same-route action cannot transition to a different route")
     elif action in {"raise_effort", "raise_model", "main_takeover"}:
+        if action == "main_takeover" and previous_index == len(ladder) - 1:
+            raise AuditError("main authority is already selected")
+        if (
+            action == "main_takeover"
+            and prior_post["failure_class"] != "weak_oracle"
+            and previous_index != len(ladder) - 2
+        ):
+            raise AuditError("main_takeover must be adjacent unless failure_class is weak_oracle")
         expected_index = len(ladder) - 1 if action == "main_takeover" else previous_index + 1
         if current_index != expected_index:
             raise AuditError("route transition skipped or repeated a ladder step")
@@ -1041,23 +1044,20 @@ def _check_sequence(events: list[dict[str, Any]]) -> tuple[list[tuple[dict[str, 
     policy = _load_policy()
     for event in events:
         key = _pair_key(event)
-        label = key[1]
         event_type = event["event_type"]
         prior = seen.get(key)
         pair_pre = prior if event_type == "post_result" else None
         if prior is not None:
             if prior["event_type"] == event_type:
-                raise AuditError(
-                    f"duplicate {event_type} for {label}"
-                )
+                raise AuditError(f"duplicate {event_type}")
             if event_type == "pre_decision":
-                raise AuditError(f"post_result already recorded for {label}")
+                raise AuditError("post_result already recorded")
             _check_pair(prior, event)
             pairs.append((prior, event))
             seen[key] = event
         else:
             if event_type == "post_result":
-                raise AuditError(f"post_result cannot precede pre_decision for {label}")
+                raise AuditError("post_result cannot precede pre_decision")
             prior_history = history.get(event["task_id"], [])
             current_policy_event = _is_current_policy_event(event, policy)
             if current_policy_event:
@@ -1088,7 +1088,7 @@ def _check_sequence(events: list[dict[str, Any]]) -> tuple[list[tuple[dict[str, 
                 if current_policy_event:
                     trailing_stage_attempts = 0
                     for prior_pre, _prior_post in reversed(prior_history):
-                        if prior_pre["route_id"] != event["route_id"]:
+                        if prior_pre.get("route_id") != event["route_id"]:
                             break
                         trailing_stage_attempts += 1
                     same_retries = max(0, trailing_stage_attempts - 1)
@@ -1161,7 +1161,6 @@ def _append_event(
         try:
             events = _parse_ledger(fd)
             key = _pair_key(event)
-            label = key[1]
             same_type = next(
                 (
                     item
@@ -1175,16 +1174,16 @@ def _append_event(
                 if idempotent and _canonical_json(same_type) == _canonical_json(event):
                     return False
                 kind = "conflicting" if idempotent else "duplicate"
-                raise AuditError(f"{kind} {event['event_type']} for {label}")
+                raise AuditError(f"{kind} {event['event_type']}")
             counterpart = next(
                 (item for item in events if _pair_key(item) == key), None
             )
             if counterpart is not None:
                 if event["event_type"] == "pre_decision":
-                    raise AuditError(f"post_result already recorded for {label}")
+                    raise AuditError("post_result already recorded")
                 _check_pair(counterpart, event)
             elif event["event_type"] == "post_result":
-                raise AuditError(f"post_result cannot precede pre_decision for {label}")
+                raise AuditError("post_result cannot precede pre_decision")
             _check_sequence(events + [event])
             os.lseek(fd, 0, os.SEEK_END)
             os.write(fd, line)

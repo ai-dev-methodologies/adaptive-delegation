@@ -796,6 +796,64 @@ class DispatcherGateTests(unittest.TestCase):
             ["pre_decision", "post_result"],
         )
 
+    def test_finalize_argument_conflict_keeps_attempt_pending_for_retry(self) -> None:
+        packet = self.packet("finalize-argument-retry", "gpt-5.6-sol", "high")
+        packet["write_scope"] = ["read-only"]
+        result, model_ledger = self.run_packet(packet)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        module = self.load_dispatcher_module()
+        dispatch_ledger = self.root / "dispatch.jsonl"
+        terminal = module._load_terminal_event(dispatch_ledger, packet)
+        self.assertIsNotNone(terminal)
+        binding = module._role_binding(packet)
+        self.assertIsNotNone(binding)
+        _receipt, receipt_path, _checker_rollout, _artifact = self.receipt_fixture(
+            module, packet, binding, terminal
+        )
+        packet_path = self.root / "finalize-argument-retry.json"
+        command = [
+            sys.executable,
+            str(self.dispatcher),
+            "--packet",
+            str(packet_path),
+            "--ledger",
+            str(dispatch_ledger),
+            "--model-routing-ledger",
+            str(model_ledger),
+            "--model-routing-review-dir",
+            str(self.root / "reviews"),
+            "--finalize-integration",
+            "--integration-receipt",
+            str(receipt_path),
+        ]
+
+        conflicted = subprocess.run(
+            [*command, "--session-id", str(uuid.uuid4())],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=self.environment,
+        )
+        self.assertEqual(conflicted.returncode, module.EXIT_UNSAFE_LAUNCH_PATH)
+        self.assertIn("unsafe finalization path", conflicted.stderr)
+        self.assertEqual(
+            [json.loads(line)["event_type"] for line in model_ledger.read_text().splitlines()],
+            ["pre_decision"],
+        )
+
+        corrected = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            env=self.environment,
+        )
+        self.assertEqual(corrected.returncode, 0, corrected.stderr)
+        self.assertEqual(
+            [json.loads(line)["event_type"] for line in model_ledger.read_text().splitlines()],
+            ["pre_decision", "post_result"],
+        )
+
     def test_finalization_accepts_only_persisted_exact_receipt(self) -> None:
         module = self.load_dispatcher_module()
         packet, binding, runtime, rollout, terminal = self.terminal_fixture(
@@ -1137,6 +1195,20 @@ class DispatcherGateTests(unittest.TestCase):
             self.assertIsNotNone(
                 module._typed_launch_binding(
                     payload, "typed_external_worker", terra
+                )
+            )
+            altered = json.loads(json.dumps(terra))
+            altered["objective"] = "Broaden the fallback objective unexpectedly."
+            altered_tail = module._typed_exec_tail(binding, altered)
+            self.assertIsNotNone(altered_tail)
+            altered_payload = {
+                **payload,
+                "packet": altered,
+                "argv": [str(self.fake_codex), *altered_tail],
+            }
+            self.assertIsNone(
+                module._typed_launch_binding(
+                    altered_payload, "typed_external_worker", terra
                 )
             )
 

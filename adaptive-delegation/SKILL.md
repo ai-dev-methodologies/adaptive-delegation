@@ -151,6 +151,10 @@ Terra substitution is forbidden for a rejected Luna admission. A pre-creation
 rejection means no child and child token 0. Network defaults to off unless the
 packet explicitly permits it.
 
+A corrected or fallback launch envelope must canonically match the dispatched
+packet in full, including objective, scope, network, resource, budget, and
+routing fields. A matching dispatch identifier and route alone are insufficient.
+
 Use validated child session metadata/turn_context for the session, model, and
 effort. Hidden fields, hook `updatedInput`, and prompt text are not evidence.
 Model omission is valid only for a verified fixed-role selection; otherwise

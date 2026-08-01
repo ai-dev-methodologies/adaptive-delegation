@@ -99,6 +99,11 @@ surface is unavailable/rejected, validated runtime metadata mismatches, or the
 task requires a hard parent-enforced cap. Never substitute Terra merely because
 the optional override enum omits Luna.
 
+Corrected and fallback launch envelopes must match the dispatched packet's
+canonical digest, not only its dispatch identifier and routing triple. This
+keeps objective, write scope, network access, resource caps, and budget bound to
+the audited launch.
+
 ## Observable failure taxonomy and actions
 
 Classify only what can be observed at the task boundary:
