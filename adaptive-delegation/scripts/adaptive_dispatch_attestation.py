@@ -99,6 +99,7 @@ REQUIRED_PACKET_FIELDS = (
     "model_tier",
     "reasoning_effort",
     "write_scope",
+    "acceptance_evidence",
     "resource_cap",
     "evidence_path",
     "stop_condition",
@@ -1745,6 +1746,16 @@ def _validate_packet(packet: Any, source_path: Path | None) -> str | None:
         return "dispatch_id_invalid"
     if any(not isinstance(packet[field], str) for field in TRIPLE_FIELDS):
         return "routing_triple_invalid"
+    acceptance_evidence = packet.get("acceptance_evidence")
+    if (
+        not isinstance(acceptance_evidence, list)
+        or not acceptance_evidence
+        or any(
+            not isinstance(item, str) or not item.strip()
+            for item in acceptance_evidence
+        )
+    ):
+        return "acceptance_evidence_invalid"
     token_budget = packet.get("token_budget")
     if (
         isinstance(token_budget, bool)
@@ -3103,6 +3114,7 @@ def _typed_objective(packet: dict[str, Any]) -> str:
         "reasoning_effort": packet["reasoning_effort"],
         "network_access": packet.get("network_access", False),
         "write_scope": packet["write_scope"],
+        "acceptance_evidence": packet["acceptance_evidence"],
         "resource_cap": packet["resource_cap"],
         "stop_condition": packet["stop_condition"],
         "token_budget": packet["token_budget"],
@@ -3121,6 +3133,12 @@ def _typed_objective(packet: dict[str, Any]) -> str:
             contract[field] = packet[field]
     return (
         packet["objective"].rstrip()
+        + "\n\nOBJECTIVE_LOCK (binding):\n"
+        + "- Work only inside the stated objective and write_scope.\n"
+        + "- Model or reasoning escalation changes capability, not authority or scope.\n"
+        + "- Stop as soon as the required acceptance evidence passes and the stop_condition applies.\n"
+        + "- Do not add unrelated cleanup, refactoring, architectural redesign, abstraction, documentation expansion, speculative robustness, or polishing.\n"
+        + "- Report adjacent improvements as backlog findings. A broader objective requires a new explicitly authorized packet."
         + "\n\nADAPTIVE_DISPATCH_CONTRACT (binding):\n"
         + json.dumps(contract, sort_keys=True, separators=(",", ":"))
     )

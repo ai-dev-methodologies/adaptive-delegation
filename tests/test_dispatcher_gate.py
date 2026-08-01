@@ -97,6 +97,10 @@ class DispatcherGateTests(unittest.TestCase):
             "model_tier": "spark-tier",
             "reasoning_effort": "xhigh",
             "write_scope": [str(self.root)],
+            "acceptance_evidence": [
+                "The typed child exits successfully.",
+                "The trusted rollout matches the declared model and effort.",
+            ],
             "resource_cap": {
                 "processes": 1,
                 "network": False,
@@ -540,6 +544,46 @@ class DispatcherGateTests(unittest.TestCase):
         self.assertEqual(environment["HOME"], str(self.codex_home))
         self.assertTrue(set(environment).issubset({"CODEX_HOME", "HOME", *module.CHILD_ENV_ALLOWLIST}))
         self.assertTrue(set(forbidden).isdisjoint(environment))
+
+    def test_typed_objective_binds_scope_and_stop_rules(self) -> None:
+        module = self.load_dispatcher_module()
+        packet = self.packet("typed-objective-lock", "gpt-5.6-sol", "high")
+
+        objective = module._typed_objective(packet)
+
+        self.assertTrue(objective.startswith(packet["objective"]))
+        self.assertIn("OBJECTIVE_LOCK (binding):", objective)
+        self.assertIn(
+            "Model or reasoning escalation changes capability, not authority or scope.",
+            objective,
+        )
+        self.assertIn("Stop as soon as the required acceptance evidence passes", objective)
+        self.assertIn("A broader objective requires a new explicitly authorized packet.", objective)
+        contract_text = objective.split(
+            "ADAPTIVE_DISPATCH_CONTRACT (binding):\n", 1
+        )[1]
+        contract = json.loads(contract_text)
+        self.assertEqual(contract["write_scope"], packet["write_scope"])
+        self.assertEqual(
+            contract["acceptance_evidence"], packet["acceptance_evidence"]
+        )
+        self.assertEqual(contract["stop_condition"], packet["stop_condition"])
+
+    def test_packet_requires_typed_acceptance_evidence(self) -> None:
+        module = self.load_dispatcher_module()
+        packet = self.packet("acceptance-evidence-contract", "gpt-5.6-sol", "high")
+
+        packet.pop("acceptance_evidence")
+        self.assertEqual(
+            module._validate_packet(packet, self.role),
+            "packet_field_missing_or_empty:acceptance_evidence",
+        )
+
+        packet["acceptance_evidence"] = ["   "]
+        self.assertEqual(
+            module._validate_packet(packet, self.role),
+            "acceptance_evidence_invalid",
+        )
 
     def test_protected_resume_requires_isolated_canonical_argv(self) -> None:
         module = self.load_dispatcher_module()

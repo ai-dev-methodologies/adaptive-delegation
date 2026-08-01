@@ -27,7 +27,10 @@ Keep the change portable and minimal. Preserve Luna-first/effort-first
 routing, the Sol `high`-or-above main gate, fixed Native Luna role bindings,
 leaf-`ultra` prohibition, observable-evidence escalation, machine-local
 logs/state exclusion, and the repository-as-canonical rule. Do not add
-dependencies or alter product behavior without an explicit envelope.
+dependencies or alter product behavior without an explicit envelope. Model or
+reasoning escalation changes capability, not authority or scope. Stop when the
+declared acceptance evidence passes; put unrelated cleanup, redesign, and
+polishing into backlog findings unless a new task explicitly authorizes them.
 
 Run the relevant portable checks, normally:
 

@@ -229,3 +229,9 @@ changing tier when the failure is reasoning insufficiency. Move along the
 configured ladder only when evidence supports escalation. If the oracle is
 weak or the risk/contract is too high for a leaf to verify, keep authority at
 the main and use `gpt-5.6-sol/ultra`; never assign `ultra` to a leaf.
+
+Model or reasoning escalation changes capability, not authority or scope. Each
+route, including main takeover, inherits the packet's objective lock and stops
+when its acceptance evidence is proved. A weak oracle is a reason to retain
+authority at the main, not permission to redesign adjacent systems. Broader
+work requires a new, explicitly authorized task or packet.

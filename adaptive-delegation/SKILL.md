@@ -33,9 +33,10 @@ When the gate passes, before tools print exactly:
 The main owns intent, planning, integration, acceptance, and final claims.
 Start implementation in a bounded leaf. When the evidence-classified ladder is
 exhausted, the main is the final escalator and may take over the unresolved
-slice. Use Maker/Checker separation when risk warrants it: a Maker makes the
-bounded change and an independent Checker checks it. Every child is a leaf and
-reports evidence, conflicts, and its stop condition.
+slice without widening it. Model or reasoning escalation changes capability,
+never authority or scope. Use Maker/Checker separation when risk warrants it:
+a Maker makes the bounded change and an independent Checker checks it. Every
+child is a leaf and reports evidence, conflicts, and its stop condition.
 
 ## Policy source and routing defaults
 
@@ -218,6 +219,19 @@ as cryptographic proof.
 Every task begins with an **IMPLEMENTATION ENVELOPE**: objective, owned
 mutable surfaces, intended behavior, acceptance evidence, verification
 ceiling, and known side effects. Verify the smallest path proving acceptance.
+These fields form the **OBJECTIVE LOCK** for the current attempt. The lock
+applies equally to Luna and Terra leaves, Checker routes, and a Sol
+main-authority takeover. A stronger model, higher reasoning effort, retry, or
+takeover can finish the unresolved slice but cannot broaden its authority.
+
+Stop as soon as the required acceptance evidence passes and the stop condition
+applies. Do not continue into unrelated cleanup, refactoring, architectural
+generalization, abstraction, documentation expansion, speculative robustness,
+consistency polishing, or a more "complete" design unless the original
+acceptance contract requires it. Completeness, elegance, uncertainty, or spare
+budget is not scope-expansion evidence. Record adjacent improvements as concise
+backlog findings instead of implementing them.
+
 Expand only on direct evidence of a shared public contract or interface,
 shared state or invariant, security/auth/financial boundary,
 cross-process concurrency or lease semantics, schema/protocol migration or
@@ -226,7 +240,8 @@ compatibility/rollback surface, or an accepted path crossing a boundary.
 Record every **SCOPE EXPANSION** with trigger, evidence, added scope, budget,
 side effects, and stop condition. Uncertainty alone does not expand scope;
 unrelated defects are backlog findings unless they invalidate the acceptance
-claim.
+claim. A materially broader objective requires a new, explicitly authorized
+task or packet; do not silently turn a takeover into a redesign.
 
 ## Portable locations and GitHub deployment
 

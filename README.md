@@ -18,6 +18,11 @@ deployment targets, not additional policy sources.
 - Every default and escalation step resolves to an installed, package-declared
   Codex role with an exact model and reasoning effort.
 - Leaf `ultra` and silent model substitution are forbidden.
+- Model or reasoning escalation changes capability, not authority or scope.
+  Every child and main-authority takeover stays inside the original objective,
+  write scope, acceptance evidence, and stop condition. Once acceptance is
+  proved, work stops; adjacent redesign or polishing requires a new explicit
+  task.
 - Retry and escalation decisions must follow observable failure evidence and a
   contiguous route history. Arbitrary jumps and exhausted same-route retries
   fail closed.

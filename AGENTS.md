@@ -23,6 +23,10 @@ subagents. Claude Code is unsupported.
   not silently substitute Terra when Luna admission is rejected.
 - Leaf `ultra` is forbidden. `gpt-5.6-sol/ultra` is a main-authoritative
   takeover only.
+- Model or reasoning escalation changes capability, never authority or scope.
+  A main takeover inherits the exact objective, write scope, acceptance
+  evidence, and stop condition of the unresolved slice and must stop when
+  those acceptance conditions are proved.
 - Every default, ladder step, and Checker route must resolve to an installed
   package role with the exact configured model and effort. Reject arbitrary
   jumps, stale counters, exhausted retries, and silent substitutions.
@@ -37,6 +41,13 @@ subagents. Claude Code is unsupported.
   must bind the terminal event, packet, child, output/worktree, evidence, and a
   distinct Checker session, but it is not a signature or separate security
   principal.
+
+The calling request or current main-session `AGENTS.md` remains responsible for
+general scope discipline outside an active adaptive-delegation workflow. It
+should state the intended outcome, non-goals, allowed write set, acceptance
+evidence, and stop condition. While this skill is active, the packet and every
+main-authority takeover preserve that boundary; a materially broader objective
+requires a new, explicitly authorized task or packet.
 
 The policy source is
 `adaptive-delegation/config/model-routing.defaults.json`; explanatory rules

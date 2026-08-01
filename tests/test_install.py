@@ -155,6 +155,15 @@ class InstallerTests(unittest.TestCase):
             readme.startswith("# Adaptive Delegation\n\n**Codex-only skill:**")
         )
         self.assertIn("Codex native subagents", readme)
+        self.assertIn(
+            "Model or reasoning escalation changes capability, not authority or scope.",
+            readme,
+        )
+        skill = (ROOT / "adaptive-delegation" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("**OBJECTIVE LOCK**", skill)
+        self.assertIn("do not silently turn a takeover into a redesign", skill)
         self.assertIn("issue-report", reporting)
         self.assertIn("dispatch_attestation.jsonl", install)
         self.assertIn("Older installers cannot know", cross_pc)
