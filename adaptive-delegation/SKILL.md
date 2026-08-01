@@ -1,6 +1,6 @@
 ---
 name: adaptive-delegation
-description: Use when routing bounded implementation and verification work for token effective, token-effective, token efficiency, token-efficient delegation, cost-efficient subagents, Luna-first delegation, adaptive delegation, effort-first escalation, model routing audit, validate model selection, reduce Sol usage, or evidence-checked delegation requests; also match 토큰효율화 and 토큰 효율화.
+description: Codex-only skill for Codex native subagents. Use when routing bounded implementation and verification work for token effective, token-effective, token efficiency, token-efficient delegation, cost-efficient subagents, Luna-first delegation, adaptive delegation, effort-first escalation, model routing audit, validate model selection, reduce Sol usage, or evidence-checked delegation requests; also match 토큰효율화 and 토큰 효율화.
 ---
 
 # Adaptive Delegation

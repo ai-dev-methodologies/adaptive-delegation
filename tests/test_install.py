@@ -147,7 +147,9 @@ class InstallerTests(unittest.TestCase):
     def test_public_docs_are_codex_only_and_links_resolve(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         reporting = (ROOT / "REPORTING.md").read_text(encoding="utf-8")
-        self.assertIn("Codex only", readme)
+        self.assertTrue(
+            readme.startswith("# Adaptive Delegation\n\n**Codex-only skill:**")
+        )
         self.assertIn("Codex native subagents", readme)
         self.assertIn("issue-report", reporting)
 
@@ -183,6 +185,10 @@ class InstallerTests(unittest.TestCase):
         skill_path = ROOT / "adaptive-delegation" / "SKILL.md"
         skill = skill_path.read_text(encoding="utf-8")
         _, frontmatter, body = skill.split("---", 2)
+        self.assertIn(
+            "description: Codex-only skill for Codex native subagents.",
+            frontmatter,
+        )
         allowed = {
             "\ud1a0\ud070\ud6a8\uc728\ud654",
             "\ud1a0\ud070 \ud6a8\uc728\ud654",

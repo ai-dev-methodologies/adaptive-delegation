@@ -1,6 +1,6 @@
 # Adaptive Delegation
 
-**Codex only:** this repository packages a skill for Codex native subagents.
+**Codex-only skill:** this repository packages a skill for Codex native subagents.
 Claude Code and other agent runtimes are not supported execution targets.
 
 `adaptive-delegation` routes bounded Codex work through a Luna-first,

@@ -1,6 +1,6 @@
 interface:
   display_name: "Adaptive Delegation"
-  short_description: "Luna-first, evidence-logged adaptive delegation"
+  short_description: "Codex-only Luna-first adaptive delegation"
   default_prompt: "Use $adaptive-delegation for Native fixed-role Luna-first, effort-first, evidence-checked delegation of this bounded task."
 policy:
   allow_implicit_invocation: true
