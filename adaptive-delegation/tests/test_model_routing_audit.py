@@ -675,6 +675,124 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertIn("must begin at attempt_index 1", result.stderr)
         self.assertEqual(self.ledger.read_text(encoding="utf-8"), "")
 
+    def test_pending_current_attempt_blocks_interleaved_duplicate_index(self):
+        task_id = "pending-current-task"
+        self.record(
+            "pending-current-first.json",
+            self.current_pre("pending-current-first", task_id),
+        )
+
+        duplicate = self.current_pre("pending-current-duplicate", task_id)
+        result = self.run_cli(
+            "record",
+            "--event-file",
+            self.write_event("pending-current-duplicate.json", duplicate),
+            "--ledger",
+            self.ledger,
+            "--review-dir",
+            self.review_dir,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("task has a pending attempt", result.stderr)
+        self.assertEqual(len(self.ledger.read_text(encoding="utf-8").splitlines()), 1)
+
+    def test_weak_oracle_can_take_over_directly_but_raise_model_cannot(self):
+        task_id = "weak-oracle-direct-main"
+        first = self.current_pre(
+            "weak-oracle-first",
+            task_id,
+            route_id="luna_xhigh",
+        )
+        first["rationale"].update(
+            task_class="bounded_complex_implementation_or_verification",
+            oracle_strength="weak",
+        )
+        self.record("weak-oracle-first-pre.json", first)
+
+        failed = self.current_post("weak-oracle-first", task_id)
+        failed.update(
+            final_model=first["model"],
+            final_model_tier=first["model_tier"],
+            final_reasoning_effort=first["reasoning_effort"],
+            final_route_id=first["route_id"],
+            final_role=first["role"],
+            failure_class="weak_oracle",
+            post_result_detail={
+                "observable_result_signals": ["evidence_inconclusive"],
+                "evidence_references": ["receipt-weak-oracle-first"],
+                "route_assessment": "inconclusive",
+                "next_action": "main_takeover",
+            },
+        )
+        self.record("weak-oracle-first-post.json", failed)
+
+        takeover = self.current_pre(
+            "weak-oracle-main",
+            task_id,
+            index=2,
+            route_id="main_takeover_sol_ultra",
+        )
+        takeover["planned_model_escalations"] = 1
+        takeover["rationale"].update(
+            task_class="bounded_complex_implementation_or_verification",
+            oracle_strength="weak",
+            prior_failure_class="weak_oracle",
+        )
+        self.record("weak-oracle-main-pre.json", takeover)
+
+        wrong_task = "raise-model-main-task"
+        terra = self.current_pre(
+            "raise-model-terra",
+            wrong_task,
+            route_id="terra_max",
+        )
+        terra["override_reason"] = "Bounded test setup at the final leaf route."
+        terra["rationale"].update(
+            task_class="bounded_complex_implementation_or_verification",
+            oracle_strength="weak",
+            selection_basis="human_override",
+        )
+        self.record("raise-model-terra-pre.json", terra)
+        terra_post = self.current_post("raise-model-terra", wrong_task)
+        terra_post.update(
+            final_model=terra["model"],
+            final_model_tier=terra["model_tier"],
+            final_reasoning_effort=terra["reasoning_effort"],
+            final_route_id=terra["route_id"],
+            final_role=terra["role"],
+            failure_class="reasoning_insufficiency",
+            post_result_detail={
+                "observable_result_signals": ["tests_failed"],
+                "evidence_references": ["receipt-raise-model-terra"],
+                "route_assessment": "inconclusive",
+                "next_action": "raise_model",
+            },
+        )
+        self.record("raise-model-terra-post.json", terra_post)
+        invalid_main = self.current_pre(
+            "raise-model-main",
+            wrong_task,
+            index=2,
+            route_id="main_takeover_sol_ultra",
+        )
+        invalid_main["planned_model_escalations"] = 1
+        invalid_main["rationale"].update(
+            task_class="bounded_complex_implementation_or_verification",
+            oracle_strength="weak",
+        )
+        result = self.run_cli(
+            "record",
+            "--event-file",
+            self.write_event("raise-model-main-pre.json", invalid_main),
+            "--ledger",
+            self.ledger,
+            "--review-dir",
+            self.review_dir,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("raise_model cannot select", result.stderr)
+
     def test_same_route_retry_budget_resets_after_route_transition(self):
         task_id = "per-stage-retry-task"
 

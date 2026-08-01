@@ -1013,12 +1013,15 @@ def _check_current_transition(previous: tuple[dict[str, Any], dict[str, Any]], c
         if not same_route:
             raise AuditError("same-route action cannot transition to a different route")
     elif action in {"raise_effort", "raise_model", "main_takeover"}:
-        if current_index != previous_index + 1:
+        expected_index = len(ladder) - 1 if action == "main_takeover" else previous_index + 1
+        if current_index != expected_index:
             raise AuditError("route transition skipped or repeated a ladder step")
         if action == "raise_effort" and current["model"] != prior_pre["model"]:
             raise AuditError("raise_effort must retain the model")
         if action == "raise_model" and current["model"] == prior_pre["model"]:
             raise AuditError("raise_model must change the model")
+        if action == "raise_model" and current["role"] == "main-authority":
+            raise AuditError("raise_model cannot select the main-authority route")
         if action == "main_takeover" and current["role"] != "main-authority":
             raise AuditError("main_takeover must select the main-authority route")
     else:
@@ -1033,6 +1036,8 @@ def _check_sequence(events: list[dict[str, Any]]) -> tuple[list[tuple[dict[str, 
     seen: dict[tuple[str, str], dict[str, Any]] = {}
     pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
     history: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    pending_current: dict[str, dict[str, Any]] = {}
+    highest_current_attempt: dict[str, int] = {}
     policy = _load_policy()
     for event in events:
         key = _pair_key(event)
@@ -1055,6 +1060,12 @@ def _check_sequence(events: list[dict[str, Any]]) -> tuple[list[tuple[dict[str, 
                 raise AuditError(f"post_result cannot precede pre_decision for {label}")
             prior_history = history.get(event["task_id"], [])
             current_policy_event = _is_current_policy_event(event, policy)
+            if current_policy_event:
+                if event["task_id"] in pending_current:
+                    raise AuditError("task has a pending attempt")
+                highest_index = highest_current_attempt.get(event["task_id"])
+                if highest_index is not None and event["attempt_index"] != highest_index + 1:
+                    raise AuditError("current-policy attempt_index must be contiguous")
             if not prior_history and current_policy_event:
                 if event["attempt_index"] != 1:
                     raise AuditError(
@@ -1085,9 +1096,14 @@ def _check_sequence(events: list[dict[str, Any]]) -> tuple[list[tuple[dict[str, 
                     if event["route_id"] == prior_history[-1][0]["route_id"] and same_retries >= max_retries:
                         raise AuditError("same route retry budget is exhausted")
             seen[key] = event
+            if current_policy_event:
+                pending_current[event["task_id"]] = event
+                highest_current_attempt[event["task_id"]] = event["attempt_index"]
         if event_type == "post_result":
             if pair_pre is not None:
                 history.setdefault(event["task_id"], []).append((pair_pre, event))
+                if pending_current.get(event["task_id"]) is pair_pre:
+                    pending_current.pop(event["task_id"], None)
     incomplete = sum(1 for event in seen.values() if event["event_type"] == "pre_decision")
     return pairs, incomplete
 

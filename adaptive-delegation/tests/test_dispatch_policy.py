@@ -241,6 +241,25 @@ class DispatchPolicyTests(unittest.TestCase):
             ),
             "luna_xhigh",
         )
+        self.assertEqual(
+            contract.route_transition(
+                policy,
+                task_class="bounded_complex_implementation_or_verification",
+                oracle_strength="weak",
+                previous_route="luna_xhigh",
+                next_action="main_takeover",
+            ),
+            "main_takeover_sol_ultra",
+        )
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.route_transition(
+                policy,
+                task_class="bounded_complex_implementation_or_verification",
+                oracle_strength="weak",
+                previous_route="terra_max",
+                next_action="raise_model",
+            )
+        self.assertEqual(caught.exception.code, "TRANSITION_KIND_MISMATCH")
         with self.assertRaises(contract.PolicyContractError):
             contract.validate_route_selection(
                 policy,

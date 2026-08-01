@@ -23,6 +23,11 @@ The installer deploys the complete package to
 `$CODEX_HOME/agents/`. The package config remains the only routing-policy source
 of truth.
 
+When intentionally installing an older revision, compare its declared
+`role_bindings` with `$CODEX_HOME/agents/adaptive-*.toml` and remove only
+adaptive role files absent from that revision. Older installers cannot know
+role names introduced later.
+
 ## Do not transfer runtime state
 
 Authenticate Codex independently on the target computer. Never copy:

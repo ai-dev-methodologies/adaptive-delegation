@@ -737,6 +737,65 @@ class DispatcherGateTests(unittest.TestCase):
         self.assertEqual(result, module.EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE)
         load_receipt.assert_not_called()
 
+    def test_pre_gate_finalization_failure_keeps_attempt_pending_for_retry(self) -> None:
+        packet = self.packet("finalize-precondition-retry", "gpt-5.6-sol", "high")
+        packet["write_scope"] = ["read-only"]
+        result, model_ledger = self.run_packet(packet)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        module = self.load_dispatcher_module()
+        dispatch_ledger = self.root / "dispatch.jsonl"
+        terminal = module._load_terminal_event(dispatch_ledger, packet)
+        self.assertIsNotNone(terminal)
+        binding = module._role_binding(packet)
+        self.assertIsNotNone(binding)
+        _receipt, receipt_path, _checker_rollout, _artifact = self.receipt_fixture(
+            module, packet, binding, terminal
+        )
+        packet_path = self.root / "finalize-precondition-retry.json"
+        command = [
+            sys.executable,
+            str(self.dispatcher),
+            "--packet",
+            str(packet_path),
+            "--model-routing-ledger",
+            str(model_ledger),
+            "--model-routing-review-dir",
+            str(self.root / "reviews"),
+            "--finalize-integration",
+            "--integration-receipt",
+            str(receipt_path),
+        ]
+
+        missing_terminal = subprocess.run(
+            [*command, "--ledger", str(self.root / "missing-terminal.jsonl")],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=self.environment,
+        )
+        self.assertEqual(
+            missing_terminal.returncode,
+            module.EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE,
+            missing_terminal.stderr,
+        )
+        self.assertEqual(
+            [json.loads(line)["event_type"] for line in model_ledger.read_text().splitlines()],
+            ["pre_decision"],
+        )
+
+        corrected = subprocess.run(
+            [*command, "--ledger", str(dispatch_ledger)],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=self.environment,
+        )
+        self.assertEqual(corrected.returncode, 0, corrected.stderr)
+        self.assertEqual(
+            [json.loads(line)["event_type"] for line in model_ledger.read_text().splitlines()],
+            ["pre_decision", "post_result"],
+        )
+
     def test_finalization_accepts_only_persisted_exact_receipt(self) -> None:
         module = self.load_dispatcher_module()
         packet, binding, runtime, rollout, terminal = self.terminal_fixture(
@@ -1037,6 +1096,135 @@ class DispatcherGateTests(unittest.TestCase):
         self.assertEqual(admission["selection_mode"], "verified-fixed-agent-type")
         self.assertIsNone(admission["rejection_reason"])
         self.assertNotIn("model", receipt_value["original_callable_schema"])
+
+    def test_recovery_launch_is_bound_to_dispatched_packet_and_route(self) -> None:
+        module = self.load_dispatcher_module()
+        primary = self.packet("bound-recovery", "gpt-5.6-sol", "high")
+        terra = json.loads(json.dumps(primary))
+        terra_role = self.codex_home / "agents" / "adaptive-terra-maker-xhigh.toml"
+        terra.update(
+            agent_type="adaptive-terra-maker-xhigh",
+            model_tier="standard-tier",
+            evidence_path=str(terra_role),
+        )
+        terra["routing_audit"].update(
+            selection_basis="human_override",
+            override_reason="Bounded fallback substitution regression setup.",
+            route_id="terra_xhigh",
+            role="adaptive-terra-maker-xhigh",
+            route_model="gpt-5.6-terra",
+            route_model_tier="standard-tier",
+            route_reasoning_effort="xhigh",
+        )
+        binding = module._role_binding(terra)
+        self.assertIsNotNone(binding)
+        with mock.patch.dict(os.environ, self.environment, clear=False):
+            tail = module._typed_exec_tail(binding, terra)
+            self.assertIsNotNone(tail)
+            payload = {
+                "launch_type": "typed_external_worker",
+                "packet": terra,
+                "agent_type": binding.agent_type,
+                "role_config": str(binding.role_config),
+                "runtime_home": str(self.leaf_home),
+                "argv": [str(self.fake_codex), *tail],
+            }
+            self.assertIsNone(
+                module._typed_launch_binding(
+                    payload, "typed_external_worker", primary
+                )
+            )
+            self.assertIsNotNone(
+                module._typed_launch_binding(
+                    payload, "typed_external_worker", terra
+                )
+            )
+
+    def test_provenance_rejections_record_zero_child_rejected_shape(self) -> None:
+        module = self.load_dispatcher_module()
+        packet = self.packet("provenance-zero-child", "gpt-5.6-sol", "high")
+        binding = module._role_binding(packet)
+        self.assertIsNotNone(binding)
+        session_id = str(uuid.uuid4())
+        base = {
+            "receipt_kind": "native_admission",
+            "receipt_version": module.RECEIPT_VERSION,
+            "dispatch_id": packet["dispatch_id"],
+            "surface_identity": "codex-app.collaboration.spawn_agent",
+            "original_callable_schema": {
+                "agent_type": "installed-role-enum",
+                "reasoning_effort": "string",
+                "fork_turns": "none",
+            },
+            "selection_mode": "verified-fixed-agent-type",
+            "desired_route": "native_v2",
+            "explicit_route": "native_v2",
+            "installed_binding": {
+                **module._binding_triple(binding),
+                "fork_turns": "none",
+            },
+            "explicit_arguments": {
+                "agent_type": binding.agent_type,
+                "reasoning_effort": binding.effort,
+                "fork_turns": "none",
+            },
+            "allowlist": [module._binding_triple(binding)],
+            "gate_events": [
+                {"name": "pending_receipt", "monotonic_ns": 1},
+                {"name": "native_spawn_gate", "monotonic_ns": 2},
+                {"name": "child_creation_eligibility", "monotonic_ns": 3},
+            ],
+            "issuer": {
+                "rollout_session_id": session_id,
+                "role": module._binding_triple(binding),
+                "role_config": str(binding.role_config),
+                "role_config_digest": module._role_config_digest(binding),
+            },
+        }
+        path = self.root / "provenance-receipt.json"
+        path.write_text("{}", encoding="utf-8")
+        path.chmod(0o600)
+        cases = {
+            "invalid_admission_receipt": None,
+            "receipt_kind_or_version_invalid": {**base, "receipt_kind": "wrong"},
+            "admission_dispatch_id_mismatch": {**base, "dispatch_id": "other"},
+            "trusted_precreation_issuer_missing": {
+                **base,
+                "issuer": {**base["issuer"], "rollout_session_id": "other-session"},
+            },
+            "admission_issuer_binding_mismatch": {
+                **base,
+                "issuer": {**base["issuer"], "role_config": str(self.role) + ".wrong"},
+            },
+            "admission_role_config_digest_invalid": {
+                **base,
+                "issuer": {**base["issuer"], "role_config_digest": "0" * 64},
+            },
+            "trusted_precreation_marker_missing": base,
+        }
+        for reason, value in cases.items():
+            with self.subTest(reason=reason):
+                structural_value = base if value is None else value
+                envelope = module.ReceiptEnvelope(structural_value, path)
+                structural = module._native_structural_admission(
+                    envelope,
+                    binding,
+                    dispatch_id=packet["dispatch_id"],
+                )
+                provenance_value = None if value is None else envelope
+                receipt = module._native_admission_provenance(
+                    provenance_value,
+                    structural,
+                    binding,
+                    dispatch_id=packet["dispatch_id"],
+                    rollout=None,
+                    session_id=session_id,
+                )
+                self.assertEqual(receipt["rejection_reason"], reason)
+                self.assertEqual(receipt["status"], "rejected")
+                self.assertEqual(receipt["child_count"], 0)
+                self.assertEqual(receipt["child_tokens"], 0)
+                self.assertEqual(receipt["selected_fallback"], "typed_external_worker")
 
 
 if __name__ == "__main__":

@@ -190,7 +190,14 @@ def route_transition(policy: Mapping[str, Any], task_class: str, oracle_strength
         raise _route_error("ROUTE_HISTORY_INVALID", "previous route is outside the ladder") from None
     if next_action in {"retain_route", "retry_same_route", "narrow_scope", "environment_retry"}:
         return previous_route
-    if next_action in {"raise_effort", "raise_model", "main_takeover"}:
+    if next_action == "main_takeover":
+        candidate = ladder[-1]
+        if candidate == previous_route:
+            raise _route_error("LADDER_EXHAUSTED", "main authority is already selected")
+        if route_for(policy, candidate)["authority"] != "main":
+            raise _route_error("TRANSITION_KIND_MISMATCH", "main_takeover must end at main authority")
+        return candidate
+    if next_action in {"raise_effort", "raise_model"}:
         if index + 1 >= len(ladder):
             raise _route_error("LADDER_EXHAUSTED", "no next route remains")
         candidate = ladder[index + 1]
@@ -199,8 +206,8 @@ def route_transition(policy: Mapping[str, Any], task_class: str, oracle_strength
             raise _route_error("TRANSITION_KIND_MISMATCH", "raise_effort must retain the model")
         if next_action == "raise_model" and previous["model"] == following["model"]:
             raise _route_error("TRANSITION_KIND_MISMATCH", "raise_model must change the model")
-        if next_action == "main_takeover" and following["authority"] != "main":
-            raise _route_error("TRANSITION_KIND_MISMATCH", "main_takeover must end at main authority")
+        if next_action == "raise_model" and following["authority"] == "main":
+            raise _route_error("TRANSITION_KIND_MISMATCH", "raise_model cannot select main authority")
         return candidate
     raise _route_error("NEXT_ACTION_TERMINAL", "next action does not select another route")
 

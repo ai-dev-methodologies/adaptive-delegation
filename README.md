@@ -26,7 +26,8 @@ deployment targets, not additional policy sources.
   exact packet, child terminal result, output/worktree digests, route, and a
   distinct Checker session.
 - Successful execution remains pending in the append-only routing ledger until
-  integration finalization succeeds; only then is an accepted result recorded.
+  integration finalization succeeds; receipt or pre-gate finalization failures
+  remain pending, and only a successful finalization records acceptance.
 
 The main-authority gate uses declared current-session context. Local receipts
 provide same-user integrity and consistency checks; they are not signatures,

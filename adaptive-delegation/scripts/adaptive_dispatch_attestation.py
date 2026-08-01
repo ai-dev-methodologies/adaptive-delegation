@@ -359,33 +359,33 @@ def _native_admission_provenance(
     session_id: str | None,
 ) -> dict[str, Any]:
     """Require a secure, rollout-bound envelope before protected execution."""
+    def reject(reason: str) -> dict[str, Any]:
+        receipt.update(
+            rejection_reason=reason,
+            status="rejected",
+            child_count=0,
+            child_tokens=0,
+            selected_fallback="typed_external_worker",
+        )
+        return receipt
+
     value, receipt_path = _receipt_value(value)
     if value is None or receipt_path is None:
-        receipt["rejection_reason"] = "invalid_admission_receipt"
-        receipt["status"] = "rejected"
-        return receipt
+        return reject("invalid_admission_receipt")
     if value.get("receipt_kind") != "native_admission" or value.get("receipt_version") != RECEIPT_VERSION:
-        receipt["rejection_reason"] = "receipt_kind_or_version_invalid"
-        receipt["status"] = "rejected"
-        return receipt
+        return reject("receipt_kind_or_version_invalid")
     if value.get("dispatch_id") != dispatch_id:
-        receipt["rejection_reason"] = "admission_dispatch_id_mismatch"
-        receipt["status"] = "rejected"
-        return receipt
+        return reject("admission_dispatch_id_mismatch")
     issuer = value.get("issuer")
     if not isinstance(issuer, dict) or issuer.get("rollout_session_id") != session_id:
-        receipt["rejection_reason"] = "trusted_precreation_issuer_missing"
-        return receipt
+        return reject("trusted_precreation_issuer_missing")
     if issuer.get("role") != _binding_triple(binding) or issuer.get("role_config") != str(binding.role_config):
-        receipt["rejection_reason"] = "admission_issuer_binding_mismatch"
-        return receipt
+        return reject("admission_issuer_binding_mismatch")
     role_digest = _role_config_digest(binding)
     if role_digest is None or issuer.get("role_config_digest") != role_digest:
-        receipt["rejection_reason"] = "admission_role_config_digest_invalid"
-        return receipt
+        return reject("admission_role_config_digest_invalid")
     if not _rollout_has_receipt_marker(rollout, session_id, value):
-        receipt["rejection_reason"] = "trusted_precreation_marker_missing"
-        return receipt
+        return reject("trusted_precreation_marker_missing")
     receipt["gate_order"] = list(NATIVE_GATE_ORDER)
     receipt["rejection_reason"] = None
     receipt["child_count"] = None
@@ -3223,7 +3223,7 @@ def _resolved_executable(value: str) -> Path | None:
 
 
 def _typed_launch_binding(
-    payload: dict[str, Any], expected_type: str
+    payload: dict[str, Any], expected_type: str, dispatched_packet: dict[str, Any]
 ) -> RecoveryLaunch | None:
     if payload.get("launch_type") != expected_type:
         return None
@@ -3255,6 +3255,12 @@ def _typed_launch_binding(
         return None
     if _validate_packet(packet, role_config) is not None:
         return None
+    if (
+        _validate_packet(dispatched_packet, None) is not None
+        or packet["dispatch_id"].strip() != dispatched_packet["dispatch_id"].strip()
+        or _intended_triple(packet) != _intended_triple(dispatched_packet)
+    ):
+        return None
     if packet["agent_type"].strip() != agent_type:
         return None
 
@@ -3281,14 +3287,16 @@ def _typed_launch_binding(
     return RecoveryLaunch(expected_type, packet, argv, binding, source, runtime_home)
 
 
-def _load_recovery(path: Path, expected_type: str) -> RecoveryLaunch | None:
+def _load_recovery(
+    path: Path, expected_type: str, dispatched_packet: dict[str, Any]
+) -> RecoveryLaunch | None:
     try:
         payload = _load_json(path)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return None
     if not isinstance(payload, dict):
         return None
-    return _typed_launch_binding(payload, expected_type)
+    return _typed_launch_binding(payload, expected_type, dispatched_packet)
 
 
 def _direct_typed_launch(packet: dict[str, Any]) -> RecoveryLaunch | None:
@@ -3643,17 +3651,22 @@ def _finalize_integration(
     execution_status: dict[str, Any] | None = None,
 ) -> int:
     """Phase two: evaluate one receipt after a trusted terminal event exists."""
+    def precondition_failure(code: int) -> int:
+        if execution_status is not None:
+            execution_status["finalize_precondition_failed"] = True
+        return code
+
     if _validate_packet(packet, None) is not None or not isinstance(packet, dict):
-        return EXIT_INVALID_PACKET
+        return precondition_failure(EXIT_INVALID_PACKET)
     binding = _role_binding(packet)
     if binding is None:
-        return EXIT_UNSAFE_LAUNCH_PATH
+        return precondition_failure(EXIT_UNSAFE_LAUNCH_PATH)
     terminal_event = _load_terminal_event(ledger, packet)
     if terminal_event is None:
-        return EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE
+        return precondition_failure(EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE)
     runtime = _trusted_terminal_runtime(terminal_event)
     if runtime is None:
-        return EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE
+        return precondition_failure(EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE)
     terminal = terminal_event.value
     selected_launch_path = terminal.get("selected_launch_path")
     parent_enforced = terminal.get("parent_enforced")
@@ -3664,7 +3677,7 @@ def _finalize_integration(
         or not isinstance(rollout, dict)
         or not isinstance(rollout.get("path"), str)
     ):
-        return EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE
+        return precondition_failure(EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE)
 
     # This is intentionally the first receipt read in the entire acceptance path.
     receipt = _load_receipt(receipt_path)
@@ -3939,7 +3952,9 @@ def _dispatch_main(
         if args.corrected_launch is None:
             _print_error("safe corrected launch missing")
             return EXIT_UNSAFE_LAUNCH_PATH
-        launch = _load_recovery(args.corrected_launch, "corrected_typed_worker")
+        launch = _load_recovery(
+            args.corrected_launch, "corrected_typed_worker", packet
+        )
         if launch is None:
             _print_error("unsafe corrected launch")
             return EXIT_UNSAFE_LAUNCH_PATH
@@ -3957,7 +3972,7 @@ def _dispatch_main(
     if args.fallback_launch is None:
         _print_error("safe fallback launch missing")
         return EXIT_UNSAFE_LAUNCH_PATH
-    launch = _load_recovery(args.fallback_launch, "typed_external_worker")
+    launch = _load_recovery(args.fallback_launch, "typed_external_worker", packet)
     if launch is None:
         _print_error("unsafe fallback launch")
         return EXIT_UNSAFE_LAUNCH_PATH
@@ -4015,7 +4030,7 @@ def _audited_dispatch(args: argparse.Namespace, packet: Any) -> int:
             bool(status.get("execution_completed"))
             and bool(status.get("child_succeeded"))
             and not bool(status.get("integration_accepted"))
-        )
+        ) or bool(status.get("finalize_precondition_failed"))
         if awaiting_integration:
             return result
         try:

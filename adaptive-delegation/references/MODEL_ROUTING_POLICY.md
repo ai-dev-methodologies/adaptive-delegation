@@ -56,6 +56,10 @@ next step returns to the main authority. Scope or retrieval overbreadth narrows
 the envelope and retries the same route; a tool or environment failure repairs
 the environment and retries the same route.
 
+`weak_oracle` is the deliberate exception to adjacent-step escalation: its
+`main_takeover` action moves directly from any current leaf step to the final
+main-authority step. `raise_model` can never select that main-authority step.
+
 The configured ladders are:
 
 - Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> main-takeover sol/ultra`.
@@ -121,7 +125,9 @@ policy gate records its terminal `post_result` immediately. A successful child
 execution remains an incomplete audit attempt until the separate integration
 finalization succeeds; only then is the accepted `post_result` appended. This
 prevents an execution-only success from being frozen as a rejected result that
-later finalization cannot replace in the append-only ledger. The records
+later finalization cannot replace in the append-only ledger. Receipt-gate and
+pre-gate finalization failures also remain pending for a corrected submission.
+The records
 identify the selected model and effort, task shape, bounded envelope, evidence
 observed, outcome, failure class if any, escalation or retry action, and next
 decision. This local ledger contains machine-local identifiers and evidence

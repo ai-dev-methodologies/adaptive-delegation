@@ -102,6 +102,12 @@ python3 scripts/install.py
 Return to the desired branch or revision and repeat those steps to move
 forward again.
 
+An older installer cannot know role names introduced by a newer revision.
+After installing an older revision, compare
+`$CODEX_HOME/agents/adaptive-*.toml` with that revision's
+`adaptive-delegation/config/model-routing.defaults.json` `role_bindings`, and
+remove only adaptive role files that the installed revision does not declare.
+
 ## Privacy and local state
 
 Never copy, commit, attach, or publish:
@@ -110,6 +116,7 @@ Never copy, commit, attach, or publish:
 - `$CODEX_HOME/state/model-routing/attempts.jsonl`;
 - `$CODEX_HOME/state/model-routing/reviews/`;
 - `$CODEX_HOME/state/adaptive-delegation/continuity.jsonl`;
+- `$CODEX_HOME/state/adaptive-delegation/dispatch_attestation.jsonl`;
 - Codex rollout or session records; or
 - repository-local hidden runtime-state directories.
 

@@ -63,6 +63,10 @@ reevaluation after every attempt. The effort-first ladders are:
 - Bounded complex work with a strong oracle may omit `terra/xhigh` but may not skip any other configured step.
 - Weak-oracle, ambiguous/high-risk, or long-contract work stays main-authoritative at `sol/ultra`.
 
+For a `weak_oracle` failure discovered on a leaf, `main_takeover` moves directly
+to the final main-authority step. It is not an adjacent leaf escalation, and
+`raise_model` cannot select main authority.
+
 Every leaf step and Checker route resolves to a package-declared role with the
 exact model and effort. `sol/ultra` is a main-authority route, never a child
 role. The runtime validator rejects unknown routes, skipped steps, mismatched
@@ -196,7 +200,8 @@ execution closes that attempt immediately. A successful child remains pending
 with no `post_result` until integration finalization succeeds, at which point
 the accepted terminal result is appended. A failed receipt stays pending so a
 corrected, independently checked receipt can be submitted without rewriting
-history.
+history. A failure before the receipt gate also remains pending for corrected
+finalization.
 
 This is same-user local integrity checking, not a signature, remote
 attestation, or a separate security principal. A malicious process running as
