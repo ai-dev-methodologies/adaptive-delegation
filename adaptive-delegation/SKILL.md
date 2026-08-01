@@ -94,9 +94,11 @@ Do not invent a failure class from an unseen reasoning chain. Log an ambiguous
 observation before freezing a weak rule. Prefer an auditable observation to a
 confident rule unsupported by evidence.
 
-Central append-only attempt records live at
-`~/.codex/state/model-routing/attempts.jsonl`; review records live at
-`~/.codex/state/model-routing/reviews/`. Every attempt record has a
+The resolved runtime home is `$CODEX_HOME` when it is set, otherwise
+`~/.codex`; in a shell, set `RUNTIME_HOME="${CODEX_HOME:-$HOME/.codex}"` once
+from that rule and never read or fall back outside it. Central
+append-only attempt records live at `$RUNTIME_HOME/state/model-routing/attempts.jsonl`;
+review records live at `$RUNTIME_HOME/state/model-routing/reviews/`. Every attempt record has a
 `pre_decision` or `post_result` type. Linked v0.2 records capture the declared
 main authority, policy and surface fingerprints, pre-selection rationale,
 observed result, exact effort/model escalation counts, execution completion,
@@ -117,8 +119,11 @@ never publishes or uploads the ledger.
 
 Before routing, consult
 [TOKEN_EFFICIENCY_CONTINUITY.md](TOKEN_EFFICIENCY_CONTINUITY.md):
-read only the latest three relevant accepted continuity records, reuse valid
-decisions and evidence paths unless newer direct evidence invalidates them,
+run `python3 "$RUNTIME_HOME/skills/adaptive-delegation/scripts/read_continuity.py"
+--workspace "$WORKSPACE" --objective-key "$OBJECTIVE_KEY"` with exact values;
+it returns at most the
+latest three accepted matching records. Never `tail`, `grep`, or `cat` a
+continuity ledger. Reuse valid decisions and evidence paths unless newer direct evidence invalidates them,
 and do not reload unrelated raw logs. At acceptance or handoff, exactly one
 designated recorder appends the compact record: the independent Checker when
 present, otherwise the sole verified executor. `token_budget` is
@@ -165,7 +170,7 @@ child and returns control to root.
 ## Packets, truthful caps, and integration
 
 Every packet states the objective, owned mutable surfaces, acceptance evidence,
-resource cap, token budget, stop condition, collision ownership, and side
+verification ceiling, resource cap, token budget, stop condition, collision ownership, and side
 effects. Packets are narrow planning inputs, not proof of enforcement. For
 Native V2, caps are unavailable/planning/advisory unless trusted live parent
 monitoring exists; mark enforcement unavailable and never claim `parent_enforced` or
@@ -247,12 +252,12 @@ task or packet; do not silently turn a takeover into a redesign.
 
 | Purpose | Location |
 | --- | --- |
-| Adaptive-delegation package | `~/.codex/skills/adaptive-delegation/` |
-| Policy source of truth | `~/.codex/skills/adaptive-delegation/config/model-routing.defaults.json` |
-| Package dispatcher | `~/.codex/scripts/adaptive_dispatch_attestation.py` |
-| Model-routing attempts | `~/.codex/state/model-routing/attempts.jsonl` |
-| Model-routing reviews | `~/.codex/state/model-routing/reviews/` |
-| Continuity ledger | `~/.codex/state/adaptive-delegation/continuity.jsonl` |
+| Adaptive-delegation package | `$RUNTIME_HOME/skills/adaptive-delegation/` |
+| Policy source of truth | `$RUNTIME_HOME/skills/adaptive-delegation/config/model-routing.defaults.json` |
+| Package dispatcher | `$RUNTIME_HOME/scripts/adaptive_dispatch_attestation.py` |
+| Model-routing attempts | `$RUNTIME_HOME/state/model-routing/attempts.jsonl` |
+| Model-routing reviews | `$RUNTIME_HOME/state/model-routing/reviews/` |
+| Continuity ledger | `$RUNTIME_HOME/state/adaptive-delegation/continuity.jsonl` |
 
 The standalone repository is the portable source for Codex deployment.
 Deployment fetches the repository and runs `python3 scripts/install.py`; see

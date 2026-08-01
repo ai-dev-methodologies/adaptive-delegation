@@ -3,9 +3,14 @@
 This continuity guidance is part of the Codex-only `adaptive-delegation`
 skill and applies to Codex native subagents.
 
-Use `~/.codex/state/adaptive-delegation/continuity.jsonl` to carry
-accepted decisions between sessions without reloading raw logs. Before routing,
-read at most the latest 3 records matching workspace/objective_key; reuse
+The resolved runtime home is `$CODEX_HOME` when it is set, otherwise
+`~/.codex`; in a shell, set `RUNTIME_HOME="${CODEX_HOME:-$HOME/.codex}"` once
+from that rule and never read or fall back outside it. Before routing,
+run `python3 "$RUNTIME_HOME/skills/adaptive-delegation/scripts/read_continuity.py"
+--workspace "$WORKSPACE" --objective-key "$OBJECTIVE_KEY"`. It reads only
+`$RUNTIME_HOME/state/adaptive-delegation/continuity.jsonl` and returns at most
+the latest 3 accepted exact workspace/objective_key matches. Never use raw
+`tail`, `grep`, or `cat` on a continuity ledger. Reuse
 still-valid decisions/evidence paths and invalidate them only with newer direct
 evidence. Each new record includes a complete carry_forward snapshot, so older
 raw logs are unnecessary.
@@ -39,8 +44,8 @@ is unavailable or rejected, runtime evidence mismatches, or a hard cap requires
 the parent-monitored path.
 
 Future model-selection validation requests automatically read
-`~/.codex/state/model-routing/attempts.jsonl` and the latest reviews under
-`~/.codex/state/model-routing/reviews/` in addition to the latest three
+`$RUNTIME_HOME/state/model-routing/attempts.jsonl` and the latest reviews under
+`$RUNTIME_HOME/state/model-routing/reviews/` in addition to the latest three
 relevant continuity records. Use those records as compact evidence and do not
 reload unrelated raw logs. Never store prompt payloads, transcript payloads,
 credential payloads, or their raw contents in the continuity ledger, attempt

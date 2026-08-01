@@ -101,6 +101,7 @@ class DispatcherGateTests(unittest.TestCase):
                 "The typed child exits successfully.",
                 "The trusted rollout matches the declared model and effort.",
             ],
+            "verification_ceiling": "Run the named acceptance evidence only; stop once it passes.",
             "resource_cap": {
                 "processes": 1,
                 "network": False,
@@ -568,6 +569,7 @@ class DispatcherGateTests(unittest.TestCase):
             contract["acceptance_evidence"], packet["acceptance_evidence"]
         )
         self.assertEqual(contract["stop_condition"], packet["stop_condition"])
+        self.assertEqual(contract["verification_ceiling"], packet["verification_ceiling"])
 
     def test_packet_requires_typed_acceptance_evidence(self) -> None:
         module = self.load_dispatcher_module()
@@ -583,6 +585,22 @@ class DispatcherGateTests(unittest.TestCase):
         self.assertEqual(
             module._validate_packet(packet, self.role),
             "acceptance_evidence_invalid",
+        )
+
+    def test_packet_requires_nonempty_verification_ceiling(self) -> None:
+        module = self.load_dispatcher_module()
+        packet = self.packet("verification-ceiling-contract", "gpt-5.6-sol", "high")
+
+        packet.pop("verification_ceiling")
+        self.assertEqual(
+            module._validate_packet(packet, self.role),
+            "packet_field_missing_or_empty:verification_ceiling",
+        )
+
+        packet["verification_ceiling"] = "   "
+        self.assertEqual(
+            module._validate_packet(packet, self.role),
+            "packet_field_missing_or_empty:verification_ceiling",
         )
 
     def test_protected_resume_requires_isolated_canonical_argv(self) -> None:

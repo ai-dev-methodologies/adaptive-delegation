@@ -22,6 +22,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - requires Python <= 3.10
 
 PACKAGE_NAME = "adaptive-delegation"
 DISPATCHER_NAME = "adaptive_dispatch_attestation.py"
+CONTINUITY_READER_NAME = "read_continuity.py"
 SKIP_NAMES = {".DS_Store", "__pycache__"}
 MANAGED_ROLE_NAME = re.compile(r"^adaptive-[a-z0-9-]+$")
 
@@ -77,6 +78,7 @@ def _validate_package(package: Path) -> list[Path]:
         package / "agents" / "openai.yaml",
         package / "config" / "model-routing.defaults.json",
         package / "scripts" / DISPATCHER_NAME,
+        package / "scripts" / CONTINUITY_READER_NAME,
         package / "scripts" / "dispatch_policy.py",
         package / "scripts" / "model_routing_audit.py",
     ]
@@ -112,6 +114,7 @@ def _validate_package(package: Path) -> list[Path]:
     with tempfile.TemporaryDirectory(prefix="adaptive-delegation-compile-") as temp:
         for name in (
             DISPATCHER_NAME,
+            CONTINUITY_READER_NAME,
             "dispatch_policy.py",
             "model_routing_audit.py",
         ):

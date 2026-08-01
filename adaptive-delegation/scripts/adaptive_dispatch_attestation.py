@@ -28,7 +28,13 @@ from pathlib import Path
 from typing import Any
 
 
-CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
+def _resolved_runtime_home() -> Path:
+    """Use only CODEX_HOME when configured, otherwise the user's Codex home."""
+    configured = os.environ.get("CODEX_HOME")
+    return Path(configured).expanduser() if configured else Path.home() / ".codex"
+
+
+CODEX_HOME = _resolved_runtime_home()
 DEFAULT_LEDGER = CODEX_HOME / "state" / "adaptive-delegation" / "dispatch_attestation.jsonl"
 AGENT_CONFIG_ROOT = CODEX_HOME / "agents"
 ADAPTIVE_SKILL_ROOT = CODEX_HOME / "skills" / "adaptive-delegation"
@@ -100,6 +106,7 @@ REQUIRED_PACKET_FIELDS = (
     "reasoning_effort",
     "write_scope",
     "acceptance_evidence",
+    "verification_ceiling",
     "resource_cap",
     "evidence_path",
     "stop_condition",
@@ -1746,6 +1753,10 @@ def _validate_packet(packet: Any, source_path: Path | None) -> str | None:
         return "dispatch_id_invalid"
     if any(not isinstance(packet[field], str) for field in TRIPLE_FIELDS):
         return "routing_triple_invalid"
+    if not isinstance(packet["verification_ceiling"], str) or not packet[
+        "verification_ceiling"
+    ].strip():
+        return "verification_ceiling_invalid"
     acceptance_evidence = packet.get("acceptance_evidence")
     if (
         not isinstance(acceptance_evidence, list)
@@ -3115,6 +3126,7 @@ def _typed_objective(packet: dict[str, Any]) -> str:
         "network_access": packet.get("network_access", False),
         "write_scope": packet["write_scope"],
         "acceptance_evidence": packet["acceptance_evidence"],
+        "verification_ceiling": packet["verification_ceiling"],
         "resource_cap": packet["resource_cap"],
         "stop_condition": packet["stop_condition"],
         "token_budget": packet["token_budget"],

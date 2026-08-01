@@ -41,6 +41,9 @@ class InstallerTests(unittest.TestCase):
             policy = json.loads(
                 (installed / "config" / "model-routing.defaults.json").read_text()
             )
+            self.assertEqual(policy["audit"]["path_base"], "runtime_home")
+            self.assertFalse(policy["audit"]["ledger"].startswith(("~", "$", "/")))
+            self.assertFalse(policy["audit"]["review_dir"].startswith(("~", "$", "/")))
             native = policy["native_routing"]
             self.assertEqual(
                 native["primary_selection_mode"], "verified-fixed-agent-type"
@@ -50,6 +53,7 @@ class InstallerTests(unittest.TestCase):
                 native["model_override_enum_absence_is_native_rejection"]
             )
             self.assertTrue((installed / "SKILL.md").is_file())
+            self.assertTrue((installed / "scripts" / "read_continuity.py").is_file())
             self.assertTrue(dispatcher.is_file())
             self.assertEqual(stat.S_IMODE(dispatcher.stat().st_mode), 0o700)
             for role_name in policy["role_bindings"]:

@@ -18,8 +18,11 @@ Hidden reasoning is not evidence and must not be used to invent a failure
 class. When a case is ambiguous, record the observation before turning it into
 a rule. A pre-decision record captures the planned route and evidence; a
 post-result record captures the observed result, classification, and next
-action. Records are append-only in
-`~/.codex/state/model-routing/attempts.jsonl`.
+action. The resolved runtime home is `$CODEX_HOME` when it is set, otherwise
+`~/.codex`; records are append-only in
+`$RUNTIME_HOME/state/model-routing/attempts.jsonl`. The audit paths in the
+policy JSON are relative to that resolved runtime home; they are not shell
+templates.
 
 The qualitative starting point is the package's installed Codex role catalog:
 Luna handles clear bounded work, Terra is a higher leaf tier for demonstrated
@@ -173,7 +176,7 @@ immediately for every failure, escalation, direct-Sol route, and model-price
 change, plus every non-`correct` route assessment, regardless of the periodic
 count. The audit CLI creates these triggered reviews automatically unless an
 explicit maintenance import disables auto-review. Reviews live under
-`~/.codex/state/model-routing/reviews/` and must link to compact ledger
+`$RUNTIME_HOME/state/model-routing/reviews/` and must link to compact ledger
 evidence rather than copying sensitive payloads.
 
 The primary efficiency metrics are:

@@ -210,8 +210,9 @@
     }
   },
   "audit": {
-    "ledger": "~/.codex/state/model-routing/attempts.jsonl",
-    "review_dir": "~/.codex/state/model-routing/reviews",
+    "path_base": "runtime_home",
+    "ledger": "state/model-routing/attempts.jsonl",
+    "review_dir": "state/model-routing/reviews",
     "record_types": ["pre_decision", "post_result"],
     "append_only": true,
     "ambiguous_case_handling": "log-observation-before-rule",

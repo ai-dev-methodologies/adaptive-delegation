@@ -11,7 +11,11 @@ session when the leaf ladder is exhausted or the acceptance oracle is weak.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-## What the skill enforces
+## What the skill validates and requires
+
+The dispatcher fails closed on the typed/direct paths it owns. Native child
+and main-takeover scope rules are agent obligations plus local post-hoc
+consistency checks; they are not an operating-system security boundary.
 
 - The declared main session must be `gpt-5.6-sol` at `high`, `xhigh`, `max`, or
   `ultra` before a package-owned child can launch.
@@ -19,14 +23,14 @@ deployment targets, not additional policy sources.
   Codex role with an exact model and reasoning effort.
 - Leaf `ultra` and silent model substitution are forbidden.
 - Model or reasoning escalation changes capability, not authority or scope.
-  Every child and main-authority takeover stays inside the original objective,
-  write scope, acceptance evidence, and stop condition. Once acceptance is
-  proved, work stops; adjacent redesign or polishing requires a new explicit
-  task.
+  The policy requires every child and main-authority takeover to stay inside
+  the original objective, write scope, acceptance evidence, and stop
+  condition. Once the declared evidence is satisfied, work stops; adjacent
+  redesign or polishing requires a new explicit task.
 - Retry and escalation decisions must follow observable failure evidence and a
   contiguous route history. Arbitrary jumps and exhausted same-route retries
   fail closed.
-- A successful child process is not integration acceptance. Optional local
+- A successful child process is not local integration finalization. Optional local
   integration receipts are evaluated only after execution and must match the
   exact packet, child terminal result, output/worktree digests, route, and a
   distinct Checker session.
@@ -34,10 +38,12 @@ deployment targets, not additional policy sources.
   integration finalization succeeds; receipt or pre-gate finalization failures
   remain pending, and only a successful finalization records acceptance.
 
-The main-authority gate uses declared current-session context. Local receipts
-provide same-user integrity and consistency checks; they are not signatures,
-remote attestation, or a security boundary against a malicious process running
-as the same operating-system user.
+The main-profile eligibility gate uses declared current-session context; main
+authority comes from the user/control topology, not from model capability.
+Local receipts provide same-user integrity and consistency checks; they are
+not signatures, remote attestation, proof of semantic correctness, or a
+security boundary against a malicious process running as the same
+operating-system user.
 
 ## Activate the skill
 
