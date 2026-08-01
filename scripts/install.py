@@ -7,17 +7,23 @@ import argparse
 import json
 import os
 import py_compile
+import re
 import shutil
 import stat
 import tempfile
-import tomllib
 import uuid
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError as exc:  # pragma: no cover - requires Python <= 3.10
+    raise SystemExit("adaptive-delegation requires Python 3.11 or newer") from exc
 
 
 PACKAGE_NAME = "adaptive-delegation"
 DISPATCHER_NAME = "adaptive_dispatch_attestation.py"
 SKIP_NAMES = {".DS_Store", "__pycache__"}
+MANAGED_ROLE_NAME = re.compile(r"^adaptive-[a-z0-9-]+$")
 
 
 class InstallError(RuntimeError):
@@ -122,10 +128,43 @@ def _validate_package(package: Path) -> list[Path]:
 
 def _ensure_directory(path: Path, mode: int = 0o700) -> None:
     _reject_symlink(path, "installation directory")
+    existed = path.exists()
     path.mkdir(parents=True, exist_ok=True)
     if not path.is_dir():
         raise InstallError(f"installation path is not a directory: {path}")
-    path.chmod(mode)
+    if not existed:
+        path.chmod(mode)
+
+
+def _previous_managed_role_names(installed_package: Path) -> set[str]:
+    """Return only safely named roles declared by the previous package."""
+    config_path = installed_package / "config" / "model-routing.defaults.json"
+    if not config_path.is_file() or config_path.is_symlink():
+        return set()
+    try:
+        value = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return set()
+    bindings = value.get("role_bindings") if isinstance(value, dict) else None
+    if not isinstance(bindings, dict):
+        return set()
+    return {
+        name
+        for name in bindings
+        if isinstance(name, str) and MANAGED_ROLE_NAME.fullmatch(name)
+    }
+
+
+def _remove_obsolete_role(path: Path) -> None:
+    _reject_symlink(path, "obsolete managed role")
+    if not path.exists():
+        return
+    if not path.is_file():
+        raise InstallError(f"obsolete managed role is not a file: {path}")
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise InstallError(f"could not remove obsolete managed role: {path}") from exc
 
 
 def _atomic_file(source: Path, target: Path, mode: int) -> None:
@@ -177,6 +216,12 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
     dispatcher_target = codex_home / "scripts" / DISPATCHER_NAME
     managed_roles = [role for role in role_paths if role.stem.startswith("adaptive-")]
     agent_targets = [codex_home / "agents" / role.name for role in managed_roles]
+    previous_roles = _previous_managed_role_names(target_skill)
+    current_roles = {role.stem for role in managed_roles}
+    obsolete_role_targets = [
+        codex_home / "agents" / f"{name}.toml"
+        for name in sorted(previous_roles - current_roles)
+    ]
 
     print(f"skill: {target_skill}")
     print(f"dispatcher: {dispatcher_target}")
@@ -198,6 +243,8 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
     )
     for source_role, target_role in zip(managed_roles, agent_targets, strict=True):
         _atomic_file(target_skill / "roles" / source_role.name, target_role, 0o600)
+    for obsolete_role in obsolete_role_targets:
+        _remove_obsolete_role(obsolete_role)
 
     if stat.S_IMODE(dispatcher_target.stat().st_mode) != 0o700:
         raise InstallError("dispatcher permission verification failed")

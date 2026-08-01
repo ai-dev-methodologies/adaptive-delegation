@@ -7,28 +7,36 @@ under `~/.codex/skills/adaptive-delegation/`, `~/.codex/scripts/`, and
 and then try to back-port the change. Update this repository, verify it, and
 run `scripts/install.py` only when deployment is requested.
 
+This repository is Codex-only: `adaptive-delegation` routes Codex native
+subagents. Claude Code is unsupported.
+
 ## Policy invariants
 
 - Keep routing Luna-first and effort-first. Bounded work starts on the lowest
   suitable Luna effort and escalates from observable evidence.
-- The main-authority gate is fail-closed: the main must be
-  `gpt-5.6-sol` with reasoning effort `high`, `xhigh`, `max`, or `ultra` before
-  delegation can launch.
+- The main-authority gate is fail-closed over declared current-session context:
+  the main must be `gpt-5.6-sol` with reasoning effort `high`, `xhigh`, `max`,
+  or `ultra` before delegation can launch. Do not describe this declaration as
+  cryptographic runtime proof.
 - Native Luna uses the fixed, package-declared role bindings in
   `adaptive-delegation/roles/*.toml`. Verify the bound model and effort; do
   not silently substitute Terra when Luna admission is rejected.
 - Leaf `ultra` is forbidden. `gpt-5.6-sol/ultra` is a main-authoritative
   takeover only.
+- Every default, ladder step, and Checker route must resolve to an installed
+  package role with the exact configured model and effort. Reject arbitrary
+  jumps, stale counters, exhausted retries, and silent substitutions.
 - Escalate only from observable evidence: failed acceptance checks,
   contradictions, missed constraints, truncation/context evidence,
   runtime/tool errors, capability ceilings, or a weak oracle. Hidden reasoning
   is not evidence.
-- Keep authentication, audit logs, rollout/session data, continuity records,
-  and local policy overrides machine-local. Do not commit or deploy
-  `~/.codex/state/**`, `auth.json`, or equivalent local state.
-- Preserve legacy OMX read compatibility: `~/.codex/.omx-config.json` is a
-  read-compatible fallback only, never the policy source of truth and never a
-  file this package writes.
+- Keep authentication, audit logs, rollout/session data, and continuity
+  records out of the repository. Do not commit or deploy `~/.codex/state/**`,
+  `auth.json`, or equivalent runtime state.
+- Integration finalization is a post-execution same-user integrity check. It
+  must bind the terminal event, packet, child, output/worktree, evidence, and a
+  distinct Checker session, but it is not a signature or separate security
+  principal.
 
 The policy source is
 `adaptive-delegation/config/model-routing.defaults.json`; explanatory rules
@@ -42,7 +50,8 @@ tests over new abstractions or dependencies. Every change must state its
 implementation envelope (objective, owned files, acceptance evidence, and
 stop condition). Use a bounded Maker for implementation and an independent
 Checker when risk warrants it; integration acceptance is separate from a child
-process merely exiting successfully.
+process merely exiting successfully. Public issue reports must use the local
+allowlisted formatter in `REPORTING.md`; raw ledgers never leave the machine.
 
 Do not run `git init`, GitHub creation, remote setup, commits, pushes, or other
 Git/GitHub mutations as part of ordinary maintenance. Run them only when the

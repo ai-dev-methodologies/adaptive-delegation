@@ -1,6 +1,8 @@
 $adaptive-delegation
 
 Maintain the standalone `adaptive-delegation` repository.
+This is a Codex-only skill for Codex native subagents; Claude Code is
+unsupported.
 
 Objective: `<describe the bounded maintenance objective>`
 Owned mutable surfaces: `<list exact files or directories>`
@@ -24,7 +26,7 @@ the repository source first. Do not edit installed artifacts directly.
 Keep the change portable and minimal. Preserve Luna-first/effort-first
 routing, the Sol `high`-or-above main gate, fixed Native Luna role bindings,
 leaf-`ultra` prohibition, observable-evidence escalation, machine-local
-logs/state exclusion, and legacy OMX read compatibility. Do not add
+logs/state exclusion, and the repository-as-canonical rule. Do not add
 dependencies or alter product behavior without an explicit envelope.
 
 Run the relevant portable checks, normally:
@@ -37,7 +39,7 @@ python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 
 When installation behavior is in scope, also dry-run against a temporary
 `CODEX_HOME` and verify that no authentication, audit, continuity, rollout,
-session, or local-policy files are copied. Perform a secret/privacy scan of
+session, or runtime state files are copied. Perform a secret/privacy scan of
 the diff and generated artifacts; redact or remove credentials, cookies,
 tokens, and machine-local paths before handoff.
 

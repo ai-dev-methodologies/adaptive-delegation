@@ -9,12 +9,6 @@
   "allowed_main_efforts": ["high", "xhigh", "max", "ultra"],
   "enforcement_mode": "fail-closed-declared-context",
   "parent_model_mutation": false,
-  "local_override": "~/.codex/state/model-routing/policy.local.json",
-  "local_override_optional": true,
-  "legacy_fallback": "~/.codex/.omx-config.json",
-  "legacy_fallback_mode": "read-compatible-only",
-  "legacy_fallback_authoritative": false,
-  "legacy_fallback_write": false,
   "strategy": {
     "primary": "luna-first-effort-first",
     "leaf_ultra": "forbidden",
@@ -68,43 +62,152 @@
       "long_context_risk": "reference"
     }
   },
+  "route_bindings": {
+    "luna_medium": {
+      "authority": "leaf",
+      "role": "adaptive-luna-maker-medium",
+      "model": "gpt-5.6-luna",
+      "model_tier": "spark-tier",
+      "reasoning_effort": "medium"
+    },
+    "luna_high": {
+      "authority": "leaf",
+      "role": "adaptive-luna-maker-high",
+      "model": "gpt-5.6-luna",
+      "model_tier": "spark-tier",
+      "reasoning_effort": "high"
+    },
+    "luna_xhigh": {
+      "authority": "leaf",
+      "role": "adaptive-luna-maker-xhigh",
+      "model": "gpt-5.6-luna",
+      "model_tier": "spark-tier",
+      "reasoning_effort": "xhigh"
+    },
+    "luna_max": {
+      "authority": "leaf",
+      "role": "adaptive-luna-maker-max",
+      "model": "gpt-5.6-luna",
+      "model_tier": "spark-tier",
+      "reasoning_effort": "max"
+    },
+    "terra_xhigh": {
+      "authority": "leaf",
+      "role": "adaptive-terra-maker-xhigh",
+      "model": "gpt-5.6-terra",
+      "model_tier": "standard-tier",
+      "reasoning_effort": "xhigh"
+    },
+    "terra_max": {
+      "authority": "leaf",
+      "role": "adaptive-terra-maker-max",
+      "model": "gpt-5.6-terra",
+      "model_tier": "standard-tier",
+      "reasoning_effort": "max"
+    },
+    "checker_luna_xhigh": {
+      "authority": "leaf",
+      "role": "adaptive-luna-checker-xhigh",
+      "model": "gpt-5.6-luna",
+      "model_tier": "spark-tier",
+      "reasoning_effort": "xhigh"
+    },
+    "checker_luna_max": {
+      "authority": "leaf",
+      "role": "adaptive-luna-checker-max",
+      "model": "gpt-5.6-luna",
+      "model_tier": "spark-tier",
+      "reasoning_effort": "max"
+    },
+    "checker_terra_high": {
+      "authority": "leaf",
+      "role": "adaptive-terra-checker-high",
+      "model": "gpt-5.6-terra",
+      "model_tier": "standard-tier",
+      "reasoning_effort": "high"
+    },
+    "checker_terra_xhigh": {
+      "authority": "leaf",
+      "role": "adaptive-terra-checker-xhigh",
+      "model": "gpt-5.6-terra",
+      "model_tier": "standard-tier",
+      "reasoning_effort": "xhigh"
+    },
+    "checker_terra_max": {
+      "authority": "leaf",
+      "role": "adaptive-terra-checker-max",
+      "model": "gpt-5.6-terra",
+      "model_tier": "standard-tier",
+      "reasoning_effort": "max"
+    },
+    "main_takeover_sol_ultra": {
+      "authority": "main",
+      "role": "main-authority",
+      "model": "gpt-5.6-sol",
+      "model_tier": "frontier-tier",
+      "reasoning_effort": "ultra"
+    }
+  },
   "task_defaults": {
-    "simple_lookup_or_extraction": ["gpt-5.6-luna", "medium"],
-    "clear_implementation_or_transformation": ["gpt-5.6-luna", "high"],
-    "bounded_complex_implementation_or_verification": ["gpt-5.6-luna", "xhigh"],
-    "former_terra_bounded": ["gpt-5.6-luna", "xhigh"],
-    "former_sol_bounded_with_strong_oracle": ["gpt-5.6-luna", "max"],
-    "weak_oracle_ambiguous_high_risk_or_long_contract": [
-      "gpt-5.6-sol",
-      "ultra"
-    ]
+    "simple_lookup_or_extraction": "luna_medium",
+    "clear_implementation_or_transformation": "luna_high",
+    "bounded_complex_implementation_or_verification": "luna_xhigh",
+    "weak_oracle_ambiguous_high_risk_or_long_contract": "main_takeover_sol_ultra"
   },
   "escalation_ladders": {
-    "former_terra_bounded": [
-      ["gpt-5.6-luna", "xhigh"],
-      ["gpt-5.6-luna", "max"],
-      ["gpt-5.6-terra", "xhigh"],
-      ["gpt-5.6-terra", "max"],
-      ["main-takeover", "gpt-5.6-sol/ultra"]
+    "simple_lookup_or_extraction": [
+      "luna_medium",
+      "luna_high",
+      "luna_xhigh",
+      "luna_max",
+      "main_takeover_sol_ultra"
     ],
-    "former_sol_bounded_with_strong_oracle": [
-      ["gpt-5.6-luna", "max"],
-      ["gpt-5.6-terra", "max"],
-      ["gpt-5.6-sol", "high"],
-      ["main-takeover", "gpt-5.6-sol/ultra"]
+    "clear_implementation_or_transformation": [
+      "luna_high",
+      "luna_xhigh",
+      "luna_max",
+      "terra_xhigh",
+      "terra_max",
+      "main_takeover_sol_ultra"
+    ],
+    "bounded_complex_implementation_or_verification": [
+      "luna_xhigh",
+      "luna_max",
+      "terra_xhigh",
+      "terra_max",
+      "main_takeover_sol_ultra"
+    ],
+    "bounded_complex_with_strong_oracle": [
+      "luna_xhigh",
+      "luna_max",
+      "terra_max",
+      "main_takeover_sol_ultra"
     ],
     "weak_oracle_ambiguous_high_risk_or_long_contract": [
-      ["main-authoritative", "gpt-5.6-sol/ultra"],
-      ["optional-scout-only", "gpt-5.6-luna/xhigh"]
+      "main_takeover_sol_ultra"
     ]
   },
   "failure_actions": {
-    "reasoning_insufficiency": "increase-effort-on-same-model-once",
-    "context_ceiling": "increase-model-tier",
-    "scope_or_retrieval_overbreadth": "narrow-envelope-and-retry-same-route",
-    "tool_or_environment": "repair-environment-and-retry-same-route",
-    "capability_ceiling": "increase-model-tier",
-    "weak_oracle": "main-takeover"
+    "none": ["stop", "retain_route", "human_review"],
+    "reasoning_insufficiency": ["raise_effort", "raise_model", "main_takeover"],
+    "context_ceiling": ["raise_effort", "raise_model", "main_takeover"],
+    "scope_or_retrieval_overbreadth": ["narrow_scope"],
+    "tool_or_environment": ["environment_retry"],
+    "capability_ceiling": ["raise_effort", "raise_model", "main_takeover"],
+    "weak_oracle": ["main_takeover"],
+    "policy_gate": ["stop"],
+    "other": ["collect_more_evidence", "human_review", "stop"]
+  },
+  "transition_contract": {
+    "max_same_route_retries_per_stage": 1,
+    "require_contiguous_attempt_indices": true,
+    "require_previous_attempt_evidence": true,
+    "require_current_policy_fingerprint": true,
+    "human_override": {
+      "requires_selection_basis": "human_override",
+      "requires_reason": true,
+      "route_must_be_in_applicable_ladder": true
+    }
   },
   "audit": {
     "ledger": "~/.codex/state/model-routing/attempts.jsonl",
@@ -123,6 +226,11 @@
     ]
   },
   "role_bindings": {
+    "adaptive-luna-maker-medium": {
+      "model_tier": "spark-tier",
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "medium"
+    },
     "adaptive-luna-maker-high": {
       "model_tier": "spark-tier",
       "model": "gpt-5.6-luna",
@@ -168,7 +276,7 @@
       "model": "gpt-5.6-terra",
       "reasoning_effort": "max"
     },
-    "verifier": {
+    "adaptive-terra-checker-high": {
       "model_tier": "standard-tier",
       "model": "gpt-5.6-terra",
       "reasoning_effort": "high"

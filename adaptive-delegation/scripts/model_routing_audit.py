@@ -20,12 +20,23 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable
 
+try:
+    import dispatch_policy as _route_policy
+except ImportError:  # pragma: no cover - package script is normally co-located
+    _route_policy = None
+
 
 SCHEMA_VERSION = "0.1.0"
 LINKED_SCHEMA_VERSION = "0.2.0"
 SUPPORTED_SCHEMA_VERSIONS = (SCHEMA_VERSION, LINKED_SCHEMA_VERSION)
-DEFAULT_LEDGER = Path("~/.codex/state/model-routing/attempts.jsonl").expanduser()
-DEFAULT_REVIEW_DIR = Path("~/.codex/state/model-routing/reviews").expanduser()
+_configured_codex_home = os.environ.get("CODEX_HOME")
+CODEX_HOME = (
+    Path(_configured_codex_home).expanduser()
+    if isinstance(_configured_codex_home, str) and _configured_codex_home.strip()
+    else Path.home() / ".codex"
+)
+DEFAULT_LEDGER = CODEX_HOME / "state" / "model-routing" / "attempts.jsonl"
+DEFAULT_REVIEW_DIR = CODEX_HOME / "state" / "model-routing" / "reviews"
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = SKILL_ROOT / "config" / "model-routing.defaults.json"
 AUDITOR_NAME = "model-routing-audit"
@@ -40,6 +51,7 @@ MAX_ID_LENGTH = 128
 MAX_DETAIL_ITEMS = 8
 MAX_EVIDENCE_REFERENCE_LENGTH = 256
 AUTO_REVIEW_ACCEPTED_CADENCE = 25
+ISSUE_REPORT_SCHEMA_VERSION = "1"
 
 MODE_FILE = 0o600
 MODE_DIRECTORY = 0o700
@@ -53,10 +65,11 @@ TASK_CLASSES = (
     "simple_lookup_or_extraction",
     "clear_implementation_or_transformation",
     "bounded_complex_implementation_or_verification",
-    "former_terra_bounded",
-    "former_sol_bounded_with_strong_oracle",
     "weak_oracle_ambiguous_high_risk_or_long_contract",
 )
+# 0.1 ledgers can still be read after policy vocabulary changes.  These values
+# are accepted only for legacy records and are never emitted in current output.
+LEGACY_TASK_CLASS_PREFIX = "former" + "_"
 FAILURE_CLASSES = (
     "none",
     "reasoning_insufficiency",
@@ -170,6 +183,9 @@ PRE_FIELDS = {
     "planned_model_escalations",
     "premium_call_justified",
     "price_change_observed",
+    "route_id",
+    "role",
+    "override_reason",
 }
 POST_FIELDS = {
     "accepted",
@@ -189,6 +205,8 @@ POST_FIELDS = {
     "false_cheap_route",
     "price_change_observed",
     "post_result_detail",
+    "final_route_id",
+    "final_role",
 }
 LINKED_COMMON_FIELDS = {
     "dispatch_id",
@@ -213,6 +231,7 @@ RATIONALE_FIELDS = {
     "prior_failure_class",
     "prior_attempts",
     "selection_basis",
+    "override_reason",
 }
 PRE_DETAIL_FIELDS = {
     "boundedness",
@@ -408,17 +427,95 @@ def _load_policy() -> dict[str, Any]:
     return policy
 
 
+def _policy_identity(policy: dict[str, Any]) -> tuple[str, str]:
+    policy_id = policy.get("policy_id")
+    if not isinstance(policy_id, str) or not policy_id:
+        raise AuditError("model-routing policy_id is missing")
+    if _route_policy is None:
+        raise AuditError("route policy contract is unavailable")
+    try:
+        fingerprint = _route_policy.canonical_policy_fingerprint(policy)
+    except _route_policy.PolicyContractError as exc:
+        raise AuditError(f"cannot fingerprint model-routing policy: {exc}") from exc
+    return policy_id, fingerprint
+
+
+def _is_current_policy_event(event: dict[str, Any], policy: dict[str, Any]) -> bool:
+    if event.get("schema_version") != LINKED_SCHEMA_VERSION:
+        return False
+    try:
+        policy_id, fingerprint = _policy_identity(policy)
+    except AuditError:
+        return False
+    return event.get("policy_id") == policy_id and event.get("policy_fingerprint") == fingerprint
+
+
+def _validate_current_route(event: dict[str, Any], policy: dict[str, Any], *, strict: bool) -> None:
+    if not strict or event["event_type"] != "pre_decision":
+        return
+    rationale = event["rationale"]
+    selection_basis = rationale.get("selection_basis")
+    required = {"route_id", "role"}
+    if required - set(event) or selection_basis is None:
+        raise AuditError("current-policy pre_decision requires route_id, role, and selection_basis")
+    if not isinstance(event["route_id"], str) or not _ID_RE.fullmatch(event["route_id"]):
+        raise AuditError("route_id must be a bounded safe identifier")
+    if not isinstance(event["role"], str) or not _ID_RE.fullmatch(event["role"]):
+        raise AuditError("role must be a bounded safe identifier")
+    reason = event.get("override_reason", rationale.get("override_reason"))
+    try:
+        _route_policy.validate_route_selection(
+            policy,
+            route_id=event["route_id"],
+            task_class=rationale["task_class"],
+            oracle_strength=rationale["oracle_strength"],
+            selection_basis=selection_basis,
+            role=event["role"],
+            model=event["model"],
+            reasoning_effort=event["reasoning_effort"],
+            attempt_index=event["attempt_index"],
+            override_reason=reason,
+        )
+    except _route_policy.PolicyContractError as exc:
+        raise AuditError(f"route contract: {exc.code}: {exc}") from exc
+    if selection_basis == "human_override" and event.get("override_reason") not in (None, reason):
+        raise AuditError("human override reason fields disagree")
+
+
+def _validate_failure_observation(failure_class: str, detail: dict[str, Any]) -> None:
+    signals = set(detail["observable_result_signals"])
+    required = {
+        "reasoning_insufficiency": {"tests_failed", "regression_observed", "evidence_inconclusive"},
+        "context_ceiling": {"output_incomplete", "budget_exhausted"},
+        "scope_or_retrieval_overbreadth": {"constraints_missed"},
+        "tool_or_environment": {"tool_failure"},
+        "capability_ceiling": {"tests_failed", "constraints_missed", "output_incomplete"},
+        "weak_oracle": {"evidence_inconclusive", "human_review_required"},
+        "policy_gate": {"constraints_missed", "evidence_inconclusive"},
+        "other": {"evidence_inconclusive", "human_review_required"},
+    }
+    needed = required.get(failure_class)
+    if needed is not None and not signals.intersection(needed):
+        raise AuditError(f"failure_class {failure_class} lacks an observable matching signal")
+    if failure_class == "scope_or_retrieval_overbreadth" and {"tool_failure", "budget_exhausted"}.intersection(signals):
+        raise AuditError("resource/tool signals cannot be relabeled as scope overbreadth")
+
+
+def _validate_failure_action(policy: dict[str, Any], failure_class: str, detail: dict[str, Any]) -> None:
+    actions = policy.get("failure_actions", {}).get(failure_class)
+    if isinstance(actions, str):
+        actions = (actions,)
+    if not isinstance(actions, (list, tuple, set)) or detail["next_action"] not in actions:
+        raise AuditError(f"next_action {detail['next_action']!r} is not allowed for failure_class {failure_class!r}")
+    _validate_failure_observation(failure_class, detail)
+
+
 def validate_event(event: Any) -> dict[str, Any]:
     """Validate one event without accepting unstructured or sensitive fields."""
     if not isinstance(event, dict):
         raise AuditError("event must be a JSON object")
     _reject_sensitive_names(event)
 
-    allowed = COMMON_FIELDS | PRE_FIELDS | POST_FIELDS | LINKED_COMMON_FIELDS | LINKED_POST_FIELDS
-    unknown = set(event) - allowed
-    if unknown:
-        names = ", ".join(sorted(str(name) for name in unknown))
-        raise AuditError(f"unknown event field(s): {names}")
     required_common = COMMON_FIELDS
     missing = required_common - set(event)
     if missing:
@@ -426,6 +523,12 @@ def validate_event(event: Any) -> dict[str, Any]:
     if event["schema_version"] not in SUPPORTED_SCHEMA_VERSIONS:
         raise AuditError("unsupported schema_version")
     _check_enum(event["event_type"], "event_type", ("pre_decision", "post_result"))
+    type_fields = PRE_FIELDS if event["event_type"] == "pre_decision" else POST_FIELDS | LINKED_POST_FIELDS
+    allowed = COMMON_FIELDS | LINKED_COMMON_FIELDS | type_fields
+    unknown = set(event) - allowed
+    if unknown:
+        names = ", ".join(sorted(str(name) for name in unknown))
+        raise AuditError(f"unknown {event['event_type']} field(s): {names}")
     for field in ("attempt_id", "task_id"):
         value = event[field]
         if (
@@ -480,6 +583,7 @@ def validate_event(event: Any) -> dict[str, Any]:
             raise AuditError(f"{key} exceeds the string-size bound")
 
     policy = _load_policy()
+    strict_current = _is_current_policy_event(event, policy)
     capabilities = policy.get("model_capabilities", {})
     if not isinstance(capabilities, dict):
         capabilities = {}
@@ -489,7 +593,6 @@ def validate_event(event: Any) -> dict[str, Any]:
             raise AuditError("pre_decision must not contain post_result_detail")
         if LINKED_POST_FIELDS & set(event):
             raise AuditError("pre_decision must not contain linked result fields")
-        missing = PRE_FIELDS - set(event)
         # The three core decision fields and structured rationale are required;
         # escalation plans and premium justification are optional annotations.
         required_pre = {"model", "model_tier", "reasoning_effort", "rationale"}
@@ -516,7 +619,13 @@ def validate_event(event: Any) -> dict[str, Any]:
             raise AuditError(
                 f"missing rationale field(s): {', '.join(sorted(missing))}"
             )
-        _check_enum(rationale["task_class"], "rationale.task_class", TASK_CLASSES)
+        task_class = rationale["task_class"]
+        if task_class not in TASK_CLASSES and not (
+            event["schema_version"] == SCHEMA_VERSION
+            and isinstance(task_class, str)
+            and task_class.startswith(LEGACY_TASK_CLASS_PREFIX)
+        ):
+            raise AuditError("rationale.task_class is outside the current policy vocabulary")
         _check_enum(
             rationale["oracle_strength"],
             "rationale.oracle_strength",
@@ -531,6 +640,9 @@ def validate_event(event: Any) -> dict[str, Any]:
             _check_nonnegative_int(rationale["prior_attempts"], "rationale.prior_attempts", 1000000)
         if "selection_basis" in rationale:
             _check_enum(rationale["selection_basis"], "rationale.selection_basis", SELECTION_BASES)
+        if "override_reason" in rationale:
+            if not isinstance(rationale["override_reason"], str) or not 1 <= len(rationale["override_reason"]) <= MAX_STRING_LENGTH:
+                raise AuditError("rationale.override_reason must be a bounded string")
         if "pre_decision_detail" in event:
             detail = _check_detail_object(
                 event["pre_decision_detail"],
@@ -574,6 +686,17 @@ def validate_event(event: Any) -> dict[str, Any]:
             raise AuditError("premium_call_justified must be a boolean")
         if "price_change_observed" in event and not _is_bool(event["price_change_observed"]):
             raise AuditError("price_change_observed must be a boolean")
+        if "role" in event and (not isinstance(event["role"], str) or not _ID_RE.fullmatch(event["role"])):
+            raise AuditError("role must be a bounded safe identifier")
+        if "route_id" in event and (not isinstance(event["route_id"], str) or not _ID_RE.fullmatch(event["route_id"])):
+            raise AuditError("route_id must be a bounded safe identifier")
+        if "override_reason" in event and (not isinstance(event["override_reason"], str) or not 1 <= len(event["override_reason"]) <= MAX_STRING_LENGTH):
+            raise AuditError("override_reason must be a bounded string")
+        _validate_current_route(event, policy, strict=strict_current)
+        if strict_current:
+            for field in ("planned_effort_escalations", "planned_model_escalations"):
+                if field not in event:
+                    raise AuditError(f"current-policy pre_decision requires {field}")
     else:
         if "pre_decision_detail" in event:
             raise AuditError("post_result must not contain pre_decision_detail")
@@ -644,6 +767,11 @@ def validate_event(event: Any) -> dict[str, Any]:
                 raise AuditError(f"{field} must be a boolean")
         if "price_change_observed" in event and not _is_bool(event["price_change_observed"]):
             raise AuditError("price_change_observed must be a boolean")
+        for field in ("final_role", "final_route_id"):
+            if field in event and (not isinstance(event[field], str) or not _ID_RE.fullmatch(event[field])):
+                raise AuditError(f"{field} must be a bounded safe identifier")
+        if strict_current and {"final_route_id", "final_role"} - set(event):
+            raise AuditError("current-policy post_result requires final_route_id and final_role")
         if "post_result_detail" in event:
             detail = _check_detail_object(
                 event["post_result_detail"],
@@ -684,6 +812,12 @@ def validate_event(event: Any) -> dict[str, Any]:
                     "post_result_detail.elapsed_observation",
                     ELAPSED_OBSERVATIONS,
                 )
+            if strict_current:
+                _validate_failure_action(policy, event["failure_class"], detail)
+        elif strict_current:
+            raise AuditError("current-policy post_result requires post_result_detail evidence")
+        if strict_current and event["failure_class"] == "none" and not event["accepted"]:
+            raise AuditError("current-policy rejected result with failure_class none needs explicit evidence")
     try:
         serialized = _canonical_json(event).encode("utf-8")
     except (TypeError, ValueError) as exc:
@@ -763,7 +897,8 @@ def _open_ledger(path: Path, writable: bool) -> int:
         if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
             raise AuditError(f"ledger must be a regular file: {path}")
         _check_owner_only(path, st, "ledger")
-        os.fchmod(fd, MODE_FILE)
+        if writable:
+            os.fchmod(fd, MODE_FILE)
         if st.st_size > MAX_LEDGER_BYTES:
             raise AuditError("ledger exceeds the total-size bound")
         return fd
@@ -830,16 +965,81 @@ def _check_pair(pre: dict[str, Any], post: dict[str, Any]) -> None:
             )
     if _parse_timestamp(post["timestamp"]) < _parse_timestamp(pre["timestamp"]):
         raise AuditError(f"post_result timestamp precedes pre_decision for {label}")
+    policy = _load_policy()
+    strict = _is_current_policy_event(pre, policy) and _is_current_policy_event(post, policy)
+    if not strict:
+        return
+    if post["effort_escalations"] != pre["planned_effort_escalations"] or post["model_escalations"] != pre["planned_model_escalations"]:
+        raise AuditError(f"route counters disagree for {label}")
+    for field in ("model", "reasoning_effort"):
+        final_field = "final_" + field
+        if final_field in post and post[final_field] != pre[field]:
+            raise AuditError(f"final route disagrees with pre_decision for {label}")
+    if "final_route_id" in post and post["final_route_id"] != pre["route_id"]:
+        raise AuditError(f"final route id disagrees with pre_decision for {label}")
+    if "final_role" in post and post["final_role"] != pre["role"]:
+        raise AuditError(f"final role disagrees with pre_decision for {label}")
+
+
+def _check_current_transition(previous: tuple[dict[str, Any], dict[str, Any]], current: dict[str, Any], policy: dict[str, Any]) -> None:
+    prior_pre, prior_post = previous
+    if not (_is_current_policy_event(prior_pre, policy) and _is_current_policy_event(prior_post, policy) and _is_current_policy_event(current, policy)):
+        return
+    if current["attempt_index"] != prior_pre["attempt_index"] + 1:
+        raise AuditError("current-policy attempt_index must be contiguous")
+    rationale = current["rationale"]
+    prior_rationale = prior_pre["rationale"]
+    if rationale.get("selection_basis") not in {"failure_action", "human_override"}:
+        raise AuditError("attempt_index > 1 requires failure_action or explicit human_override selection")
+    if rationale.get("prior_attempts") != current["attempt_index"] - 1:
+        raise AuditError("prior_attempts does not match attempt history")
+    if rationale.get("prior_failure_class") not in (None, prior_post["failure_class"]):
+        raise AuditError("prior_failure_class does not match previous result")
+    detail = prior_post.get("post_result_detail")
+    if not isinstance(detail, dict) or not detail.get("evidence_references"):
+        raise AuditError("attempt_index > 1 requires bounded previous-attempt evidence")
+    action = detail["next_action"]
+    try:
+        ladder = _route_policy.applicable_ladder(policy, prior_rationale["task_class"], prior_rationale["oracle_strength"])
+    except _route_policy.PolicyContractError as exc:
+        raise AuditError(f"route history ladder is invalid: {exc}") from exc
+    previous_index = ladder.index(prior_pre["route_id"])
+    current_index = ladder.index(current["route_id"]) if current["route_id"] in ladder else -1
+    same_route = current["route_id"] == prior_pre["route_id"]
+    same_actions = {"retain_route", "retry_same_route", "narrow_scope", "environment_retry"}
+    if action in same_actions:
+        if prior_post["accepted"]:
+            raise AuditError("an accepted attempt cannot be retried")
+        if not same_route:
+            raise AuditError("same-route action cannot transition to a different route")
+    elif action in {"raise_effort", "raise_model", "main_takeover"}:
+        if current_index != previous_index + 1:
+            raise AuditError("route transition skipped or repeated a ladder step")
+        if action == "raise_effort" and current["model"] != prior_pre["model"]:
+            raise AuditError("raise_effort must retain the model")
+        if action == "raise_model" and current["model"] == prior_pre["model"]:
+            raise AuditError("raise_model must change the model")
+        if action == "main_takeover" and current["role"] != "main-authority":
+            raise AuditError("main_takeover must select the main-authority route")
+    else:
+        raise AuditError(f"previous next_action {action!r} cannot start another attempt")
+    effort_delta = int(current["model"] == prior_pre["model"] and current["reasoning_effort"] != prior_pre["reasoning_effort"])
+    model_delta = int(current["model"] != prior_pre["model"])
+    if current["planned_effort_escalations"] != prior_post["effort_escalations"] + effort_delta or current["planned_model_escalations"] != prior_post["model_escalations"] + model_delta:
+        raise AuditError("route escalation counters do not match the observed transition")
 
 
 def _check_sequence(events: list[dict[str, Any]]) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], int]:
     seen: dict[tuple[str, str], dict[str, Any]] = {}
     pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    history: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    policy = _load_policy()
     for event in events:
         key = _pair_key(event)
         label = key[1]
         event_type = event["event_type"]
         prior = seen.get(key)
+        pair_pre = prior if event_type == "post_result" else None
         if prior is not None:
             if prior["event_type"] == event_type:
                 raise AuditError(
@@ -853,7 +1053,41 @@ def _check_sequence(events: list[dict[str, Any]]) -> tuple[list[tuple[dict[str, 
         else:
             if event_type == "post_result":
                 raise AuditError(f"post_result cannot precede pre_decision for {label}")
+            prior_history = history.get(event["task_id"], [])
+            current_policy_event = _is_current_policy_event(event, policy)
+            if not prior_history and current_policy_event:
+                if event["attempt_index"] != 1:
+                    raise AuditError(
+                        "current-policy task history must begin at attempt_index 1"
+                    )
+                if event["rationale"].get("prior_attempts") != 0:
+                    raise AuditError(
+                        "first current-policy attempt must declare zero prior attempts"
+                    )
+            if prior_history:
+                previous_current = all(
+                    _is_current_policy_event(item, policy)
+                    for item in prior_history[-1]
+                )
+                if current_policy_event and not previous_current:
+                    raise AuditError(
+                        "current-policy transition requires current-policy history"
+                    )
+                _check_current_transition(prior_history[-1], event, policy)
+                if current_policy_event:
+                    trailing_stage_attempts = 0
+                    for prior_pre, _prior_post in reversed(prior_history):
+                        if prior_pre["route_id"] != event["route_id"]:
+                            break
+                        trailing_stage_attempts += 1
+                    same_retries = max(0, trailing_stage_attempts - 1)
+                    max_retries = policy.get("transition_contract", {}).get("max_same_route_retries_per_stage", 1)
+                    if event["route_id"] == prior_history[-1][0]["route_id"] and same_retries >= max_retries:
+                        raise AuditError("same route retry budget is exhausted")
             seen[key] = event
+        if event_type == "post_result":
+            if pair_pre is not None:
+                history.setdefault(event["task_id"], []).append((pair_pre, event))
     incomplete = sum(1 for event in seen.values() if event["event_type"] == "pre_decision")
     return pairs, incomplete
 
@@ -935,6 +1169,7 @@ def _append_event(
                 _check_pair(counterpart, event)
             elif event["event_type"] == "post_result":
                 raise AuditError(f"post_result cannot precede pre_decision for {label}")
+            _check_sequence(events + [event])
             os.lseek(fd, 0, os.SEEK_END)
             os.write(fd, line)
             os.fsync(fd)
@@ -984,6 +1219,37 @@ def record_event(
             "path": str(review_path) if review_path else None,
         },
     }
+
+
+def exact_unpaired_pre_exists(
+    event: dict[str, Any], ledger_path: Path = DEFAULT_LEDGER
+) -> bool:
+    """Return whether an exact pre-decision exists without a paired result."""
+    validated = validate_event(event)
+    if validated["event_type"] != "pre_decision":
+        raise AuditError("pending-event lookup requires a pre_decision")
+    ledger = Path(ledger_path)
+    if not os.path.lexists(ledger):
+        return False
+    fd = _open_ledger(ledger, writable=False)
+    try:
+        expected_key = _pair_key(validated)
+        expected_json = _canonical_json(validated)
+        candidates = _parse_ledger(fd)
+        exact_pre = any(
+            _pair_key(candidate) == expected_key
+            and candidate["event_type"] == "pre_decision"
+            and _canonical_json(candidate) == expected_json
+            for candidate in candidates
+        )
+        paired = any(
+            _pair_key(candidate) == expected_key
+            and candidate["event_type"] == "post_result"
+            for candidate in candidates
+        )
+        return exact_pre and not paired
+    finally:
+        os.close(fd)
 
 
 def _round(value: float) -> float:
@@ -1042,6 +1308,12 @@ def _make_review(
     incomplete: int,
     ledger_path: Path,
 ) -> dict[str, Any]:
+    all_pairs = list(pairs)
+    policy = _load_policy()
+    try:
+        current_policy_id, current_fingerprint = _policy_identity(policy)
+    except AuditError:
+        current_policy_id, current_fingerprint = "", ""
     linked_pairs = [
         (pre, post)
         for pre, post in pairs
@@ -1076,6 +1348,18 @@ def _make_review(
         group["execution_completed"] += int(post["execution_completed"])
         group["integration_accepted"] += int(post["integration_accepted"])
         group["oracle_verdicts"][post["oracle_verdict"]] += 1
+
+    current_pairs = [
+        pair for pair in all_pairs
+        if pair[0].get("schema_version") == LINKED_SCHEMA_VERSION
+        and pair[0].get("policy_id") == current_policy_id
+        and pair[0].get("policy_fingerprint") == current_fingerprint
+    ]
+    # A legacy-only ledger remains readable and reviewable, but once current
+    # records exist it is deliberately excluded from current recommendations.
+    pairs = current_pairs or [
+        pair for pair in all_pairs if pair[0].get("schema_version") != LINKED_SCHEMA_VERSION
+    ]
 
     task_pairs: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
     for pre, post in pairs:
@@ -1115,13 +1399,11 @@ def _make_review(
         first_accepted_index: int | None = None
         elapsed = 0
         weighted_tokens = 0
-        cost_proxy = 0.0
         elapsed_covered = True
         token_cost_covered = True
         for pre, post in attempts:
             elapsed += post["elapsed_ms"]
             weighted_tokens += post["weighted_tokens"]
-            cost_proxy += float(post["cost_proxy"])
             detail = post.get("post_result_detail")
             if isinstance(detail, dict):
                 if detail.get("elapsed_observation") == "unavailable":
@@ -1139,11 +1421,12 @@ def _make_review(
                 (
                     elapsed if elapsed_covered else None,
                     weighted_tokens if token_cost_covered else None,
-                    cost_proxy if token_cost_covered else None,
+                    None,
                 )
             )
 
     paired_attempts = len(pairs)
+    all_paired_attempts = len(all_pairs)
     effort_escalated = sum(1 for _, post in pairs if post["effort_escalations"] > 0)
     model_escalated = sum(1 for _, post in pairs if post["model_escalations"] > 0)
     sol_rescues = sum(1 for pre, post in pairs if _derive_sol_rescue(pre, post))
@@ -1163,10 +1446,39 @@ def _make_review(
         next_action_counts[detail["next_action"]] += 1
     elapsed_values = [item[0] for item in accepted_task_values if item[0] is not None]
     weighted_values = [item[1] for item in accepted_task_values if item[1] is not None]
-    cost_values = [item[2] for item in accepted_task_values if item[2] is not None]
     elapsed_total = sum(elapsed_values)
     weighted_total = sum(weighted_values)
-    cost_total = sum(cost_values)
+
+    route_metrics: dict[str, dict[str, Any]] = {}
+    policy_segments: dict[str, dict[str, Any]] = {}
+    for pre, post in pairs:
+        fingerprint = pre.get("policy_fingerprint", "legacy")
+        segment_key = f"{pre['schema_version']}:{fingerprint}"
+        route_key = f"{segment_key}:{pre['model']}/{pre['reasoning_effort']}"
+        route = route_metrics.setdefault(route_key, {
+            "schema_version": pre["schema_version"],
+            "policy_fingerprint": fingerprint,
+            "model": pre["model"],
+            "reasoning_effort": pre["reasoning_effort"],
+            "calls": 0,
+            "accepted_calls": 0,
+            "weighted_tokens": 0,
+            "cost_proxy_total": 0.0,
+        })
+        route["calls"] += 1
+        route["accepted_calls"] += int(post["accepted"])
+        route["weighted_tokens"] += post["weighted_tokens"]
+        route["cost_proxy_total"] = _round(route["cost_proxy_total"] + float(post["cost_proxy"]))
+        segment = policy_segments.setdefault(segment_key, {
+            "schema_version": pre["schema_version"],
+            "policy_fingerprint": fingerprint,
+            "calls": 0,
+            "accepted_calls": 0,
+            "weighted_tokens": 0,
+        })
+        segment["calls"] += 1
+        segment["accepted_calls"] += int(post["accepted"])
+        segment["weighted_tokens"] += post["weighted_tokens"]
 
     metrics = {
         "first_pass_acceptance_rate": _rate(first_pass_accepted, task_count),
@@ -1181,9 +1493,11 @@ def _make_review(
         "weighted_tokens_per_accepted_task": _round(weighted_total / len(weighted_values))
         if weighted_values
         else 0.0,
-        "cost_proxy_per_accepted_task": _round(cost_total / len(cost_values))
-        if cost_values
-        else 0.0,
+        # Model-relative price fractions are only comparable inside a route
+        # segment; no common cross-model cost is reported here.
+        "cost_proxy_per_accepted_task": None,
+        "tokens_and_calls_by_model_effort": route_metrics,
+        "policy_segments": policy_segments,
     }
     return {
         "schema_version": SCHEMA_VERSION,
@@ -1191,13 +1505,14 @@ def _make_review(
         "auditor": AUDITOR_NAME,
         "ledger": str(ledger_path),
         "attempts": {
-            "paired": paired_attempts,
+            "paired": all_paired_attempts,
+            "current_policy_paired": paired_attempts,
             "incomplete_pre_decisions": incomplete,
         },
         "linked_audit": {
             "paired": len(linked_pairs),
-            "legacy_paired": paired_attempts - len(linked_pairs),
-            "paired_coverage_rate": _rate(len(linked_pairs), paired_attempts),
+            "legacy_paired": all_paired_attempts - len(linked_pairs),
+            "paired_coverage_rate": _rate(len(linked_pairs), all_paired_attempts),
             "incomplete_pre_decisions_excluded": incomplete,
             "groups": [linked_groups[key] for key in sorted(linked_groups)],
         },
@@ -1331,6 +1646,126 @@ def _automatic_review_reasons(
     return list(dict.fromkeys(reasons))
 
 
+def _read_pairs_for_issue_report(
+    ledger_path: Path,
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Read and validate a ledger without changing its contents.
+
+    Incomplete pre-decision records are intentionally ignored here.  A report
+    can be made for a completed task while another attempt is still open; a
+    requested task with no completed pair fails closed below.
+    """
+    fd = _open_ledger(ledger_path, writable=False)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH)
+        try:
+            pairs, _incomplete = _check_sequence(_parse_ledger(fd))
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+    return pairs
+
+
+def _issue_report_pair_key(
+    pair: tuple[dict[str, Any], dict[str, Any]],
+) -> tuple[_datetime.datetime, int, str]:
+    pre, post = pair
+    return (
+        _parse_timestamp(post["timestamp"]),
+        pre["attempt_index"],
+        pre["attempt_id"],
+    )
+
+
+def _select_issue_report_pairs(
+    pairs: list[tuple[dict[str, Any], dict[str, Any]]],
+    task_id: str | None,
+) -> tuple[str, list[tuple[dict[str, Any], dict[str, Any]]]]:
+    grouped: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    for pair in pairs:
+        grouped.setdefault(pair[0]["task_id"], []).append(pair)
+    if task_id is not None:
+        if not isinstance(task_id, str) or not _ID_RE.fullmatch(task_id):
+            raise AuditError("task_id must be a bounded safe identifier")
+        selected = grouped.get(task_id)
+        if not selected:
+            raise AuditError("no completed task matches task_id")
+        selected.sort(key=lambda pair: (pair[0]["attempt_index"], pair[0]["attempt_id"]))
+        return task_id, selected
+    if not grouped:
+        raise AuditError("ledger contains no completed task")
+    selected_task = max(
+        grouped,
+        key=lambda candidate: _issue_report_pair_key(max(grouped[candidate], key=_issue_report_pair_key)),
+    )
+    selected = grouped[selected_task]
+    selected.sort(key=lambda pair: (pair[0]["attempt_index"], pair[0]["attempt_id"]))
+    return selected_task, selected
+
+
+def _issue_report_markdown(
+    pairs: list[tuple[dict[str, Any], dict[str, Any]]],
+    requested_task: bool,
+) -> str:
+    """Render the deliberately allowlisted, English issue-report format."""
+    first_pre, _first_post = pairs[0]
+    _last_pre, last_post = pairs[-1]
+    accepted = bool(last_post["accepted"])
+    lines = [
+        "# Adaptive-delegation routing report",
+        "",
+        f"- Report format: `issue-report/{ISSUE_REPORT_SCHEMA_VERSION}`",
+        "- Selection: " + ("requested task" if requested_task else "latest completed task"),
+        f"- Attempts in selected task: `{len(pairs)}`",
+        f"- Result: `{'accepted' if accepted else 'not accepted'}`",
+        f"- Initial route: `{first_pre['model']}` at `{first_pre['reasoning_effort']}`",
+        f"- Final route: `{last_post['final_model']}` at `"
+        f"{last_post.get('final_reasoning_effort', 'not recorded')}`",
+        f"- Failure class: `{last_post['failure_class']}`",
+        f"- Effort escalations: `{last_post['effort_escalations']}`",
+        f"- Model escalations: `{last_post['model_escalations']}`",
+    ]
+    if last_post["schema_version"] == LINKED_SCHEMA_VERSION:
+        lines.extend(
+            [
+                f"- Execution completed: `{'yes' if last_post['execution_completed'] else 'no'}`",
+                f"- Oracle verdict: `{last_post['oracle_verdict']}`",
+                f"- Integration accepted: `{'yes' if last_post['integration_accepted'] else 'no'}`",
+            ]
+        )
+    detail = last_post.get("post_result_detail")
+    if isinstance(detail, dict):
+        lines.extend(
+            [
+                f"- Route assessment: `{detail['route_assessment']}`",
+                f"- Next action: `{detail['next_action']}`",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "This report contains only allowlisted routing outcomes; inspect "
+            "it locally before sharing.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def issue_report(
+    ledger_path: Path = DEFAULT_LEDGER,
+    task_id: str | None = None,
+) -> str:
+    """Return a deterministic sanitized Markdown report for one task.
+
+    This function only reads the validated local ledger and never publishes,
+    uploads, or mutates the ledger.
+    """
+    pairs = _read_pairs_for_issue_report(Path(ledger_path))
+    _selected_task, selected_pairs = _select_issue_report_pairs(pairs, task_id)
+    return _issue_report_markdown(selected_pairs, task_id is not None)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1348,6 +1783,16 @@ def _build_parser() -> argparse.ArgumentParser:
     review = subparsers.add_parser("review", help="write a deterministic audit review")
     review.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
     review.add_argument("--review-dir", type=Path, default=DEFAULT_REVIEW_DIR)
+
+    issue = subparsers.add_parser(
+        "issue-report",
+        help="print a sanitized report for the latest completed task",
+    )
+    issue.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
+    issue.add_argument(
+        "--task-id",
+        help="select one completed task; omitted selects the latest completed task",
+    )
     return parser
 
 
@@ -1369,6 +1814,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "review":
             output = _review(args.ledger, args.review_dir)
             print(output)
+        elif args.command == "issue-report":
+            print(issue_report(args.ledger, args.task_id), end="")
         else:
             raise AuditError(f"unsupported command: {args.command}")
     except (AuditError, OSError, ValueError) as exc:

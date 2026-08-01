@@ -1,11 +1,13 @@
 # Model Routing Policy
 
+This is the policy reference for the Codex-only `adaptive-delegation` skill
+and its Codex native subagents. Claude Code is unsupported.
+
 This document explains the package-default policy in
 `config/model-routing.defaults.json`. That JSON is the policy source of truth;
 this document explains its evidence basis and operating rules without
-overriding it. An optional local override may be read, while the legacy OMX
-configuration is read-compatible fallback only and is never authoritative or
-written by this policy.
+overriding it. Repository files are canonical; installed files are deployment
+targets and are not additional policy sources.
 
 ## Evidence basis
 
@@ -19,28 +21,13 @@ post-result record captures the observed result, classification, and next
 action. Records are append-only in
 `~/.codex/state/model-routing/attempts.jsonl`.
 
-Current public Codex guidance provides the qualitative starting point for the
-defaults:
-
-- [Models](https://learn.chatgpt.com/docs/models) describes Sol for complex,
-  open-ended, high-value work; Terra as the everyday reasoning workhorse; and
-  Luna for clear, repeatable, high-volume work with a known acceptance shape.
-- The same guide recommends using the lowest reasoning effort that produces
-  the needed result and increasing it for work that needs more planning,
-  analysis, or checking. It describes Max as extra reasoning time for a single
-  hard task, while Ultra uses subagents for divisible parallel work.
-- [Subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents)
-  notes that each subagent performs its own model and tool work, so delegation
-  consumes more tokens than a comparable single-agent run. It recommends
-  bounded independent work and distilled results, especially for read-heavy
-  exploration, tests, triage, and summarization.
-
-Those sources support Luna-first bounded routing, result-driven effort
-adjustment, and keeping Ultra at the orchestrating main rather than a leaf.
-They do **not** establish numeric quality equivalence between models, a
-universal break-even point, or the user-provided Luna/Terra price reductions.
-The exact thresholds and ladders below are therefore provisional hypotheses
-that must be evaluated through the local audit ledger and acceptance oracles.
+The qualitative starting point is the package's installed Codex role catalog:
+Luna handles clear bounded work, Terra is a higher leaf tier for demonstrated
+capability pressure, and Sol remains the authoritative main. Effort is raised
+before model tier when observable evidence supports that transition. These are
+package policy choices, not universal quality equivalence or pricing claims.
+The exact thresholds and ladders remain provisional hypotheses evaluated
+through local audit outcomes and acceptance oracles.
 
 The policy is provisional and evidence-seeking. Reevaluate after every
 attempt. Use one same-model reasoning-effort retry per stage at most, then
@@ -57,29 +44,36 @@ The default strategy is Luna-first and effort-first:
 | Simple lookup or extraction | `gpt-5.6-luna/medium` |
 | Clear implementation or transformation | `gpt-5.6-luna/high` |
 | Bounded complex implementation or verification | `gpt-5.6-luna/xhigh` |
-| Former Terra bounded | `gpt-5.6-luna/xhigh` |
-| Former Sol bounded with a strong oracle | `gpt-5.6-luna/max` |
 | Weak oracle, ambiguous/high-risk, or long contract | main-authoritative `gpt-5.6-sol/ultra` |
 
 Effort is increased before changing model tier when the failure evidence is
 reasoning insufficiency and the task remains within the current model's
 capability and context envelope. The configured same-model retry limit is one
-per stage. A context ceiling or capability ceiling increases model tier;
-scope or retrieval overbreadth narrows the envelope and retries the same
-route; a tool or environment failure repairs the environment and retries the
-same route.
+per stage. Reasoning, context/budget, and capability ceilings advance exactly
+one configured ladder step: `raise_effort` when the next step retains the
+model, `raise_model` when it changes model tier, and `main_takeover` when the
+next step returns to the main authority. Scope or retrieval overbreadth narrows
+the envelope and retries the same route; a tool or environment failure repairs
+the environment and retries the same route.
 
 The configured ladders are:
 
-- Former Terra bounded: `luna/xhigh -> luna/max -> terra/xhigh -> terra/max -> main-takeover sol/ultra`.
-- Former Sol bounded with a strong oracle: `luna/max -> terra/max -> sol/high -> main-takeover sol/ultra`.
-- Weak oracle, ambiguous/high-risk, or long contract: `main-authoritative sol/ultra`, with optional `luna/xhigh` scout-only work.
+- Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> main-takeover sol/ultra`.
+- Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> terra/xhigh -> terra/max -> main-takeover sol/ultra`.
+- Bounded complex implementation or verification: `luna/xhigh -> luna/max -> terra/xhigh -> terra/max -> main-takeover sol/ultra`.
+- Bounded complex work with a strong oracle: `luna/xhigh -> luna/max -> terra/max -> main-takeover sol/ultra`.
+- Weak-oracle, ambiguous/high-risk, or long-contract work: main-authoritative `sol/ultra` only.
 
 The main may take over when the weak-oracle condition means a leaf cannot
 truthfully establish acceptance, or when the ladder reaches its takeover
-step. Main takeover is authoritative `gpt-5.6-sol/ultra`; a leaf may never
-use `ultra`. `gpt-5.6-sol/high` is a ladder step only where the configured
-strong-oracle ladder permits it, not a leaf-`ultra` exception.
+step. Main takeover is authoritative `gpt-5.6-sol/ultra`; a leaf may never use
+`ultra`, and no leaf Sol route exists.
+
+The runtime validates the exact role/model/effort for every route. It rejects
+unknown first routes, skipped ladder steps, repeated exhausted routes,
+counter/history mismatches, and silent substitutions. Checker routes are also
+package-declared exact Codex roles; they do not participate in the Maker
+escalation ladder.
 
 The package records Luna as a **user-provided 80% reduction versus its prior
 price** and Terra as a **user-provided 20% reduction versus its prior price**.
@@ -91,13 +85,13 @@ does not turn those labels into price facts.
 
 Prefer Native Luna by choosing an installed fixed Luna `agent_type`, verifying
 its TOML model/effort binding, passing the same effort and `fork_turns="none"`,
-and validating trusted runtime model/effort evidence. The role selection is an
+and validating local runtime model/effort metadata. The role selection is an
 explicit model choice. Luna need not appear in the optional `model` override
 enum, so its absence there is not evidence that Native Luna is unsupported.
 
 Use an explicit `model` override only on a surface that supports it and accepts
 the exact requested value. Use typed direct only when the fixed role or Native
-surface is unavailable/rejected, trusted runtime evidence mismatches, or the
+surface is unavailable/rejected, validated runtime metadata mismatches, or the
 task requires a hard parent-enforced cap. Never substitute Terra merely because
 the optional override enum omits Luna.
 
@@ -107,11 +101,11 @@ Classify only what can be observed at the task boundary:
 
 | Failure class | Observable signal | Action |
 | --- | --- | --- |
-| `reasoning_insufficiency` | The route remains in scope, but a check or contradiction shows the current effort was insufficient. | Increase effort on the same model once, then reevaluate. |
-| `context_ceiling` | Truncation, context exhaustion, or a directly observed context limit. | Increase model tier according to the applicable ladder. |
+| `reasoning_insufficiency` | The route remains in scope, but a check or contradiction shows the current effort was insufficient. | Advance one configured ladder step, preserving the model while an effort step remains. |
+| `context_ceiling` | Weighted token-budget exhaustion, truncation, context exhaustion, or a directly observed context limit. | Advance one configured ladder step without skipping effort/model stages. |
 | `scope_or_retrieval_overbreadth` | The task envelope or retrieved material is too broad for the bounded acceptance claim. | Narrow the envelope or retrieval, then retry the same route. |
 | `tool_or_environment` | A runtime, tool, dependency, or environment error prevents a meaningful attempt. | Repair the environment, then retry the same route. |
-| `capability_ceiling` | Direct evidence shows the current model cannot satisfy the required capability. | Increase model tier according to the applicable ladder. |
+| `capability_ceiling` | Direct evidence shows the current route cannot satisfy the required capability. | Advance one configured ladder step; use main takeover only at the declared final step. |
 | `weak_oracle` | Acceptance cannot be independently established because the oracle is ambiguous, unavailable, or too weak for the risk. | Main-authoritative takeover at `gpt-5.6-sol/ultra`; leaf work can be scout-only if useful. |
 
 Do not relabel a missed requirement as reasoning insufficiency when the
@@ -122,11 +116,18 @@ use, or model-price change receives an immediate review.
 
 ## Audit records and review cadence
 
-Each attempt has a `pre_decision` record before routing and a `post_result`
-record after the attempt. The records identify the selected model and effort,
-task shape, bounded envelope, evidence observed, outcome, failure class if
-any, escalation or retry action, and next decision. They contain compact
-metadata and evidence paths, not hidden reasoning or payloads.
+Each attempt has a `pre_decision` record before routing. A failed execution or
+policy gate records its terminal `post_result` immediately. A successful child
+execution remains an incomplete audit attempt until the separate integration
+finalization succeeds; only then is the accepted `post_result` appended. This
+prevents an execution-only success from being frozen as a rejected result that
+later finalization cannot replace in the append-only ledger. The records
+identify the selected model and effort, task shape, bounded envelope, evidence
+observed, outcome, failure class if any, escalation or retry action, and next
+decision. This local ledger contains machine-local identifiers and evidence
+references and must be treated as sensitive. It contains no prompt or
+transcript bodies and must never be uploaded; use the allowlisted
+`issue-report` formatter for public reporting.
 
 When a decision needs detailed evidence, use the optional structured fields
 rather than prose:
@@ -169,8 +170,10 @@ The primary efficiency metrics are:
 For typed direct execution, weighted tokens are
 `ceil(input_tokens / 4) + output_tokens`; Codex input usage already includes
 cached input. The raw CLI `tokens used` display is therefore not the enforcement
-number. `cost_proxy` applies the configured user-provided relative price factor
-to weighted tokens and is not a provider bill or official absolute price.
+number. Model-relative price factors are never aggregated as a common cost.
+Reviews segment current records by schema version, policy fingerprint, model,
+and effort; legacy records remain readable but do not drive current-policy
+recommendations.
 
 - first-pass acceptance rate;
 - effort-escalation rate and model-escalation rate;
@@ -181,7 +184,7 @@ to weighted tokens and is not a provider bill or official absolute price.
 - false-cheap-route rate;
 - elapsed time per accepted task;
 - weighted tokens per accepted task;
-- cost proxy per accepted task.
+- tokens and calls by model/effort within a policy-fingerprint segment;
 - route-assessment counts and next-action counts.
 
 Supporting audit counts and thresholds are:

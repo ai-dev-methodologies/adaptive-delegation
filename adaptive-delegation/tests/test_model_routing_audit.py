@@ -14,6 +14,7 @@ SCRIPT = SKILL_ROOT / "scripts" / "model_routing_audit.py"
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 import model_routing_audit as audit  # noqa: E402
+import dispatch_policy as contract  # noqa: E402
 
 
 class ModelRoutingAuditTests(unittest.TestCase):
@@ -138,6 +139,63 @@ class ModelRoutingAuditTests(unittest.TestCase):
         event.update(overrides)
         return event
 
+    @classmethod
+    def current_pre(cls, dispatch_id, task_id, index=1, route_id="luna_high", **overrides):
+        policy = json.loads((SKILL_ROOT / "config" / "model-routing.defaults.json").read_text())
+        route = policy["route_bindings"][route_id]
+        event = cls.linked_pre(dispatch_id, task_id, index=index)
+        event.update(
+            {
+                "policy_fingerprint": contract.canonical_policy_fingerprint(policy),
+                "model": route["model"],
+                "model_tier": route["model_tier"],
+                "reasoning_effort": route["reasoning_effort"],
+                "route_id": route_id,
+                "role": route["role"],
+                "planned_effort_escalations": 0,
+                "planned_model_escalations": 0,
+                "rationale": {
+                    "task_class": "clear_implementation_or_transformation",
+                    "oracle_strength": "strong",
+                    "risk_class": "medium",
+                    "prior_failure_class": None if index == 1 else "reasoning_insufficiency",
+                    "prior_attempts": index - 1,
+                    "selection_basis": "policy_default" if index == 1 else "failure_action",
+                },
+            }
+        )
+        event.update(overrides)
+        return event
+
+    @classmethod
+    def current_post(cls, dispatch_id, task_id, index=1, **overrides):
+        pre = cls.current_pre(dispatch_id, task_id, index=index, **overrides)
+        event = cls.linked_post(dispatch_id, task_id, index=index)
+        event.update(
+            {
+                "policy_fingerprint": pre["policy_fingerprint"],
+                "final_model": pre["model"],
+                "final_model_tier": pre["model_tier"],
+                "final_reasoning_effort": pre["reasoning_effort"],
+                "final_route_id": pre["route_id"],
+                "final_role": pre["role"],
+                "effort_escalations": pre["planned_effort_escalations"],
+                "model_escalations": pre["planned_model_escalations"],
+                "accepted": False,
+                "failure_class": "reasoning_insufficiency",
+                "oracle_verdict": "fail",
+                "integration_accepted": False,
+                "post_result_detail": {
+                    "observable_result_signals": ["tests_failed"],
+                    "evidence_references": [f"receipt-{dispatch_id}"],
+                    "route_assessment": "inconclusive",
+                    "next_action": "raise_effort",
+                },
+            }
+        )
+        event.update(overrides)
+        return event
+
     def record(self, name, event):
         event_file = self.write_event(name, event)
         result = self.run_cli(
@@ -151,6 +209,29 @@ class ModelRoutingAuditTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
+
+    def test_event_types_reject_cross_type_fields(self):
+        cases = []
+        for field, value in (
+            ("accepted", "garbage"),
+            ("final_model", "gpt-9-fake"),
+            ("elapsed_ms", -5),
+        ):
+            event = self.pre("pre-cross-type", "task-pre-cross-type")
+            event[field] = value
+            cases.append((f"pre:{field}", event))
+        for field, value in (
+            ("model", "gpt-9-fake"),
+            ("rationale", {"task_class": "bogus"}),
+        ):
+            event = self.post("post-cross-type", "task-post-cross-type")
+            event[field] = value
+            cases.append((f"post:{field}", event))
+
+        for label, event in cases:
+            with self.subTest(label=label):
+                with self.assertRaises(audit.AuditError):
+                    audit.validate_event(event)
 
     @staticmethod
     def pre_detail():
@@ -244,6 +325,9 @@ class ModelRoutingAuditTests(unittest.TestCase):
         )
         self.assertEqual(review["metric_counts"]["avoidable_premium_calls"], 1)
         self.assertEqual(review["metric_counts"]["false_cheap_routes"], 1)
+        self.assertIsNone(review["metrics"]["cost_proxy_per_accepted_task"])
+        self.assertTrue(review["metrics"]["tokens_and_calls_by_model_effort"])
+        self.assertTrue(review["metrics"]["policy_segments"])
         self.assertEqual(stat.S_IMODE(self.ledger.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(self.review_dir.stat().st_mode), 0o700)
 
@@ -291,6 +375,26 @@ class ModelRoutingAuditTests(unittest.TestCase):
             'SKILL_ROOT / "config" / "model-routing.defaults.json"', content
         )
         self.assertNotIn(str(SKILL_ROOT), content)
+
+    def test_default_paths_follow_codex_home_but_policy_stays_package_relative(self):
+        configured_home = self.root / "custom-codex"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.path.insert(0, 'scripts'); import model_routing_audit as a; print(a.DEFAULT_LEDGER); print(a.DEFAULT_REVIEW_DIR); print(a.DEFAULT_CONFIG)",
+            ],
+            env={**os.environ, "CODEX_HOME": str(configured_home)},
+            cwd=SKILL_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        paths = result.stdout.splitlines()
+        self.assertEqual(paths[0], str(configured_home / "state" / "model-routing" / "attempts.jsonl"))
+        self.assertEqual(paths[1], str(configured_home / "state" / "model-routing" / "reviews"))
+        self.assertEqual(paths[2], str(SKILL_ROOT / "config" / "model-routing.defaults.json"))
 
     def test_automatic_review_is_created_for_failure(self):
         self.record("failure-pre.json", self.pre("failure", "failed-task"))
@@ -493,6 +597,159 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertFalse(payload["recorded"]["accepted"])
         self.assertTrue(payload["recorded"]["execution_completed"])
 
+    def test_current_policy_route_history_is_table_driven_and_fail_closed(self):
+        self.record("strict-pre.json", self.current_pre("strict-1", "strict-task"))
+        result = self.record(
+            "strict-post.json",
+            self.current_post("strict-1", "strict-task"),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        illegal_first = self.current_pre(
+            "strict-bad-first",
+            "strict-bad-first-task",
+            route_id="terra_max",
+        )
+        result = self.run_cli(
+            "record",
+            "--event-file",
+            self.write_event("strict-bad-first.json", illegal_first),
+            "--ledger",
+            self.ledger,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FIRST_ROUTE_INVALID", result.stderr)
+
+        bad_failure = self.current_post(
+            "strict-bad-failure",
+            "strict-bad-failure-task",
+            failure_class="tool_or_environment",
+        )
+        bad_failure["post_result_detail"]["next_action"] = "environment_retry"
+        self.record("strict-bad-failure-pre.json", self.current_pre("strict-bad-failure", "strict-bad-failure-task"))
+        result = self.run_cli(
+            "record",
+            "--event-file",
+            self.write_event("strict-bad-failure-post.json", bad_failure),
+            "--ledger",
+            self.ledger,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("observable matching signal", result.stderr)
+
+        skipped = self.current_pre(
+            "strict-skip-2",
+            "strict-task",
+            index=2,
+            route_id="luna_max",
+        )
+        skipped["planned_effort_escalations"] = 1
+        result = self.run_cli(
+            "record",
+            "--event-file",
+            self.write_event("strict-skip.json", skipped),
+            "--ledger",
+            self.ledger,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("skipped", result.stderr)
+
+    def test_current_policy_rejects_orphan_nondefault_attempt(self):
+        orphan = self.current_pre(
+            "orphan-2",
+            "orphan-task",
+            index=2,
+            route_id="luna_xhigh",
+        )
+        orphan["planned_effort_escalations"] = 1
+        result = self.run_cli(
+            "record",
+            "--event-file",
+            self.write_event("orphan-2.json", orphan),
+            "--ledger",
+            self.ledger,
+            "--review-dir",
+            self.review_dir,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must begin at attempt_index 1", result.stderr)
+        self.assertEqual(self.ledger.read_text(encoding="utf-8"), "")
+
+    def test_same_route_retry_budget_resets_after_route_transition(self):
+        task_id = "per-stage-retry-task"
+
+        def post_for(pre, failure_class, next_action, signals):
+            event = self.current_post(
+                pre["dispatch_id"], task_id, index=pre["attempt_index"]
+            )
+            event.update(
+                {
+                    "final_model": pre["model"],
+                    "final_model_tier": pre["model_tier"],
+                    "final_reasoning_effort": pre["reasoning_effort"],
+                    "final_route_id": pre["route_id"],
+                    "final_role": pre["role"],
+                    "effort_escalations": pre["planned_effort_escalations"],
+                    "model_escalations": pre["planned_model_escalations"],
+                    "failure_class": failure_class,
+                    "post_result_detail": {
+                        "observable_result_signals": signals,
+                        "evidence_references": [f"receipt-{pre['dispatch_id']}"],
+                        "route_assessment": "inconclusive",
+                        "next_action": next_action,
+                    },
+                }
+            )
+            return event
+
+        first = self.current_pre("stage-1", task_id)
+        self.record("stage-1-pre.json", first)
+        self.record(
+            "stage-1-post.json",
+            post_for(
+                first,
+                "tool_or_environment",
+                "environment_retry",
+                ["tool_failure"],
+            ),
+        )
+
+        first_retry = self.current_pre("stage-1-retry", task_id, index=2)
+        first_retry["rationale"]["prior_failure_class"] = "tool_or_environment"
+        self.record("stage-1-retry-pre.json", first_retry)
+        self.record(
+            "stage-1-retry-post.json",
+            post_for(
+                first_retry,
+                "reasoning_insufficiency",
+                "raise_effort",
+                ["tests_failed"],
+            ),
+        )
+
+        second = self.current_pre(
+            "stage-2", task_id, index=3, route_id="luna_xhigh"
+        )
+        second["planned_effort_escalations"] = 1
+        self.record("stage-2-pre.json", second)
+        self.record(
+            "stage-2-post.json",
+            post_for(
+                second,
+                "tool_or_environment",
+                "environment_retry",
+                ["tool_failure"],
+            ),
+        )
+
+        second_retry = self.current_pre(
+            "stage-2-retry", task_id, index=4, route_id="luna_xhigh"
+        )
+        second_retry["planned_effort_escalations"] = 1
+        second_retry["rationale"]["prior_failure_class"] = "tool_or_environment"
+        result = self.record("stage-2-retry-pre.json", second_retry)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_linked_acceptance_and_pair_context_are_fail_closed(self):
         mismatch = self.linked_post(
             "acceptance-mismatch",
@@ -597,6 +854,95 @@ class ModelRoutingAuditTests(unittest.TestCase):
         )
         payload = json.loads(result.stdout)
         self.assertIn("failure", payload["automatic_review"]["reasons"])
+
+    def test_issue_report_selects_latest_completed_task_and_specific_task(self):
+        old_pre = self.pre("old-attempt", "old-task")
+        old_pre["timestamp"] = "2026-07-30T00:00:00Z"
+        old_post = self.post("old-attempt", "old-task")
+        old_post["timestamp"] = "2026-07-30T00:01:00Z"
+        self.record("old-pre.json", old_pre)
+        self.record("old-post.json", old_post)
+
+        new_pre = self.pre("new-attempt", "new-task", model="gpt-5.6-terra")
+        new_pre["timestamp"] = "2026-07-31T00:00:00Z"
+        new_post = self.post(
+            "new-attempt",
+            "new-task",
+            final_model="gpt-5.6-terra",
+            final_model_tier="standard-tier",
+        )
+        new_post["timestamp"] = "2026-07-31T00:01:00Z"
+        self.record("new-pre.json", new_pre)
+        self.record("new-post.json", new_post)
+
+        latest = self.run_cli("issue-report", "--ledger", self.ledger)
+        repeat = self.run_cli("issue-report", "--ledger", self.ledger)
+        self.assertEqual(latest.returncode, 0, latest.stderr)
+        self.assertEqual(repeat.returncode, 0, repeat.stderr)
+        self.assertEqual(latest.stdout, repeat.stdout)
+        self.assertIn("latest completed task", latest.stdout)
+        self.assertIn("gpt-5.6-terra", latest.stdout)
+        self.assertNotIn("old-task", latest.stdout)
+        self.assertNotIn("new-task", latest.stdout)
+
+        specific = self.run_cli(
+            "issue-report", "--ledger", self.ledger, "--task-id", "old-task"
+        )
+        self.assertEqual(specific.returncode, 0, specific.stderr)
+        self.assertIn("requested task", specific.stdout)
+        self.assertIn("gpt-5.6-luna", specific.stdout)
+        self.assertNotIn("gpt-5.6-terra", specific.stdout)
+
+    def test_issue_report_omits_private_fields_and_does_not_mutate_ledger(self):
+        dispatch_id = "private-dispatch"
+        private_workspace = "https://user:secret@example.com/private?token=secret#frag"
+        private_session = "session-private-123"
+        private_receipt = "/private/example/review.json"
+        pre = self.linked_pre(
+            dispatch_id,
+            "private-task",
+            workspace=private_workspace,
+            main_session_id=private_session,
+        )
+        post = self.linked_post(
+            dispatch_id,
+            "private-task",
+            workspace=private_workspace,
+            main_session_id=private_session,
+        )
+        post["post_result_detail"] = self.post_detail()
+        post["post_result_detail"]["evidence_references"] = [private_receipt]
+        self.record("private-pre.json", pre)
+        self.record("private-post.json", post)
+        before = self.ledger.read_bytes()
+
+        result = self.run_cli("issue-report", "--ledger", self.ledger)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(before, self.ledger.read_bytes())
+        for private_value in (private_workspace, private_session, private_receipt):
+            self.assertNotIn(private_value, result.stdout)
+        self.assertNotIn("prompt", result.stdout.lower())
+        self.assertIn("allowlisted routing outcomes", result.stdout)
+
+    def test_issue_report_fails_closed_for_incomplete_or_sensitive_ledger(self):
+        self.record("open-pre.json", self.pre("open", "open-task"))
+        before = self.ledger.read_bytes()
+        incomplete = self.run_cli("issue-report", "--ledger", self.ledger)
+        self.assertNotEqual(incomplete.returncode, 0)
+        self.assertIn("no completed task", incomplete.stderr)
+        self.assertEqual(before, self.ledger.read_bytes())
+
+        sensitive_ledger = self.root / "sensitive" / "attempts.jsonl"
+        sensitive_ledger.parent.mkdir(parents=True)
+        sensitive = self.pre("sensitive", "sensitive-task")
+        sensitive["prompt"] = "private prompt payload"
+        sensitive_ledger.write_text(json.dumps(sensitive) + "\n", encoding="utf-8")
+        os.chmod(sensitive_ledger, 0o600)
+        sensitive_before = sensitive_ledger.read_bytes()
+        rejected = self.run_cli("issue-report", "--ledger", sensitive_ledger)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertNotIn("private prompt payload", rejected.stderr)
+        self.assertEqual(sensitive_before, sensitive_ledger.read_bytes())
 
 
 if __name__ == "__main__":

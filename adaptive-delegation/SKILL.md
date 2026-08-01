@@ -1,9 +1,13 @@
 ---
 name: adaptive-delegation
-description: Use when routing bounded implementation and verification work for token effective, token-effective, token efficiency, token-efficient delegation, cost-efficient subagents, Luna-first delegation, adaptive delegation, effort-first escalation, model routing audit, validate model selection, reduce Sol usage, or evidence-attested delegation requests; also match 토큰효율화 and 토큰 효율화.
+description: Use when routing bounded implementation and verification work for token effective, token-effective, token efficiency, token-efficient delegation, cost-efficient subagents, Luna-first delegation, adaptive delegation, effort-first escalation, model routing audit, validate model selection, reduce Sol usage, or evidence-checked delegation requests; also match 토큰효율화 and 토큰 효율화.
 ---
 
 # Adaptive Delegation
+
+**Codex only:** this skill routes work to Codex native subagents. Claude Code
+is unsupported, and this package does not provide a general external runtime
+integration.
 
 Use explicit `$adaptive-delegation` when deterministic activation matters.
 Implicit activation remains allowed for requests that match this skill's
@@ -36,10 +40,9 @@ reports evidence, conflicts, and its stop condition.
 ## Policy source and routing defaults
 
 The policy source of truth is the package config at
-`~/.codex/skills/adaptive-delegation/config/model-routing.defaults.json`.
-`~/.codex/state/model-routing/policy.local.json` is an optional local override.
-`~/.codex/.omx-config.json` is a legacy, read-compatible fallback only; it is
-not authoritative and must not be written by this policy.
+`adaptive-delegation/config/model-routing.defaults.json` in this repository.
+The repository and package sources are canonical; an installed copy is a
+deployment target and does not become a second policy source.
 
 The default strategy is Luna-first and effort-first:
 
@@ -48,17 +51,22 @@ The default strategy is Luna-first and effort-first:
 | Simple lookup or extraction | `gpt-5.6-luna/medium` |
 | Clear implementation or transformation | `gpt-5.6-luna/high` |
 | Bounded complex implementation or verification | `gpt-5.6-luna/xhigh` |
-| Former Terra bounded | `gpt-5.6-luna/xhigh` |
-| Former Sol bounded with a strong oracle | `gpt-5.6-luna/max` |
 | Weak oracle, ambiguous/high-risk, or long contract | Main-authoritative `gpt-5.6-sol/ultra` |
 
 Leaf `ultra` is forbidden. The main retains authority and may take over at
 `gpt-5.6-sol/ultra`. There is one same-model reasoning retry per stage, with
 reevaluation after every attempt. The effort-first ladders are:
 
-- Former Terra bounded: `luna/xhigh -> luna/max -> terra/xhigh -> terra/max -> main-takeover sol/ultra`.
-- Former Sol bounded with a strong oracle: `luna/max -> terra/max -> sol/high -> main-takeover sol/ultra`.
-- Weak oracle, ambiguous/high-risk, or long contract: `main-authoritative sol/ultra`; optionally `luna/xhigh` as scout-only.
+- Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> main-takeover sol/ultra`.
+- Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> terra/xhigh -> terra/max -> main-takeover sol/ultra`.
+- Bounded complex implementation or verification: `luna/xhigh -> luna/max -> terra/xhigh -> terra/max -> main-takeover sol/ultra`.
+- Bounded complex work with a strong oracle may omit `terra/xhigh` but may not skip any other configured step.
+- Weak-oracle, ambiguous/high-risk, or long-contract work stays main-authoritative at `sol/ultra`.
+
+Every leaf step and Checker route resolves to a package-declared role with the
+exact model and effort. `sol/ultra` is a main-authority route, never a child
+role. The runtime validator rejects unknown routes, skipped steps, mismatched
+counters, exhausted same-route retries, and model/effort substitutions.
 
 The config records Luna as a user-provided 80% reduction versus its prior
 price and Terra as a user-provided 20% reduction versus its prior price. These
@@ -95,6 +103,11 @@ attempts automatically and the audit CLI auto-creates triggered reviews.
 When asked to validate model selection, read the audit logs automatically:
 consult the model-routing attempts and reviews before reporting a conclusion.
 
+To prepare a privacy-safe GitHub issue, run the local `issue-report` command
+from `scripts/model_routing_audit.py` and follow the repository-level
+`REPORTING.md`. The command prints only an allowlisted Markdown summary and
+never publishes or uploads the ledger.
+
 ## Always-on continuity
 
 Before routing, consult
@@ -107,7 +120,7 @@ present, otherwise the sole verified executor. `token_budget` is
 optional/advisory; its absence preserves Native V2 eligibility and never
 triggers external rerouting.
 
-## Native V2 routing and exact attestation
+## Codex native routing and local admission evidence
 
 After delegation is chosen, prefer Native V2 through a verified fixed
 `agent_type`. Select the installed Luna role whose TOML fixes the exact model
@@ -123,17 +136,18 @@ allowlisted fixed Luna `agent_type` exists. A surface that uses explicit model
 overrides instead must support `agent_type`, `model`, `reasoning_effort`, and
 `fork_turns="none"`. Both modes require the installed role TOML/launch binding,
 exact resolved role/model/effort allowlist, `desired=explicit=native_v2`, and
-trusted runtime evidence. Before creation, prove the same-call monotonic order
-`pending_receipt -> native_spawn_gate -> child_creation_eligibility`.
+locally validated runtime metadata. Before creation, require the bounded local
+sequence `pending_receipt -> native_spawn_gate -> child_creation_eligibility`;
+this is consistency evidence, not a clock-backed security proof.
 
 Use the exact typed direct path (`--direct-typed`) only when the fixed role or
-Native surface is unavailable, the Native call is rejected, trusted runtime
+Native surface is unavailable, the Native call is rejected, validated runtime
 model/effort mismatches the binding, or a hard parent-enforced cap is required.
 Terra substitution is forbidden for a rejected Luna admission. A pre-creation
 rejection means no child and child token 0. Network defaults to off unless the
 packet explicitly permits it.
 
-Use trusted child session metadata/turn_context for the session, model, and
+Use validated child session metadata/turn_context for the session, model, and
 effort. Hidden fields, hook `updatedInput`, and prompt text are not evidence.
 Model omission is valid only for a verified fixed-role selection; otherwise
 model omission and inheritance are not evidence. A mismatch cancels only that
@@ -162,18 +176,33 @@ counts, task/oracle/risk/selection enums, workspace and main-session identity,
 and the dispatch surface plus its SHA-256 schema fingerprint. Missing,
 malformed, or sensitive fields fail closed before child creation.
 
-When a hard token or resource cap is required, use the canonical typed
-external worker path with exact role binding, isolated runtime, network
+When a hard token or resource cap is required, use the canonical typed direct
+Codex worker path with exact role binding, isolated runtime, network
 defaults, ledger semantics, `rollout_budget`, and trusted parent monitoring. A
 real cap stop preserves evidence, stops only that child, and returns to root
 for a narrower packet. Do not describe Native V2 caps as blanket hard-enforced.
 
-Completion is not integration. Integrate only with an allowlisted receipt
-whose exact `desired=explicit=effective` role/model/effort, trusted rollout
-session id, launch-bound role config, successful finish, independent Checker
-pass, sha256 evidence digest, and truthful token observation all match. Any
-missing or mismatched proof blocks integration. Receipt authority is the
-owner-only local rollout binding, not cryptographic or remote attestation.
+Completion is not integration. Child execution first records a dispatcher-
+captured terminal event. A separate `--finalize-integration` phase is the only
+path that reads an integration receipt. The receipt must match the exact packet
+digest, route/model/effort, child and rollout, terminal nonce/result/digest,
+captured output digest, declared worktree digest, verification checks, evidence
+artifact, and the package-declared `adaptive-terra-checker-high` session. The
+Checker session must differ from both the child and the declared main session.
+Pre-created, stale, mutable, or mismatched evidence fails closed.
+
+The model-routing ledger appends `pre_decision` before execution. A failed
+execution closes that attempt immediately. A successful child remains pending
+with no `post_result` until integration finalization succeeds, at which point
+the accepted terminal result is appended. A failed receipt stays pending so a
+corrected, independently checked receipt can be submitted without rewriting
+history.
+
+This is same-user local integrity checking, not a signature, remote
+attestation, or a separate security principal. A malicious process running as
+the same operating-system user can forge local files and session records. The
+main remains the final trusted authority and must not describe a local receipt
+as cryptographic proof.
 
 ## Objective-bound verification
 
@@ -196,20 +225,18 @@ claim.
 | --- | --- |
 | Adaptive-delegation package | `~/.codex/skills/adaptive-delegation/` |
 | Policy source of truth | `~/.codex/skills/adaptive-delegation/config/model-routing.defaults.json` |
-| Optional local override | `~/.codex/state/model-routing/policy.local.json` |
-| External dispatcher compatibility wrapper | `~/.codex/scripts/adaptive_dispatch_attestation.py` |
+| Package dispatcher | `~/.codex/scripts/adaptive_dispatch_attestation.py` |
 | Model-routing attempts | `~/.codex/state/model-routing/attempts.jsonl` |
 | Model-routing reviews | `~/.codex/state/model-routing/reviews/` |
 | Continuity ledger | `~/.codex/state/adaptive-delegation/continuity.jsonl` |
 
-The standalone repository is the portable source for GitHub deployment.
+The standalone repository is the portable source for Codex deployment.
 Deployment fetches the repository and runs `python3 scripts/install.py`; see
-[CROSS_PC_TRANSFER.md](CROSS_PC_TRANSFER.md). The
-installer copies the package, installs its dispatcher source as the external
-compatibility wrapper, and regenerates only package-declared role bindings.
+[CROSS_PC_TRANSFER.md](CROSS_PC_TRANSFER.md). The installer copies the
+package, installs its package dispatcher, and regenerates only
+package-declared role bindings.
 Codex normally detects the skill change automatically; restart only when the
 update does not appear.
 
-Never copy authentication, logs, continuity data, rollout/session data, or the
-optional local override. Preserve legacy readers; the legacy file remains a
-read-compatible fallback only.
+Never copy authentication, logs, continuity data, or rollout/session data.
+Those files stay on the machine where they were created.
