@@ -1237,6 +1237,10 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         review = json.loads(Path(result.stdout.strip()).read_text(encoding="utf-8"))
         linked = review["linked_audit"]
+        self.assertEqual(review["attempts"]["analysis_basis"], "historical_only")
+        self.assertEqual(review["attempts"]["current_policy_paired"], 0)
+        self.assertEqual(review["attempts"]["analysis_basis_paired"], 1)
+        self.assertEqual(review["tasks"]["total"], 1)
         self.assertEqual(linked["paired"], 1)
         self.assertEqual(linked["paired_coverage_rate"], 1.0)
         self.assertEqual(linked["incomplete_pre_decisions_excluded"], 1)
@@ -1247,6 +1251,97 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertEqual(group["policy_id"], "adaptive-delegation-luna-first-v0.2")
         self.assertEqual(group["surface_identity"], "typed-external-worker")
         self.assertEqual(group["paired_attempts"], 1)
+
+    def test_review_separates_legacy_linked_history_from_current_analysis(self):
+        policy = json.loads(
+            (SKILL_ROOT / "config" / "model-routing.defaults.json").read_text()
+        )
+        fingerprint = contract.canonical_policy_fingerprint(policy)
+        legacy_pre = self.linked_pre(
+            "legacy-linked-review",
+            "legacy-linked-review-task",
+            policy_fingerprint=fingerprint,
+        )
+        legacy_post = self.linked_post(
+            "legacy-linked-review",
+            "legacy-linked-review-task",
+            policy_fingerprint=fingerprint,
+        )
+        current_pre = self.current_pre(
+            "current-linked-review", "current-linked-review-task"
+        )
+        current_post = self.current_post(
+            "current-linked-review",
+            "current-linked-review-task",
+            accepted=True,
+            failure_class="none",
+            oracle_verdict="pass",
+            integration_accepted=True,
+        )
+        current_post["post_result_detail"] = {
+            "observable_result_signals": ["tests_passed"],
+            "evidence_references": ["current-review-receipt"],
+            "route_assessment": "correct",
+            "next_action": "retain_route",
+        }
+        for name, event in (
+            ("legacy-review-pre.json", legacy_pre),
+            ("legacy-review-post.json", legacy_post),
+            ("current-review-pre.json", current_pre),
+            ("current-review-post.json", current_post),
+        ):
+            self.record(name, event)
+
+        result = self.run_cli(
+            "review", "--ledger", self.ledger, "--review-dir", self.review_dir
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        review = json.loads(Path(result.stdout.strip()).read_text(encoding="utf-8"))
+        self.assertEqual(review["attempts"]["analysis_basis"], "current_0.3")
+        self.assertEqual(review["attempts"]["current_policy_paired"], 1)
+        self.assertEqual(review["attempts"]["analysis_basis_paired"], 1)
+        self.assertEqual(review["tasks"]["total"], 1)
+        self.assertEqual(
+            {group["schema_version"] for group in review["linked_audit"]["groups"]},
+            {"0.2.0", "0.3.0"},
+        )
+
+    def test_review_keeps_prior_policy_0_3_history_readable(self):
+        prior_pre = self.current_pre(
+            "prior-policy-review",
+            "prior-policy-review-task",
+            policy_id="adaptive-delegation-prior-policy",
+            policy_fingerprint="d" * 64,
+        )
+        prior_post = self.current_post(
+            "prior-policy-review",
+            "prior-policy-review-task",
+            policy_id="adaptive-delegation-prior-policy",
+            policy_fingerprint="d" * 64,
+            accepted=True,
+            failure_class="none",
+            oracle_verdict="pass",
+            integration_accepted=True,
+        )
+        prior_post["post_result_detail"] = {
+            "observable_result_signals": ["tests_passed"],
+            "evidence_references": ["prior-policy-receipt"],
+            "route_assessment": "correct",
+            "next_action": "retain_route",
+        }
+        self.record("prior-policy-pre.json", prior_pre)
+        self.record("prior-policy-post.json", prior_post)
+
+        result = self.run_cli(
+            "review", "--ledger", self.ledger, "--review-dir", self.review_dir
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        review = json.loads(Path(result.stdout.strip()).read_text(encoding="utf-8"))
+        self.assertEqual(review["attempts"]["analysis_basis"], "historical_only")
+        self.assertEqual(review["attempts"]["current_policy_paired"], 0)
+        self.assertEqual(review["attempts"]["analysis_basis_paired"], 1)
+        self.assertEqual(review["tasks"]["total"], 1)
+        self.assertEqual(review["linked_audit"]["groups"][0]["schema_version"], "0.3.0")
 
     def test_policy_gate_is_a_valid_linked_failure_class(self):
         dispatch_id = "policy-gate"

@@ -36,8 +36,13 @@ consistency checks; they are not an operating-system security boundary.
   match the exact packet, Objective Lock digest, child terminal result,
   output/worktree digests, route, and a distinct-session Checker.
 - Successful execution remains pending in the append-only routing ledger until
-  integration finalization succeeds; receipt or pre-gate finalization failures
-  remain pending, and only a successful finalization records acceptance.
+  integration finalization succeeds. Receipt or pre-gate failures can be
+  corrected only with the same installed terminal/receipt/audit schema.
+- Before updating from terminal/receipt v1 and audit `0.2.0`, finalize every
+  pending attempt. After the update, an old pending chain remains readable
+  evidence but deliberately cannot be finalized or backfilled. Re-execute it
+  as a fresh chain with a new task ID, attempt index 1, dispatch ID, packet, and
+  v2 terminal/receipt plus `0.3.0` audit records.
 
 The main-profile eligibility gate uses declared current-session context; main
 authority comes from the user/control topology, not from model capability.

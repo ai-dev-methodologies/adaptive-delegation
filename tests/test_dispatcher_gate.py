@@ -1242,6 +1242,8 @@ class DispatcherGateTests(unittest.TestCase):
             "reasoning_effort": binding.effort,
         }
         receipt_value = {
+            "objective_lock_version": module.OBJECTIVE_LOCK_VERSION,
+            "objective_lock_digest": "c" * 64,
             "surface_identity": "codex-app.collaboration.spawn_agent",
             "original_callable_schema": {
                 "agent_type": "installed-role-enum",
@@ -1272,12 +1274,244 @@ class DispatcherGateTests(unittest.TestCase):
             module.ReceiptEnvelope(receipt_value, receipt_path),
             binding,
             dispatch_id="portable-native-luna",
+            objective_lock_version=module.OBJECTIVE_LOCK_VERSION,
+            objective_lock_digest="c" * 64,
         )
 
         self.assertEqual(admission["status"], "structurally_eligible")
         self.assertEqual(admission["selection_mode"], "verified-fixed-agent-type")
         self.assertIsNone(admission["rejection_reason"])
         self.assertNotIn("model", receipt_value["original_callable_schema"])
+
+    def test_complete_native_admission_cannot_omit_or_change_objective_lock(self) -> None:
+        module = self.load_dispatcher_module()
+        packet = self.packet("complete-native-lock", "gpt-5.6-sol", "high")
+        binding = module._role_binding(packet)
+        self.assertIsNotNone(binding)
+        triple = module._binding_triple(binding)
+        receipt_value = {
+            "objective_lock_version": module.OBJECTIVE_LOCK_VERSION,
+            "objective_lock_digest": module._objective_lock_digest(packet),
+            "surface_identity": "codex-app.collaboration.spawn_agent",
+            "original_callable_schema": {
+                "agent_type": "installed-role-enum",
+                "reasoning_effort": "string",
+                "fork_turns": "none",
+            },
+            "selection_mode": "verified-fixed-agent-type",
+            "desired_route": "native_v2",
+            "explicit_route": "native_v2",
+            "installed_binding": {**triple, "fork_turns": "none"},
+            "explicit_arguments": {
+                "agent_type": binding.agent_type,
+                "reasoning_effort": binding.effort,
+                "fork_turns": "none",
+            },
+            "allowlist": [triple],
+            "gate_events": [
+                {"name": "pending_receipt", "monotonic_ns": 1},
+                {"name": "native_spawn_gate", "monotonic_ns": 2},
+                {"name": "child_creation_eligibility", "monotonic_ns": 3},
+            ],
+        }
+        receipt_path = self.root / "complete-native-lock.json"
+        receipt_path.write_text(json.dumps(receipt_value), encoding="utf-8")
+        receipt_path.chmod(0o600)
+        envelope = module.ReceiptEnvelope(receipt_value, receipt_path)
+
+        accepted = module._native_admission(
+            envelope,
+            binding,
+            dispatch_id=packet["dispatch_id"],
+            packet=packet,
+            rollout=None,
+            session_id=None,
+            require_provenance=False,
+        )
+        self.assertEqual(accepted["status"], "structurally_eligible")
+
+        missing_value = dict(receipt_value)
+        missing_value.pop("objective_lock_digest")
+        missing_path = self.root / "complete-native-lock-missing.json"
+        missing_path.write_text(json.dumps(missing_value), encoding="utf-8")
+        missing_path.chmod(0o600)
+        missing = module._native_admission(
+            module.ReceiptEnvelope(missing_value, missing_path),
+            binding,
+            dispatch_id=packet["dispatch_id"],
+            packet=packet,
+            rollout=None,
+            session_id=None,
+            require_provenance=False,
+        )
+        self.assertEqual(missing["status"], "rejected")
+        self.assertEqual(
+            missing["rejection_reason"], "admission_objective_lock_mismatch"
+        )
+
+        mismatched_value = {**receipt_value, "objective_lock_digest": "0" * 64}
+        mismatched_path = self.root / "complete-native-lock-mismatch.json"
+        mismatched_path.write_text(json.dumps(mismatched_value), encoding="utf-8")
+        mismatched_path.chmod(0o600)
+        rejected = module._native_admission(
+            module.ReceiptEnvelope(mismatched_value, mismatched_path),
+            binding,
+            dispatch_id=packet["dispatch_id"],
+            packet=packet,
+            rollout=None,
+            session_id=None,
+            require_provenance=False,
+        )
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(
+            rejected["rejection_reason"], "admission_objective_lock_mismatch"
+        )
+
+    def test_schema_cutover_rejects_legacy_pending_chain_and_fresh_chain_finalizes(self) -> None:
+        module = self.load_dispatcher_module()
+        legacy_packet = self.packet("legacy-pending-cutover", "gpt-5.6-sol", "high")
+        legacy_packet["write_scope"] = ["read-only"]
+        legacy_model_ledger = self.root / "legacy-pending-routing.jsonl"
+        legacy_pre = {
+            "schema_version": "0.2.0",
+            "event_type": "pre_decision",
+            "attempt_id": legacy_packet["dispatch_id"],
+            "task_id": legacy_packet["routing_audit"]["task_id"],
+            "attempt_index": 1,
+            "timestamp": "2026-07-31T12:00:00Z",
+            "model": "gpt-5.6-luna",
+            "model_tier": "spark-tier",
+            "reasoning_effort": "xhigh",
+            "rationale": {
+                "task_class": "bounded_complex_implementation_or_verification",
+                "oracle_strength": "strong",
+                "risk_class": "medium",
+                "prior_failure_class": None,
+                "prior_attempts": 0,
+                "selection_basis": "policy_default",
+            },
+            "dispatch_id": legacy_packet["dispatch_id"],
+            "policy_id": "adaptive-delegation-luna-first-v0.2",
+            "policy_fingerprint": "a" * 64,
+            "workspace": str(self.root),
+            "main_session_id": "portable-main",
+            "main_model": "gpt-5.6-sol",
+            "main_reasoning_effort": "high",
+            "surface_identity": "portable-smoke",
+            "surface_schema_fingerprint": "e" * 64,
+        }
+        legacy_model_ledger.write_text(
+            json.dumps(legacy_pre, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        legacy_model_ledger.chmod(0o600)
+        legacy_terminal_value = {
+            "version": 1,
+            "dispatch_id": legacy_packet["dispatch_id"],
+            "packet_digest": module._canonical_digest(legacy_packet),
+            "selected_launch_path": "typed_external_worker",
+        }
+        legacy_dispatch_ledger = self.root / "dispatch.jsonl"
+        legacy_dispatch_record = {
+            "dispatch_id": legacy_packet["dispatch_id"],
+            "terminal_event": {
+                "value": legacy_terminal_value,
+                "digest": module._canonical_digest(legacy_terminal_value),
+            },
+        }
+        legacy_dispatch_ledger.write_text(
+            json.dumps(legacy_dispatch_record, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        legacy_dispatch_ledger.chmod(0o600)
+        legacy_receipt = self.root / "legacy-pending-receipt.json"
+        legacy_receipt.write_text(
+            json.dumps({"receipt_kind": "integration", "receipt_version": 1}),
+            encoding="utf-8",
+        )
+        legacy_receipt.chmod(0o600)
+        legacy_packet_path = self.root / "legacy-pending-cutover.json"
+        legacy_packet_path.write_text(json.dumps(legacy_packet), encoding="utf-8")
+        legacy_packet_path.chmod(0o600)
+        before_dispatch = legacy_dispatch_ledger.read_bytes()
+        before_model = legacy_model_ledger.read_bytes()
+
+        self.assertIsNone(
+            module._load_terminal_event(legacy_dispatch_ledger, legacy_packet)
+        )
+        legacy_finalize = subprocess.run(
+            [
+                sys.executable,
+                str(self.dispatcher),
+                "--packet",
+                str(legacy_packet_path),
+                "--ledger",
+                str(legacy_dispatch_ledger),
+                "--model-routing-ledger",
+                str(legacy_model_ledger),
+                "--model-routing-review-dir",
+                str(self.root / "legacy-reviews"),
+                "--finalize-integration",
+                "--integration-receipt",
+                str(legacy_receipt),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=self.environment,
+        )
+        self.assertEqual(
+            legacy_finalize.returncode,
+            module.EXIT_MODEL_ROUTING_AUDIT_FAILURE,
+            legacy_finalize.stderr,
+        )
+        self.assertEqual(legacy_dispatch_ledger.read_bytes(), before_dispatch)
+        self.assertEqual(legacy_model_ledger.read_bytes(), before_model)
+
+        fresh_packet = self.packet("fresh-after-cutover", "gpt-5.6-sol", "high")
+        fresh_packet["write_scope"] = ["read-only"]
+        executed, fresh_model_ledger = self.run_packet(fresh_packet)
+        self.assertEqual(executed.returncode, 0, executed.stderr + executed.stdout)
+        fresh_terminal = module._load_terminal_event(
+            legacy_dispatch_ledger, fresh_packet
+        )
+        self.assertIsNotNone(fresh_terminal)
+        binding = module._role_binding(fresh_packet)
+        self.assertIsNotNone(binding)
+        _receipt, fresh_receipt, _rollout, _artifact = self.receipt_fixture(
+            module, fresh_packet, binding, fresh_terminal
+        )
+        fresh_packet_path = self.root / "fresh-after-cutover.json"
+        finalized = subprocess.run(
+            [
+                sys.executable,
+                str(self.dispatcher),
+                "--packet",
+                str(fresh_packet_path),
+                "--ledger",
+                str(legacy_dispatch_ledger),
+                "--model-routing-ledger",
+                str(fresh_model_ledger),
+                "--model-routing-review-dir",
+                str(self.root / "reviews"),
+                "--finalize-integration",
+                "--integration-receipt",
+                str(fresh_receipt),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=self.environment,
+        )
+        self.assertEqual(finalized.returncode, 0, finalized.stderr)
+        fresh_rows = [
+            json.loads(line) for line in fresh_model_ledger.read_text().splitlines()
+        ]
+        self.assertEqual(
+            [row["event_type"] for row in fresh_rows],
+            ["pre_decision", "post_result"],
+        )
+        self.assertTrue(all(row["schema_version"] == "0.3.0" for row in fresh_rows))
 
     def test_recovery_launch_is_bound_to_dispatched_packet_and_route(self) -> None:
         module = self.load_dispatcher_module()

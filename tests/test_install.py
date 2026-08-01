@@ -155,6 +155,7 @@ class InstallerTests(unittest.TestCase):
         cross_pc = (
             ROOT / "adaptive-delegation" / "CROSS_PC_TRANSFER.md"
         ).read_text(encoding="utf-8")
+        normalized_install = " ".join(install.split())
         self.assertTrue(
             readme.startswith("# Adaptive Delegation\n\n**Codex-only skill:**")
         )
@@ -170,6 +171,11 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("do not silently turn a takeover into a redesign", skill)
         self.assertIn("issue-report", reporting)
         self.assertIn("dispatch_attestation.jsonl", install)
+        self.assertIn("Before updating, finalize every pending attempt", install)
+        self.assertIn(
+            "new task ID, attempt index 1, dispatch ID, packet",
+            normalized_install,
+        )
         self.assertIn("Older installers cannot know", cross_pc)
 
         owned_paths = {

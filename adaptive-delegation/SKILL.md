@@ -209,10 +209,16 @@ stale, mutable, or mismatched evidence fails closed.
 The model-routing ledger appends `pre_decision` before execution. A failed
 execution closes that attempt immediately. A successful child remains pending
 with no `post_result` until integration finalization succeeds, at which point
-the accepted terminal result is appended. A failed receipt stays pending so a
-corrected, distinct-session-checked receipt can be submitted without rewriting
-history. A failure before the receipt gate also remains pending for corrected
-finalization.
+the accepted terminal result is appended. Within the same installed terminal,
+receipt, and audit schema, a failed receipt or pre-gate check stays pending for
+corrected finalization without rewriting history.
+
+Schema upgrades are an explicit cutover. Finalize v1 terminal/receipt and
+linked `0.2.0` pending attempts before updating. After updating, those pending
+chains remain readable evidence but are deliberately non-finalizable; never
+backfill or rewrite them. Re-execute the bounded work as a genuinely fresh
+chain with a new task ID, attempt index 1, dispatch ID, packet, v2 execution,
+v2 terminal/receipt, and linked `0.3.0` records.
 
 This is same-user local integrity checking, not a signature, remote
 attestation, or a separate security principal. A malicious process running as

@@ -270,8 +270,8 @@ def _native_structural_admission(
     binding: RoleBinding,
     *,
     dispatch_id: str,
-    objective_lock_version: str | None = None,
-    objective_lock_digest: str | None = None,
+    objective_lock_version: str,
+    objective_lock_digest: str,
 ) -> dict[str, Any]:
     """Reject structurally impossible Native V2 calls before child creation.
 
@@ -302,7 +302,7 @@ def _native_structural_admission(
     value, receipt_path = _receipt_value(value)
     if value is None or receipt_path is None:
         return receipt
-    if objective_lock_version is not None and (
+    if (
         value.get("objective_lock_version") != objective_lock_version
         or value.get("objective_lock_digest") != objective_lock_digest
     ):
@@ -433,12 +433,19 @@ def _native_admission(
     binding: RoleBinding,
     *,
     dispatch_id: str,
+    packet: dict[str, Any],
     rollout: Path | None,
     session_id: str | None,
     require_provenance: bool = True,
 ) -> dict[str, Any]:
-    """Compatibility wrapper for callers that need the complete gate."""
-    receipt = _native_structural_admission(value, binding, dispatch_id=dispatch_id)
+    """Complete gate with expected lock values derived from a validated packet."""
+    receipt = _native_structural_admission(
+        value,
+        binding,
+        dispatch_id=dispatch_id,
+        objective_lock_version=OBJECTIVE_LOCK_VERSION,
+        objective_lock_digest=_objective_lock_digest(packet),
+    )
     if receipt["status"] != "structurally_eligible" or not require_provenance:
         return receipt
     return _native_admission_provenance(

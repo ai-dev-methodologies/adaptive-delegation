@@ -133,8 +133,17 @@ policy gate records its terminal `post_result` immediately. A successful child
 execution remains an incomplete audit attempt until the separate integration
 finalization succeeds; only then is the accepted `post_result` appended. This
 prevents an execution-only success from being frozen as a rejected result that
-later finalization cannot replace in the append-only ledger. Receipt-gate and
-pre-gate finalization failures also remain pending for a corrected submission.
+later finalization cannot replace in the append-only ledger. Within one
+installed terminal/receipt/audit schema, receipt-gate and pre-gate failures
+remain pending for a corrected submission.
+
+Schema updates do not bridge an incomplete trust chain. Finalize v1
+terminal/receipt plus linked `0.2.0` pending attempts before updating. After the
+update they remain historical evidence but are non-finalizable and must not be
+rewritten or backfilled. Re-execution starts a new task ID at attempt index 1
+with a new dispatch ID and packet, v2 execution/terminal/receipt, and linked
+`0.3.0` records.
+
 The records
 identify the selected model and effort, task shape, bounded envelope, evidence
 observed, outcome, failure class if any, escalation or retry action, and next

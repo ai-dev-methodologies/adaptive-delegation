@@ -1373,6 +1373,7 @@ def _make_review(
     linked_groups: dict[tuple[str, ...], dict[str, Any]] = {}
     for pre, post in linked_pairs:
         key = (
+            pre["schema_version"],
             pre["main_model"],
             pre["main_reasoning_effort"],
             pre["policy_id"],
@@ -1383,12 +1384,13 @@ def _make_review(
         group = linked_groups.setdefault(
             key,
             {
-                "main_model": key[0],
-                "main_reasoning_effort": key[1],
-                "policy_id": key[2],
-                "policy_fingerprint": key[3],
-                "surface_identity": key[4],
-                "surface_schema_fingerprint": key[5],
+                "schema_version": key[0],
+                "main_model": key[1],
+                "main_reasoning_effort": key[2],
+                "policy_id": key[3],
+                "policy_fingerprint": key[4],
+                "surface_identity": key[5],
+                "surface_schema_fingerprint": key[6],
                 "paired_attempts": 0,
                 "execution_completed": 0,
                 "integration_accepted": 0,
@@ -1400,18 +1402,20 @@ def _make_review(
         group["integration_accepted"] += int(post["integration_accepted"])
         group["oracle_verdicts"][post["oracle_verdict"]] += 1
 
-    current_pairs = [
-        pair for pair in all_pairs
-        if pair[0].get("schema_version") in {LEGACY_LINKED_SCHEMA_VERSION, LINKED_SCHEMA_VERSION}
-        and pair[0].get("policy_id") == current_policy_id
-        and pair[0].get("policy_fingerprint") == current_fingerprint
-    ]
-    # A legacy-only ledger remains readable and reviewable, but once current
-    # records exist it is deliberately excluded from current recommendations.
-    pairs = current_pairs or [
-        pair for pair in all_pairs
-        if pair[0].get("schema_version") not in {LEGACY_LINKED_SCHEMA_VERSION, LINKED_SCHEMA_VERSION}
-    ]
+    def is_current_pair(pair: tuple[dict[str, Any], dict[str, Any]]) -> bool:
+        pre, _post = pair
+        return (
+            pre.get("schema_version") == LINKED_SCHEMA_VERSION
+            and pre.get("policy_id") == current_policy_id
+            and pre.get("policy_fingerprint") == current_fingerprint
+        )
+
+    current_pairs = [pair for pair in all_pairs if is_current_pair(pair)]
+    historical_pairs = [pair for pair in all_pairs if not is_current_pair(pair)]
+    # Historical records remain readable and reviewable. They are never mixed
+    # into the analysis basis once current 0.3 records exist.
+    pairs = current_pairs or historical_pairs
+    analysis_basis = "current_0.3" if current_pairs else "historical_only"
 
     task_pairs: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
     for pre, post in pairs:
@@ -1558,7 +1562,9 @@ def _make_review(
         "ledger": str(ledger_path),
         "attempts": {
             "paired": all_paired_attempts,
-            "current_policy_paired": paired_attempts,
+            "analysis_basis": analysis_basis,
+            "analysis_basis_paired": paired_attempts,
+            "current_policy_paired": len(current_pairs),
             "incomplete_pre_decisions": incomplete,
         },
         "linked_audit": {

@@ -104,6 +104,12 @@ must start locally; they are not installation assets.
 
 ## Update or reinstall
 
+Before updating, finalize every pending attempt created by the installed
+terminal/receipt/audit schema. The v2/`0.3.0` cutover intentionally does not
+finalize or backfill pending v1/`0.2.0` chains. If one remains after updating,
+preserve it as historical evidence and re-execute the bounded work with a new
+task ID, attempt index 1, dispatch ID, packet, and v2/`0.3.0` chain.
+
 ```sh
 git pull --ff-only
 python3 scripts/install.py --dry-run
