@@ -1,6 +1,7 @@
 # Model-routing evidence dossier
 
-Status: non-deployed maintainer evidence. Captured 2026-08-02.
+Status: non-deployed maintainer evidence. Captured 2026-08-02; official
+pricing and model guidance rechecked 2026-08-03.
 
 This document preserves the external research behind the provisional Sol,
 Terra, and Luna routing policy. It is deliberately separate from the deployed
@@ -38,6 +39,37 @@ local audit review. Do not activate a model or effort from anecdotes alone.
 - Run no random or perpetual paired A/B. Record ordinary Terra use as
   `post_luna_failure` or `direct_latency`, then review real accepted outcomes.
 
+## Cost, latency, and capability decision matrix
+
+The price factors below use the 2026-07-30 standard API rates and normalize
+both input and output prices to Sol. They are also the package's routing cost
+proxy. They are not a conversion formula for a Codex subscription's weekly
+quota, although OpenAI states that the lower Terra and Luna prices now consume
+fewer Codex credits.
+
+| Route | API price factor vs Sol | Wall-clock expectation | Capability and accepted-task risk | Current use |
+| --- | ---: | --- | --- | --- |
+| Luna `medium/high` | `0.04` | Usually the lowest-latency starting point; tool or context loops can erase that advantage. | Cheapest bounded execution, but retries can dominate if the packet or oracle is weak. | Default for simple and clear bounded work. |
+| Luna `xhigh/max` | `0.04` | More reasoning can take materially longer than lower Luna efforts and may be slower than Terra `medium/high`. | Preserves the cheapest token tier while testing whether effort alone closes the quality gap. | Raise effort before model tier; use `max` first for the declared quota-first long-horizon route. |
+| Terra `medium/high` | `0.40` | Variable, not categorically slow. Official scoped-work evidence and an independent snapshot show a defensible faster mid-quality niche. | Costs 10x Luna per token but 60% less than Sol. It is useful only when it avoids more Luna retries or a Sol call. | After observable Luna failure; direct use only for a main-declared latency-sensitive, scoped, strong-oracle task. |
+| Terra `xhigh/max` | `0.40` | Expect long elapsed time and more reasoning/tool steps; speed is not the goal. | Can approach Sol on some long-horizon benchmarks at a lower per-token rate, but a later Sol rescue can erase the saving. | Provisional post-Luna quota-first lane for latency-insensitive, low/medium-risk work with a strong oracle. |
+| Sol `medium/high` leaf | `1.00` | A stronger one-pass result can be faster than a failed cheaper chain even though each token costs more. | Highest bounded-leaf capability and price. | Only after the configured Luna/Terra evidence path fails. |
+| Main Sol `ultra` | `1.00` plus highest main effort | Quality-first and potentially longest; elapsed time is subordinate to authority and ambiguity resolution. | Main owns intent, weak-oracle judgment, high-risk decisions, integration, and final takeover. | Never a leaf; use when the task cannot be safely judged by the cheaper bounded ladder. |
+
+Two totals decide whether Terra is useful:
+
+- **Accepted-task cost** is the sum of every serialized attempt, retry, and
+  rescue needed to reach acceptance, not the price of the Terra call alone.
+- **Accepted-task latency** is the sum of serialized attempt time, queue/tool
+  time, and recovery time. Terra `medium/high` may own a direct-latency niche;
+  Terra `xhigh/max` owns a quota-saving hypothesis and is allowed to be slower.
+
+Therefore, “Terra is cheaper but slower” is accurate only for the provisional
+`xhigh/max` lane. It is not a family-wide property. Keep Terra only when its
+assigned lane improves accepted-task cost, Sol usage, intervention count, or a
+declared latency target. If Luna failure followed by Terra failure and Sol
+rescue becomes common, narrow or remove that Terra hop.
+
 ## Official sources
 
 | Source | Relevant fact | Confidence and limitation |
@@ -45,7 +77,8 @@ local audit review. Do not activate a model or effort from anecdotes alone.
 | [OpenAI model guidance](https://developers.openai.com/api/docs/guides/latest-model) | Positions Sol for frontier work, Terra for an intelligence/cost balance, and Luna for efficient high-volume work. Recommends representative evaluation. | High authority for product positioning; not an acceptance oracle for this workload. |
 | [GPT-5.6 launch](https://openai.com/index/gpt-5-6/) | Reports the family capabilities, common 1.05M context and 128K output limits, and vendor benchmark tables. | High authority for published configuration and vendor results; launch pricing is stale after 2026-07-30. |
 | [2026-07-30 price update](https://openai.com/index/advancing-the-price-performance-frontier-with-gpt-5-6/) | Current standard API prices: Sol `$5/$30`, Terra `$2/$12`, Luna `$0.20/$1.20` per million input/output tokens. It also says lower Terra/Luna prices reduce Codex credit consumption. | Highest current pricing evidence. Recheck on every package release. |
-| [Model catalog](https://developers.openai.com/api/docs/models) and [comparison page](https://developers.openai.com/api/docs/models/compare) | Confirm model IDs, supported efforts/tools, context, and output limits. At capture time these pages still displayed the older Terra `$2.50/$15` and Luna `$1/$6` prices. | Official-source conflict: use the newer dated price announcement and keep the mismatch visible. |
+| [Model catalog](https://developers.openai.com/api/docs/models) and [comparison page](https://developers.openai.com/api/docs/models/compare) | Confirm model IDs, supported efforts/tools, context, and output limits. On the 2026-08-03 recheck these pages still displayed the older Terra `$2.50/$15` and Luna `$1/$6` prices. | Official-source conflict: use the newer dated price announcement and keep the mismatch visible. |
+| [OpenAI outcome scorecard](https://openai.com/index/a-scorecard-for-the-ai-age/) | States that cost per successful task depends on price, compute used, and the chance of reaching the right result; a frontier model can win when it avoids retries and review. | High-authority support for accepted-task accounting, not a model-specific route benchmark. |
 | [GPT-5.6 preview system card](https://deploymentsafety.openai.com/gpt-5-6-preview/gpt-5-6-preview.pdf) | Records safety evaluation context for the family. | Relevant to high-risk authority boundaries, not a routing-quality benchmark. |
 
 ### Vendor-reported benchmark snapshot
@@ -152,6 +185,15 @@ oracle/risk class, exact route/model/effort, Terra `use_mode`, observable
 failure class, next action, integration acceptance, elapsed time, weighted
 tokens, and Sol-equivalent cost proxy. Automatic review runs every 25 accepted
 attempts, while detailed accepted-attempt retention covers the first 100.
+
+The latest local review available on 2026-08-03 was generated under policy
+`adaptive-delegation-luna-terra-sol-v0.5`, before the current `0.6.0` package.
+It contained 96 tasks and 41 accepted tasks, but zero accepted Terra tasks
+classified as either `post_luna_failure` or `direct_latency`. Older records do
+contain Terra attempts, but they lack the current use-mode classification and
+cannot decide whether the present Terra lanes should be retained. The current
+policy therefore remains a field-test hypothesis, not a locally proven model
+ranking.
 
 For later policy work, prefer adding or deriving these workload dimensions
 before drawing a Terra conclusion: context-length bucket, context-retention
