@@ -78,8 +78,13 @@ allowlisted local summary:
 python3 adaptive-delegation/scripts/model_routing_audit.py issue-report
 ```
 
-Inspect the output and follow the repository's `REPORTING.md`. Publish only the
-sanitized summary and non-sensitive reproduction details.
+Inspect the output and follow the installed
+`references/CODEX-ISSUE-REPORT-PROMPT.md` or the repository's `REPORTING.md`.
+Publish only the sanitized summary and non-sensitive reproduction details.
+After publication, record the canonical issue URL with `record-submission` so
+later reports exclude already-shared attempt fingerprints. Preserve the local
+`state/model-routing/issue-report-state.jsonl` management ledger across package
+updates, but never upload or copy it to another computer.
 
 ## Copy-ready setup request
 
@@ -91,8 +96,9 @@ Use a fresh clone, run the installer dry run and both documented unittest
 commands, then run python3 scripts/install.py. Use --codex-home only when this
 computer has a non-default Codex home.
 
-Do not copy authentication, logs, continuity data, rollout/session state,
-generated role files, or hidden runtime-state directories from another
-computer. Keep the package config as the only routing-policy source. Report
-failures with the privacy-safe issue-report workflow, never with raw ledgers.
+Do not copy authentication, logs, issue-report state, continuity data,
+rollout/session state, generated role files, or hidden runtime-state
+directories from another computer. Keep the package config as the only
+routing-policy source. Report failures with the privacy-safe, duplicate-aware
+issue-report workflow, never with raw ledgers.
 ```

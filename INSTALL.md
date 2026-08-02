@@ -45,7 +45,10 @@ merged and pushed to `origin/main`. Do not install from a feature branch, a
 dirty worktree, an uncommitted change, or a local `main` commit that has not
 been pushed. Before the promotion gate or installer, fetch `origin`, switch to
 `main`, fast-forward it, and verify that the checkout is clean and `HEAD`
-matches `origin/main`.
+matches `origin/main`. Then run
+`python3 scripts/release_preflight.py --mode deploy`; it rechecks the complete
+README against the installed version, invocation invariants, and configured
+route ladders. A missing or failed preflight blocks deployment.
 
 Package changes must update `adaptive-delegation/VERSION` and `CHANGELOG.md`;
 the applicable README and installation documentation must describe the active
@@ -62,8 +65,9 @@ Codex home:
 ```sh
 git clone https://github.com/ai-dev-methodologies/adaptive-delegation.git
 cd adaptive-delegation
+python3 scripts/release_preflight.py --mode deploy
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status tests.test_release_preflight
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 python3 -m unittest -v tests.test_isolated_dogfood
 python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
@@ -132,8 +136,9 @@ Codex home or hidden runtime-state directories.
 ```sh
 git clone https://github.com/ai-dev-methodologies/adaptive-delegation.git
 cd adaptive-delegation
+python3 scripts/release_preflight.py --mode deploy
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status tests.test_release_preflight
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
 # With explicit user approval only:
@@ -141,8 +146,10 @@ python3 scripts/install.py
 python3 scripts/version_status.py
 ```
 
-Authenticate Codex locally on that computer. Its audit and continuity ledgers
-must start locally; they are not installation assets.
+Authenticate Codex locally on that computer. Its audit, issue-report, and
+continuity ledgers must start locally; they are not installation assets. Each
+computer records its own submitted issue coverage and must not reuse another
+computer's issue-report state.
 
 ## Update or reinstall
 
@@ -152,24 +159,21 @@ finalize or backfill pending v1/`0.2.0` chains. If one remains after updating,
 preserve it as historical evidence and re-execute the bounded work with a new
 task ID, attempt index 1, dispatch ID, packet, and v2/`0.3.0` chain.
 
-Package 0.5.2 changes the policy fingerprint and adds a quota-first,
-latency-insensitive long-horizon route: Luna max -> Terra xhigh -> Terra max -> Sol
-high. The existing latency-sensitive Terra medium/high route remains. Finalize pending older
-attempts before updating. If an attempt remains pending, preserve it as
-historical evidence and restart the bounded work with a new task ID, attempt
-index 1, dispatch ID, and packet after installing 0.5.2. Packets now require
-an explicit `terminal_outcome` and `lane_id`; Objective Lock v3 carries the stable terminal
-outcome/authority layer while method/data source/stage/test plan move to a
-replaceable path/iteration envelope. Cross-policy continuation still fails
-closed. Terra `xhigh`/`max` are restricted to the quota-first long-horizon route after
-observable Luna failure; ordinary Terra use is passively logged by `use_mode`
-and compared by accepted-task outcomes without paired A/B.
+The current package preserves Objective Lock v3, the task-classified
+Luna-first ladders documented in README, and the local routing ledger. It also
+preserves `issue-report-state.jsonl`, which remembers pending Report IDs and
+submitted issue coverage across package updates. Read `CHANGELOG.md` for the
+exact version-to-version changes. If an older pending routing attempt uses an
+incompatible policy or wire contract, preserve it as historical evidence and
+restart the bounded work with a new task ID, attempt index 1, dispatch ID, and
+packet after updating.
 
 ```sh
 git pull --ff-only
+python3 scripts/release_preflight.py --mode deploy
 python3 scripts/version_status.py
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status tests.test_release_preflight
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
 # With explicit user approval only:
@@ -187,7 +191,7 @@ the same dry run, tests, and installer:
 ```sh
 git checkout <known-good-commit-or-tag>
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status tests.test_release_preflight
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
 # With explicit user approval only:
@@ -211,6 +215,7 @@ Never copy, commit, attach, or publish:
 - `$CODEX_HOME/auth.json` or other credentials;
 - `$CODEX_HOME/state/model-routing/attempts.jsonl`;
 - `$CODEX_HOME/state/model-routing/reviews/`;
+- `$CODEX_HOME/state/model-routing/issue-report-state.jsonl`;
 - `$CODEX_HOME/state/adaptive-delegation/continuity.jsonl`;
 - `$CODEX_HOME/state/adaptive-delegation/dispatch_attestation.jsonl`;
 - Codex rollout or session records; or

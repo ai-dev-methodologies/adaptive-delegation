@@ -14,6 +14,21 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.6.0] - 2026-08-03
+
+- Added privacy-safe, duplicate-aware feedback reporting. Prepared reports keep
+  a stable random Report ID; submitted receipts exclude already-shared attempt
+  fingerprints without storing raw task or attempt identifiers.
+- Added a packaged copy-paste Codex prompt that checks all canonical GitHub
+  issues for the exact Report ID, creates at most one issue, and records the
+  returned URL locally with an idempotent command.
+- Added a fail-closed release preflight. Feature-to-main promotion and
+  published-main deployment now require a complete README review, current
+  version and changelog, config-matched route ladders, and exact Git evidence.
+- Documented the Maker, Checker, and main-authority lifecycle with maintained
+  diagrams. The package has no redundant adaptive Verifier role; distinct
+  Checker evidence and main integration retain separate responsibilities.
+
 ## [0.5.2] - 2026-08-03
 
 - Corrected the long-horizon classifier so Goal/Ultragoal membership is not a

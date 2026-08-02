@@ -1,6 +1,6 @@
 interface:
   display_name: "Adaptive Delegation"
   short_description: "Codex-only Objective-Locked delegation"
-  default_prompt: "Use $adaptive-delegation to construct one portable terminal-outcome Objective Lock. The Sol/high-or-above main must classify each bounded slice before launch and select its fixed Luna-first path from task shape, oracle, risk/ambiguity, latency, horizon, and recoverability; workflow labels such as goal or Ultragoal are not route inputs. Use Terra medium/high for scoped or latency-sensitive recovery, Terra xhigh/max only for a qualifying latency-insensitive long-horizon slice after observable Luna failure, and Sol leaf roles only when evidence requires them."
+  default_prompt: "Use $adaptive-delegation to construct one portable terminal-outcome Objective Lock. The Sol/high-or-above main must classify each bounded slice before launch and select its fixed Luna-first path from task shape, oracle, risk/ambiguity, latency, horizon, and recoverability; workflow labels such as goal or Ultragoal are not route inputs. Use Terra medium/high for scoped or latency-sensitive recovery, Terra xhigh/max only for a qualifying latency-insensitive long-horizon slice after observable Luna failure, and Sol leaf roles only when evidence requires them. Invoke an independent Checker only when oracle shape or risk requires it; main owns final integration, and no redundant Verifier stage follows sufficient evidence."
 policy:
   allow_implicit_invocation: true

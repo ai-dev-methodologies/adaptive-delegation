@@ -25,6 +25,8 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
+Current installable package version: `0.6.0`.
+
 External research, benchmark snapshots, practitioner reports, confidence
 limits, and the current routing decision are preserved in
 [`docs/research/MODEL_ROUTING_EVIDENCE.md`](docs/research/MODEL_ROUTING_EVIDENCE.md).
@@ -78,7 +80,7 @@ consistency checks; they are not an operating-system security boundary.
   evidence but deliberately cannot be finalized or backfilled. Re-execute it
   as a fresh chain with a new task ID, attempt index 1, dispatch ID, packet, and
   v3 terminal/receipt plus `0.3.0` audit records.
-- Package 0.5 is still pre-1.0. It keeps Objective Lock v1/v2 audit evidence
+- The package remains pre-1.0. It keeps Objective Lock v1/v2 audit evidence
   readable but starts new work with Objective Lock v3 and never continues a
   task across lock or routing-policy versions. Preserve an older pending chain
   as historical evidence and re-execute the bounded task with a new task ID,
@@ -98,9 +100,44 @@ linked audit schema `0.3.0` rejects a changed digest or mixed `0.2.0`/`0.3.0`
 task history. This detects local contract drift on dispatcher-owned paths; it
 does not prove semantic correctness or create a security principal.
 
-Package 0.5.2 requires an explicit `terminal_outcome` and `lane_id` in every packet and
-separates the stable terminal-outcome lock from the replaceable path/iteration
-envelope. Re-execute unfinished older packets as fresh 0.5 tasks.
+The current package requires an explicit `terminal_outcome` and `lane_id` in
+every packet and separates the stable terminal-outcome lock from the
+replaceable path/iteration envelope. Re-execute unfinished packets from an
+older incompatible wire contract as fresh tasks.
+
+## Maker, Checker, and final acceptance
+
+Maker roles perform one main-selected bounded change. Checker roles inspect
+declared acceptance evidence from a distinct session when risk or the
+integration contract requires independence; they do not join the Maker
+escalation ladder or add an automatic extra review. The package has no separate
+adaptive Verifier role. Main owns route selection, evidence integration, the
+final acceptance claim, and the stop decision without redoing every leaf
+check. The dispatcher's integration-receipt wire contract specifically
+requires `adaptive-sol-checker-medium` as its independent issuer.
+Checker capability follows oracle shape and risk; it is not required to exceed
+the Maker model. A real artifact rejection advances the exact Maker ladder, a
+Checker tool failure retries the Checker environment without upgrading Maker,
+and a weak oracle returns directly to main Sol/ultra authority.
+
+```mermaid
+flowchart LR
+    U[User] --> M[Sol high-or-above main]
+    M --> L[Objective Lock and slice classification]
+    L --> MK[Exact Luna-first Maker role]
+    MK --> E[Terminal and acceptance evidence]
+    E -->|observable failure| X[Next exact ladder step]
+    X --> MK
+    E -->|independent check required| CK[Distinct Checker role]
+    E -->|evidence sufficient| I[Main integration]
+    CK --> I
+    I -->|accepted| S[Stop and report]
+    I -->|authorized work remains| L
+```
+
+See [`docs/DELEGATION-FLOW.md`](docs/DELEGATION-FLOW.md) for the full role
+matrix, end-to-end flow, Checker receipt rule, escalation paths, and the reason
+final verification remains main-authoritative.
 
 ## Activate the skill
 
@@ -160,9 +197,9 @@ order. Different bounded slices in the same goal may use different rows.
 
 | Work shape | Fixed path |
 | --- | --- |
-| Simple lookup or extraction | `Luna medium -> high -> xhigh -> max -> Terra medium -> Sol medium -> main Sol ultra` |
-| Clear implementation or transformation | `Luna high -> xhigh -> max -> Terra medium -> Sol medium -> Sol high -> main Sol ultra` |
-| Bounded complex implementation, debugging, or review | `Luna xhigh -> max -> Terra high -> Sol medium -> Sol high -> main Sol ultra` |
+| Simple lookup or extraction | `Luna medium -> Luna high -> Luna xhigh -> Luna max -> Terra medium -> Sol medium -> main Sol ultra` |
+| Clear implementation or transformation | `Luna high -> Luna xhigh -> Luna max -> Terra medium -> Sol medium -> Sol high -> main Sol ultra` |
+| Bounded complex implementation, debugging, or review | `Luna xhigh -> Luna max -> Terra high -> Sol medium -> Sol high -> main Sol ultra` |
 | Any bounded slice where long-horizon, latency-insensitive, strong-oracle, and low/medium-risk predicates all pass | `Luna max -> Terra xhigh -> Terra max -> Sol high -> main Sol ultra` |
 | Weak oracle, ambiguous/high-risk, or long contract | `main Sol ultra` |
 
@@ -185,13 +222,23 @@ For every installable change:
    installation documentation, `CHANGELOG.md`, and
    `adaptive-delegation/VERSION` when package contents change.
 2. Run the targeted and package validation required by this repository.
-3. Commit and push the feature branch.
-4. Merge the verified feature branch into `main`, then push `main`.
-5. Fetch the remote and verify that the deployment checkout is clean and its
+3. Review the entire README against the active `SKILL.md`, package policy,
+   version, installation flow, and reporting flow. Commit every required
+   correction; a partial section-only review is not sufficient.
+4. Commit and push the feature branch, then require this fail-closed gate:
+   `python3 scripts/release_preflight.py --mode pre-merge`. It verifies the
+   README version, invocation invariants, every configured route ladder, the
+   changelog, clean feature branch, and pushed upstream commit.
+5. Merge the verified feature branch into `main`, then push `main`.
+6. Fetch the remote and run
+   `python3 scripts/release_preflight.py --mode deploy`. It requires a clean
+   `main` or detached checkout whose commit exactly matches `origin/main`, and
+   repeats the full README-to-package contract check.
+7. Verify that the deployment checkout is clean and its
    commit exactly matches `origin/main`.
-6. Only then run the isolated promotion gate and user-level installer from
+8. Only then run the isolated promotion gate and user-level installer from
    that published `main` commit.
-7. Finish by requiring `version_status.py` to report `status=current` with
+9. Finish by requiring `version_status.py` to report `status=current` with
    matching source and installed digests.
 
 This order applies to the maintainer's own computer and to prompt-driven
@@ -205,8 +252,9 @@ Python 3.11 or newer is required.
 ```sh
 git clone https://github.com/ai-dev-methodologies/adaptive-delegation.git
 cd adaptive-delegation
+python3 scripts/release_preflight.py --mode deploy
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_isolated_dogfood tests.test_version_status
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_isolated_dogfood tests.test_version_status tests.test_release_preflight
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
 # With explicit user approval only:
@@ -219,8 +267,9 @@ each managed target safely, preserves unrelated roles and existing directory
 permissions, and removes only stale adaptive roles declared by the previously
 installed package.
 
-The installer never copies authentication, audit logs, continuity records, or
-rollout/session data. Those remain local to the machine that created them.
+The installer never copies authentication, audit logs, issue-report state,
+continuity records, or rollout/session data. Those remain local to the machine
+that created them.
 The isolated promotion gate is mandatory before user-level installation; it is
 a same-user quality guard, not a security boundary. See [`INSTALL.md`](INSTALL.md)
 for its temporary-auth-symlink workflow and the explicit later approval step.
@@ -231,7 +280,7 @@ For the complete install, update, rollback, and second-PC workflow, see
 
 ```sh
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_isolated_dogfood tests.test_version_status
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_isolated_dogfood tests.test_version_status tests.test_release_preflight
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 ```
 
@@ -257,7 +306,7 @@ relative `source_only`, `installed_only`, and `modified` paths. A matching
 version with a different digest is `same_version_drift`; an older unversioned
 installation is `installed_unversioned`.
 
-## Audit logs and GitHub issues
+## Local experience and GitHub issues
 
 Routing attempts are stored locally in
 `$CODEX_HOME/state/model-routing/attempts.jsonl` (default
@@ -270,12 +319,21 @@ Generate an allowlisted Markdown summary instead:
 python3 adaptive-delegation/scripts/model_routing_audit.py issue-report
 ```
 
-The formatter reads the local ledger without modifying it and never creates a
-missing ledger or parent directory. Its Markdown report body prints no task or
-session identifiers, paths, prompts, evidence text, commands, or URLs; rejected
-input receives a generic error that does not echo ledger content or paths. It
-does not publish anything. Inspect the output before pasting it into the
-repository's routing-report issue template. See [`REPORTING.md`](REPORTING.md).
+The formatter never modifies the attempts ledger. It creates or reuses a
+random Report ID in the separate owner-only
+`$CODEX_HOME/state/model-routing/issue-report-state.jsonl` management ledger.
+After an issue is published, `record-submission` binds the Report ID to its
+canonical issue URL. Later reports automatically exclude the attempt
+fingerprints covered by submitted receipts; a pending report reuses the same
+ID so a publication retry can find the existing issue instead of duplicating
+it.
+
+Its Markdown prints no task/session identifiers, paths, prompts, evidence
+text, commands, credentials, or private URLs. Neither the raw attempts ledger
+nor the issue-state ledger may be uploaded. To have Codex perform the complete
+duplicate-aware issue workflow, send it the packaged
+[`CODEX-ISSUE-REPORT-PROMPT.md`](adaptive-delegation/references/CODEX-ISSUE-REPORT-PROMPT.md).
+See [`REPORTING.md`](REPORTING.md) for the state contract and manual commands.
 
 ## Repository map
 
@@ -285,9 +343,15 @@ repository's routing-report issue template. See [`REPORTING.md`](REPORTING.md).
   — package policy source of truth.
 - [`adaptive-delegation/references/MODEL_ROUTING_POLICY.md`](adaptive-delegation/references/MODEL_ROUTING_POLICY.md)
   — rationale, ladders, failure actions, and metrics.
+- [`adaptive-delegation/references/CODEX-ISSUE-REPORT-PROMPT.md`](adaptive-delegation/references/CODEX-ISSUE-REPORT-PROMPT.md)
+  — copy-paste Codex prompt for one privacy-safe, deduplicated feedback issue.
+- [`docs/DELEGATION-FLOW.md`](docs/DELEGATION-FLOW.md) — maintained Maker,
+  Checker, main-authority, escalation, integration, and issue-feedback diagram.
 - [`INSTALL.md`](INSTALL.md) — installation and cross-PC operations.
 - [`CODEX-INSTALL-PROMPT.md`](CODEX-INSTALL-PROMPT.md) — copy-paste Codex CLI
   installation and update prompts.
+- [`scripts/release_preflight.py`](scripts/release_preflight.py) — mandatory
+  README/config/Git gate before feature merge and published-main deployment.
 - [`CHANGELOG.md`](CHANGELOG.md) and
   [`adaptive-delegation/VERSION`](adaptive-delegation/VERSION) — release
   history and installed package version.

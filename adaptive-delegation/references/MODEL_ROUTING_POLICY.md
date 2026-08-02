@@ -215,7 +215,11 @@ observed, outcome, failure class if any, escalation or retry action, and next
 decision. This local ledger contains machine-local identifiers and evidence
 references and must be treated as sensitive. It contains no prompt or
 transcript bodies and must never be uploaded; use the allowlisted
-`issue-report` formatter for public reporting.
+`issue-report` formatter for public reporting. The formatter leaves this ledger
+unchanged and records only random Report IDs plus hashed attempt coverage in
+the separate owner-only `issue-report-state.jsonl`. After GitHub publication,
+`record-submission` binds the canonical issue URL so later reports exclude
+already-shared attempt history.
 
 When a decision needs detailed evidence, use the optional structured fields
 rather than prose:

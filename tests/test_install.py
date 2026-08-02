@@ -88,6 +88,9 @@ class InstallerTests(unittest.TestCase):
                 source_version,
             )
             self.assertTrue((installed / "scripts" / "read_continuity.py").is_file())
+            self.assertTrue(
+                (installed / "references" / "CODEX-ISSUE-REPORT-PROMPT.md").is_file()
+            )
             self.assertTrue(dispatcher.is_file())
             self.assertEqual(stat.S_IMODE(dispatcher.stat().st_mode), 0o700)
             for role_name in policy["role_bindings"]:
@@ -244,6 +247,10 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("do not reopen it, enumerate the package", skill)
         self.assertIn("do not silently turn a takeover into a redesign", skill)
         self.assertIn("issue-report", reporting)
+        self.assertIn("record-submission", reporting)
+        self.assertIn("issue-report-state.jsonl", reporting)
+        self.assertIn("CODEX-ISSUE-REPORT-PROMPT.md", readme)
+        self.assertIn("docs/DELEGATION-FLOW.md", readme)
         self.assertIn("## Invocation and `ultra` reasoning behavior", readme)
         self.assertIn(
             "Skill activation and reasoning effort are separate decisions.",
@@ -257,6 +264,8 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Before updating, finalize every pending attempt", install)
         self.assertIn("## Maintainer promotion and local deployment order", readme)
         self.assertIn("`main` is the only deployable branch.", readme)
+        self.assertIn("scripts/release_preflight.py --mode pre-merge", readme)
+        self.assertIn("scripts/release_preflight.py --mode deploy", readme)
         self.assertIn("## Published-main deployment rule", install)
         self.assertIn("matches `origin/main`", install)
         install_prompt = (ROOT / "CODEX-INSTALL-PROMPT.md").read_text(
@@ -291,12 +300,16 @@ class InstallerTests(unittest.TestCase):
             "adaptive-delegation/CROSS_PC_TRANSFER.md",
             "adaptive-delegation/TOKEN_EFFICIENCY_CONTINUITY.md",
             "adaptive-delegation/references/MODEL_ROUTING_POLICY.md",
+            "adaptive-delegation/references/CODEX-ISSUE-REPORT-PROMPT.md",
             "adaptive-delegation/references/TRIGGERS.md",
             "adaptive-delegation/scripts/model_routing_audit.py",
             "scripts/version_status.py",
+            "scripts/release_preflight.py",
             "adaptive-delegation/tests/test_model_routing_audit.py",
             ".github/ISSUE_TEMPLATE/routing-report.md",
+            "docs/DELEGATION-FLOW.md",
             "tests/test_install.py",
+            "tests/test_release_preflight.py",
             "tests/test_version_status.py",
         }
         text_files = {ROOT / name for name in owned_paths if (ROOT / name).is_file()}

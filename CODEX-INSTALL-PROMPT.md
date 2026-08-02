@@ -30,8 +30,11 @@ steps:
    `git checkout --detach FETCH_HEAD`. Record `git rev-parse HEAD`, verify it
    equals `git rev-parse origin/main`, and use that published main commit for
    the remainder of this installation. Never install a feature-branch commit.
-2. Read README.md, INSTALL.md, CHANGELOG.md, and
-   adaptive-delegation/VERSION before changing the Codex home.
+2. Read the complete README.md, INSTALL.md, CHANGELOG.md, and
+   adaptive-delegation/VERSION before changing the Codex home. Run
+   `python3 scripts/release_preflight.py --mode deploy` and require it to pass;
+   this verifies that README invocation and route claims are current and the
+   checkout exactly matches published `origin/main`.
 3. Resolve the target Codex home from CODEX_HOME when set, otherwise use
    $HOME/.codex. In the shell run
    `TARGET_CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"; export TARGET_CODEX_HOME`.
@@ -48,7 +51,7 @@ steps:
    cannot be identified and use the reported file differences.
 5. Run the installer dry-run and required tests exactly:
    python3 scripts/install.py --codex-home "$TARGET_CODEX_HOME" --dry-run
-   python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_isolated_dogfood tests.test_version_status
+   python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_isolated_dogfood tests.test_version_status tests.test_release_preflight
    python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 6. Run the mandatory isolated promotion gate with the target computer's
    existing Codex authentication file as a read-only auth source:

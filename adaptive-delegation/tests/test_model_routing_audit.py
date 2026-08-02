@@ -23,6 +23,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.root = Path(self.temp_dir.name)
         self.ledger = self.root / "state" / "attempts.jsonl"
         self.review_dir = self.root / "reviews"
+        self.issue_state = self.root / "state" / "issue-report-state.jsonl"
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -1473,6 +1474,242 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertIn("gpt-5.6-luna", specific.stdout)
         self.assertNotIn("gpt-5.6-terra", specific.stdout)
 
+    def test_issue_submission_receipt_excludes_already_shared_history(self):
+        pre = self.pre("shared-attempt", "shared-task")
+        post = self.post("shared-attempt", "shared-task")
+        self.record("shared-pre.json", pre)
+        self.record("shared-post.json", post)
+        attempts_before = self.ledger.read_bytes()
+
+        prepared = self.run_cli(
+            "issue-report",
+            "--ledger",
+            self.ledger,
+            "--issue-state",
+            self.issue_state,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        match = re.search(r"Report ID: `(adr1-[0-9a-f]{32})`", prepared.stdout)
+        self.assertIsNotNone(match)
+        report_id = match.group(1)
+        self.assertEqual(self.ledger.read_bytes(), attempts_before)
+        self.assertEqual(stat.S_IMODE(self.issue_state.stat().st_mode), 0o600)
+        state_text = self.issue_state.read_text(encoding="utf-8")
+        self.assertNotIn("shared-task", state_text)
+        self.assertNotIn("shared-attempt", state_text)
+
+        issue_url = (
+            "https://github.com/ai-dev-methodologies/"
+            "adaptive-delegation/issues/41"
+        )
+        recorded = self.run_cli(
+            "record-submission",
+            "--issue-state",
+            self.issue_state,
+            "--report-id",
+            report_id,
+            "--issue-url",
+            issue_url,
+        )
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        receipt = json.loads(recorded.stdout)
+        self.assertTrue(receipt["recorded"])
+        self.assertFalse(receipt["idempotent"])
+
+        exhausted = self.run_cli(
+            "issue-report",
+            "--ledger",
+            self.ledger,
+            "--issue-state",
+            self.issue_state,
+        )
+        self.assertNotEqual(exhausted.returncode, 0)
+        self.assertIn("no unsubmitted completed task remains", exhausted.stderr)
+        self.assertNotIn("shared-task", exhausted.stderr)
+
+    def test_pending_report_is_reused_and_submission_record_is_idempotent(self):
+        self.record("pending-pre.json", self.pre("pending-attempt", "pending-task"))
+        self.record("pending-post.json", self.post("pending-attempt", "pending-task"))
+
+        first = self.run_cli(
+            "issue-report", "--ledger", self.ledger, "--issue-state", self.issue_state
+        )
+        second = self.run_cli(
+            "issue-report", "--ledger", self.ledger, "--issue-state", self.issue_state
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(first.stdout, second.stdout)
+        prepared_events = [
+            json.loads(line) for line in self.issue_state.read_text().splitlines()
+        ]
+        self.assertEqual([event["event_type"] for event in prepared_events], ["prepared"])
+        report_id = re.search(
+            r"Report ID: `(adr1-[0-9a-f]{32})`", first.stdout
+        ).group(1)
+        issue_url = (
+            "https://github.com/ai-dev-methodologies/"
+            "adaptive-delegation/issues/42"
+        )
+
+        first_record = self.run_cli(
+            "record-submission",
+            "--issue-state",
+            self.issue_state,
+            "--report-id",
+            report_id,
+            "--issue-url",
+            issue_url,
+        )
+        repeat_record = self.run_cli(
+            "record-submission",
+            "--issue-state",
+            self.issue_state,
+            "--report-id",
+            report_id,
+            "--issue-url",
+            issue_url,
+        )
+        self.assertEqual(first_record.returncode, 0, first_record.stderr)
+        self.assertEqual(repeat_record.returncode, 0, repeat_record.stderr)
+        self.assertTrue(json.loads(first_record.stdout)["recorded"])
+        self.assertTrue(json.loads(repeat_record.stdout)["idempotent"])
+        events = [json.loads(line) for line in self.issue_state.read_text().splitlines()]
+        self.assertEqual([event["event_type"] for event in events], ["prepared", "submitted"])
+
+    def test_submission_receipt_rejects_missing_or_conflicting_report(self):
+        missing = self.run_cli(
+            "record-submission",
+            "--issue-state",
+            self.issue_state,
+            "--report-id",
+            "adr1-" + "a" * 32,
+            "--issue-url",
+            "https://github.com/ai-dev-methodologies/adaptive-delegation/issues/1",
+        )
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertFalse(self.issue_state.exists())
+
+        self.record("conflict-pre.json", self.pre("conflict-attempt", "conflict-task"))
+        self.record("conflict-post.json", self.post("conflict-attempt", "conflict-task"))
+        prepared = self.run_cli(
+            "issue-report", "--ledger", self.ledger, "--issue-state", self.issue_state
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        report_id = re.search(
+            r"Report ID: `(adr1-[0-9a-f]{32})`", prepared.stdout
+        ).group(1)
+        accepted_url = (
+            "https://github.com/ai-dev-methodologies/"
+            "adaptive-delegation/issues/51"
+        )
+        recorded = self.run_cli(
+            "record-submission",
+            "--issue-state",
+            self.issue_state,
+            "--report-id",
+            report_id,
+            "--issue-url",
+            accepted_url,
+        )
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+        before = self.issue_state.read_bytes()
+        conflict = self.run_cli(
+            "record-submission",
+            "--issue-state",
+            self.issue_state,
+            "--report-id",
+            report_id,
+            "--issue-url",
+            "https://github.com/ai-dev-methodologies/adaptive-delegation/issues/52",
+        )
+        self.assertNotEqual(conflict.returncode, 0)
+        self.assertEqual(self.issue_state.read_bytes(), before)
+
+    def test_submitted_latest_task_advances_to_next_unsubmitted_task(self):
+        old_pre = self.pre("queue-old-attempt", "queue-old-task")
+        old_pre["timestamp"] = "2026-07-30T00:00:00Z"
+        old_post = self.post("queue-old-attempt", "queue-old-task")
+        old_post["timestamp"] = "2026-07-30T00:01:00Z"
+        new_pre = self.pre(
+            "queue-new-attempt", "queue-new-task", model="gpt-5.6-terra"
+        )
+        new_pre["timestamp"] = "2026-07-31T00:00:00Z"
+        new_post = self.post(
+            "queue-new-attempt",
+            "queue-new-task",
+            final_model="gpt-5.6-terra",
+            final_model_tier="standard-tier",
+        )
+        new_post["timestamp"] = "2026-07-31T00:01:00Z"
+        for name, event in (
+            ("queue-old-pre.json", old_pre),
+            ("queue-old-post.json", old_post),
+            ("queue-new-pre.json", new_pre),
+            ("queue-new-post.json", new_post),
+        ):
+            self.record(name, event)
+
+        latest = self.run_cli(
+            "issue-report", "--ledger", self.ledger, "--issue-state", self.issue_state
+        )
+        self.assertEqual(latest.returncode, 0, latest.stderr)
+        latest_id = re.search(
+            r"Report ID: `(adr1-[0-9a-f]{32})`", latest.stdout
+        ).group(1)
+        self.assertIn("gpt-5.6-terra", latest.stdout)
+        recorded = self.run_cli(
+            "record-submission",
+            "--issue-state",
+            self.issue_state,
+            "--report-id",
+            latest_id,
+            "--issue-url",
+            "https://github.com/ai-dev-methodologies/adaptive-delegation/issues/61",
+        )
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+
+        next_report = self.run_cli(
+            "issue-report", "--ledger", self.ledger, "--issue-state", self.issue_state
+        )
+        self.assertEqual(next_report.returncode, 0, next_report.stderr)
+        next_id = re.search(
+            r"Report ID: `(adr1-[0-9a-f]{32})`", next_report.stdout
+        ).group(1)
+        self.assertNotEqual(next_id, latest_id)
+        self.assertIn("gpt-5.6-luna", next_report.stdout)
+        self.assertNotIn("gpt-5.6-terra", next_report.stdout)
+
+    def test_issue_state_rejects_symlink_and_malformed_private_content(self):
+        self.record("state-pre.json", self.pre("state-attempt", "state-task"))
+        self.record("state-post.json", self.post("state-attempt", "state-task"))
+        attempts_before = self.ledger.read_bytes()
+        private_marker = "PRIVATE_ISSUE_STATE_MARKER"
+        target = self.root / "state-target.jsonl"
+        target.write_text(private_marker + "\n", encoding="utf-8")
+        os.chmod(target, 0o600)
+        self.issue_state.symlink_to(target)
+
+        rejected = self.run_cli(
+            "issue-report", "--ledger", self.ledger, "--issue-state", self.issue_state
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("could not be generated", rejected.stderr)
+        self.assertNotIn(private_marker, rejected.stderr)
+        self.assertEqual(self.ledger.read_bytes(), attempts_before)
+
+        self.issue_state.unlink()
+        self.issue_state.write_text(
+            json.dumps({"private_payload": private_marker}) + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(self.issue_state, 0o600)
+        rejected = self.run_cli(
+            "issue-report", "--ledger", self.ledger, "--issue-state", self.issue_state
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertNotIn(private_marker, rejected.stderr)
+        self.assertEqual(self.ledger.read_bytes(), attempts_before)
+
     def test_issue_report_omits_private_fields_and_does_not_mutate_ledger(self):
         dispatch_id = "private-dispatch"
         private_workspace = "https://user:secret@example.com/private?token=secret#frag"
@@ -1511,6 +1748,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertNotEqual(incomplete.returncode, 0)
         self.assertIn("could not be generated", incomplete.stderr)
         self.assertEqual(before, self.ledger.read_bytes())
+        self.assertFalse(self.issue_state.exists())
 
         sensitive_ledger = self.root / "sensitive" / "attempts.jsonl"
         sensitive_ledger.parent.mkdir(parents=True)
