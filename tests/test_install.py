@@ -189,6 +189,15 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("do not reopen it, enumerate the package", skill)
         self.assertIn("do not silently turn a takeover into a redesign", skill)
         self.assertIn("issue-report", reporting)
+        self.assertIn("## Invocation and `ultra` reasoning behavior", readme)
+        self.assertIn(
+            "Skill activation and reasoning effort are separate decisions.",
+            readme,
+        )
+        self.assertIn("Does not activate this skill by itself.", readme)
+        self.assertIn("eligible for implicit activation", readme.lower())
+        self.assertIn("Prompt text cannot upgrade the session.", readme)
+        self.assertIn("Leaf `ultra` remains forbidden.", readme)
         self.assertIn("dispatch_attestation.jsonl", install)
         self.assertIn("Before updating, finalize every pending attempt", install)
         self.assertIn(

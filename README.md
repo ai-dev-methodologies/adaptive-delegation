@@ -85,6 +85,39 @@ frontmatter contains the only two localized trigger literals; all other package
 documentation is English. See
 [`adaptive-delegation/references/TRIGGERS.md`](adaptive-delegation/references/TRIGGERS.md).
 
+## Invocation and `ultra` reasoning behavior
+
+Skill activation and reasoning effort are separate decisions. Invoking the
+skill does not change the running main model or its effort, and requesting
+`ultra` does not grant `ultra` to a child.
+
+| Request form | Activation behavior | Model and effort behavior |
+| --- | --- | --- |
+| `$adaptive-delegation ...` | Deterministic explicit activation. | The main-authority gate runs, an Objective Lock is created, and bounded work follows the Luna-first route. |
+| `$adaptive-delegation ... Use ultra reasoning.` | Deterministic explicit activation. | `ultra` applies to the main only if the current runtime is already configured as `gpt-5.6-sol/ultra`. Prompt text cannot upgrade the session. Leaf `ultra` remains forbidden. |
+| A bounded task request containing either localized token-efficiency literal declared in the skill frontmatter | Eligible for implicit activation because the localized literal is in the skill description and implicit invocation is enabled. Explicit `$adaptive-delegation` remains the deterministic choice. | If activated, it runs the same Objective Lock and Luna-first workflow as explicit invocation. |
+| The same localized token-efficiency request plus `Use ultra reasoning.` | Eligible for implicit activation because of the localized token-efficiency literal, not because of `ultra`. | An already-`ultra` main remains the authority; bounded children still use fixed Luna/Terra roles and never inherit main `ultra`. |
+| `Use ultra reasoning.` | Does not activate this skill by itself. | Normal session-level model and effort rules apply. |
+
+A localized trigger must occur in an actionable delegation, implementation, or
+verification request. Quoting the word, translating it, or asking only for its
+definition does not request adaptive routing.
+
+After activation, the workflow is identical for explicit and implicit entry:
+
+1. Validate that the current main is `gpt-5.6-sol` at `high` or above. The
+   skill cannot mutate a failing parent configuration.
+2. Construct one portable Objective Lock before any child launch.
+3. Route simple work to Luna `medium`, clear implementation to Luna `high`, and
+   bounded complex work to Luna `xhigh`.
+4. Escalate only from observable failure evidence, preserving the exact lock.
+   Leaf effort may rise and the route may later move to Terra, but leaf
+   `ultra` is never allowed.
+5. Keep weak-oracle, ambiguous, high-risk, or long-contract work with the main
+   at `gpt-5.6-sol/ultra`, or return exhausted leaf work to that main takeover.
+6. Stop as soon as the locked acceptance evidence passes. Do not add another
+   review or broader verification merely because the main has `ultra` effort.
+
 ## Install from GitHub
 
 Python 3.11 or newer is required.
