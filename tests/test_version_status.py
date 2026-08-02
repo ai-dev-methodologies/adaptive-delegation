@@ -147,10 +147,12 @@ class VersionStatusTests(unittest.TestCase):
         self.assertIn("equals `git rev-parse origin/main`", normalized_prompt)
         self.assertIn("Never install a feature-branch commit.", prompt)
         self.assertIn("git checkout --detach FETCH_HEAD", prompt)
+        self.assertIn("scripts/release_preflight.py --mode deploy", prompt)
         self.assertIn('AUTH_SOURCE=""', prompt)
         self.assertIn("local Codex authentication is required", normalized_prompt)
         self.assertIn("CODEX-INSTALL-PROMPT.md", readme)
         self.assertIn("CHANGELOG.md", readme)
+        self.assertIn(f"Current installable package version: `{version}`.", readme)
 
 
 if __name__ == "__main__":

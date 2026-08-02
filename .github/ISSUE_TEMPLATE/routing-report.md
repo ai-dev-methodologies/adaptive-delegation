@@ -8,8 +8,9 @@ labels: routing
 <!--
 This template accepts the output of the local issue-report command only after
 manual inspection. Never attach or paste attempts.jsonl, reviews, continuity,
-rollout/session files, prompts, credentials, tokens, secrets, raw logs, paths,
-evidence, or proprietary payloads.
+issue-report-state.jsonl, rollout/session files, prompts, credentials, tokens,
+secrets, raw logs, paths, evidence, or proprietary payloads. Keep the generated
+Report ID unchanged so a retry can detect this issue.
 -->
 
 ## Consent and redaction
@@ -19,6 +20,8 @@ evidence, or proprietary payloads.
       with credentials/query/fragment data, and proprietary payloads.
 - [ ] I am comfortable publishing this sanitized content in a public GitHub
       issue.
+- [ ] I checked existing issues for the exact Report ID and will record this
+      issue URL locally with `record-submission` after publication.
 
 ## Package version or commit
 

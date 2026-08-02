@@ -86,12 +86,23 @@ evidence, verification ceiling, and stop condition). Use a bounded Maker for
 implementation and an independent Checker when risk warrants it; integration
 acceptance is separate from a child process merely exiting successfully.
 Public issue reports must use the local allowlisted formatter in
-`REPORTING.md`; raw ledgers never leave the machine.
+`REPORTING.md`; raw ledgers never leave the machine. Record every published
+Report ID with `record-submission`; later reports must exclude attempt
+fingerprints covered by those local receipts.
 
 Every change that alters the installed `adaptive-delegation/` package must bump
 the Semantic Version in `adaptive-delegation/VERSION` and add the corresponding
 entry to `CHANGELOG.md`. Use `scripts/version_status.py` to compare repository
 and installed packages; never infer equality from a version string alone.
+
+Before merging any feature branch into `main`, review the complete `README.md`
+against the active skill, policy config, version, installation, and reporting
+behavior, commit any correction, push the feature branch, and require
+`python3 scripts/release_preflight.py --mode pre-merge` to pass. Before any
+user-level deployment, fetch the remote and require
+`python3 scripts/release_preflight.py --mode deploy` to pass from a clean
+`main` or detached checkout exactly matching `origin/main`. Missing or failed
+preflight evidence blocks the merge or deployment.
 
 Do not run `git init`, GitHub creation, remote setup, commits, pushes, or other
 Git/GitHub mutations as part of ordinary maintenance. Run them only when the
@@ -104,7 +115,7 @@ results. The package baseline is:
 
 ```sh
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status tests.test_release_preflight
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 ```
 

@@ -12,9 +12,11 @@ import argparse
 import datetime as _datetime
 import errno
 import fcntl
+import hashlib
 import json
 import os
 import re
+import secrets
 import stat
 import sys
 from pathlib import Path
@@ -38,6 +40,9 @@ CODEX_HOME = (
 )
 DEFAULT_LEDGER = CODEX_HOME / "state" / "model-routing" / "attempts.jsonl"
 DEFAULT_REVIEW_DIR = CODEX_HOME / "state" / "model-routing" / "reviews"
+DEFAULT_ISSUE_STATE = (
+    CODEX_HOME / "state" / "model-routing" / "issue-report-state.jsonl"
+)
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = SKILL_ROOT / "config" / "model-routing.defaults.json"
 AUDITOR_NAME = "model-routing-audit"
@@ -51,8 +56,11 @@ MAX_STRING_LENGTH = 512
 MAX_ID_LENGTH = 128
 MAX_DETAIL_ITEMS = 8
 MAX_EVIDENCE_REFERENCE_LENGTH = 256
+MAX_REPORT_ATTEMPTS = 32
 AUTO_REVIEW_ACCEPTED_CADENCE = 25
 ISSUE_REPORT_SCHEMA_VERSION = "1"
+ISSUE_STATE_SCHEMA_VERSION = "1"
+CANONICAL_ISSUE_REPOSITORY = "ai-dev-methodologies/adaptive-delegation"
 
 MODE_FILE = 0o600
 MODE_DIRECTORY = 0o700
@@ -313,6 +321,11 @@ FORBIDDEN_EXACT_FIELDS = {
 
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_REPORT_ID_RE = re.compile(r"^adr1-[0-9a-f]{32}$")
+_ISSUE_URL_RE = re.compile(
+    r"^https://github\.com/ai-dev-methodologies/adaptive-delegation/issues/"
+    r"[1-9][0-9]*$"
+)
 _EVIDENCE_REFERENCE_RE = re.compile(
     r"^(?!.*[?#@:])(?!.*://)(?!.*(?:/|\\){2})"
     r"(?:[A-Za-z0-9][A-Za-z0-9._/\\+ ~-]*|/[A-Za-z0-9][A-Za-z0-9._/\\+ ~-]*)$"
@@ -321,6 +334,10 @@ _EVIDENCE_REFERENCE_RE = re.compile(
 
 class AuditError(Exception):
     """An expected, user-correctable audit input or filesystem error."""
+
+
+class NoUnsubmittedReportError(AuditError):
+    """No completed attempt remains outside recorded GitHub submissions."""
 
 
 def _canonical_json(value: Any) -> str:
@@ -1879,6 +1896,145 @@ def _issue_report_pair_key(
     )
 
 
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _issue_attempt_fingerprint(
+    pair: tuple[dict[str, Any], dict[str, Any]],
+) -> str:
+    """Return a local-only digest without exposing task or attempt identifiers."""
+    pre, post = pair
+    return _sha256_text(_canonical_json({"pre": pre, "post": post}))
+
+
+def _issue_task_fingerprint(task_id: str) -> str:
+    return _sha256_text(_canonical_json({"task_id": task_id}))
+
+
+def _validate_issue_state_event(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise AuditError("issue state event must be a JSON object")
+    event_type = value.get("event_type")
+    common = {"schema_version", "event_type", "report_id"}
+    fields = {
+        "prepared": common
+        | {
+            "task_fingerprint",
+            "attempt_fingerprints",
+            "report_digest",
+            "requested_task",
+            "created_at",
+        },
+        "submitted": common
+        | {"repository", "issue_url", "submitted_at"},
+    }.get(event_type)
+    if fields is None or set(value) != fields:
+        raise AuditError("issue state event has an invalid field set")
+    if value["schema_version"] != ISSUE_STATE_SCHEMA_VERSION:
+        raise AuditError("issue state schema version is unsupported")
+    if not isinstance(value["report_id"], str) or not _REPORT_ID_RE.fullmatch(
+        value["report_id"]
+    ):
+        raise AuditError("issue state report_id is invalid")
+    if event_type == "prepared":
+        fingerprints = value["attempt_fingerprints"]
+        if (
+            not isinstance(fingerprints, list)
+            or not 1 <= len(fingerprints) <= MAX_REPORT_ATTEMPTS
+            or len(fingerprints) != len(set(fingerprints))
+            or not all(
+                isinstance(item, str) and _SHA256_RE.fullmatch(item)
+                for item in fingerprints
+            )
+        ):
+            raise AuditError("prepared issue state has invalid attempt fingerprints")
+        for field in ("task_fingerprint", "report_digest"):
+            if not isinstance(value[field], str) or not _SHA256_RE.fullmatch(
+                value[field]
+            ):
+                raise AuditError(f"prepared issue state has invalid {field}")
+        if not isinstance(value["requested_task"], bool):
+            raise AuditError("prepared issue state requested_task must be boolean")
+        _check_timestamp(value["created_at"], "created_at")
+    else:
+        if value["repository"] != CANONICAL_ISSUE_REPOSITORY:
+            raise AuditError("submission repository is not canonical")
+        if not isinstance(value["issue_url"], str) or not _ISSUE_URL_RE.fullmatch(
+            value["issue_url"]
+        ):
+            raise AuditError("submission issue_url is invalid")
+        _check_timestamp(value["submitted_at"], "submitted_at")
+    return value
+
+
+def _parse_issue_state(fd: int) -> list[dict[str, Any]]:
+    raw = _read_fd_bytes(fd)
+    if not raw:
+        return []
+    if not raw.endswith(b"\n"):
+        raise AuditError("issue state contains an unterminated line")
+    events: list[dict[str, Any]] = []
+    for number, line in enumerate(raw.split(b"\n")[:-1], start=1):
+        if not line or len(line) > MAX_LINE_BYTES:
+            raise AuditError(f"issue state line {number} is invalid")
+        try:
+            value = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise AuditError(f"issue state line {number} is invalid JSON") from exc
+        try:
+            events.append(_validate_issue_state_event(value))
+        except AuditError as exc:
+            raise AuditError(f"issue state line {number} is invalid") from exc
+    _check_issue_state_sequence(events)
+    return events
+
+
+def _check_issue_state_sequence(
+    events: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    prepared: dict[str, dict[str, Any]] = {}
+    submitted: dict[str, dict[str, Any]] = {}
+    selections: set[tuple[str, ...]] = set()
+    issue_urls: set[str] = set()
+    for event in events:
+        report_id = event["report_id"]
+        if event["event_type"] == "prepared":
+            selection = tuple(event["attempt_fingerprints"])
+            if report_id in prepared or selection in selections:
+                raise AuditError("issue state contains duplicate prepared history")
+            prepared[report_id] = event
+            selections.add(selection)
+            continue
+        prior = prepared.get(report_id)
+        if prior is None or report_id in submitted:
+            raise AuditError("issue state submission sequence is invalid")
+        if event["issue_url"] in issue_urls:
+            raise AuditError("issue state contains a duplicate issue URL")
+        if _parse_timestamp(event["submitted_at"]) < _parse_timestamp(
+            prior["created_at"]
+        ):
+            raise AuditError("submission timestamp precedes report preparation")
+        submitted[report_id] = event
+        issue_urls.add(event["issue_url"])
+    return prepared, submitted
+
+
+def _append_issue_state_locked(fd: int, event: dict[str, Any]) -> None:
+    validated = _validate_issue_state_event(event)
+    line = (_canonical_json(validated) + "\n").encode("utf-8")
+    if len(line) > MAX_LINE_BYTES:
+        raise AuditError("issue state event exceeds the size bound")
+    os.lseek(fd, 0, os.SEEK_END)
+    written = 0
+    while written < len(line):
+        count = os.write(fd, line[written:])
+        if count <= 0:
+            raise AuditError("issue state append did not complete")
+        written += count
+    os.fsync(fd)
+
+
 def _select_issue_report_pairs(
     pairs: list[tuple[dict[str, Any], dict[str, Any]]],
     task_id: str | None,
@@ -1908,6 +2064,7 @@ def _select_issue_report_pairs(
 def _issue_report_markdown(
     pairs: list[tuple[dict[str, Any], dict[str, Any]]],
     requested_task: bool,
+    report_id: str,
 ) -> str:
     """Render the deliberately allowlisted, English issue-report format."""
     first_pre, _first_post = pairs[0]
@@ -1917,6 +2074,7 @@ def _issue_report_markdown(
         "# Adaptive-delegation routing report",
         "",
         f"- Report format: `issue-report/{ISSUE_REPORT_SCHEMA_VERSION}`",
+        f"- Report ID: `{report_id}`",
         "- Selection: " + ("requested task" if requested_task else "latest completed task"),
         f"- Attempts in selected task: `{len(pairs)}`",
         f"- Result: `{'accepted' if accepted else 'not accepted'}`",
@@ -1956,15 +2114,188 @@ def _issue_report_markdown(
 def issue_report(
     ledger_path: Path = DEFAULT_LEDGER,
     task_id: str | None = None,
+    issue_state_path: Path | None = None,
 ) -> str:
-    """Return a deterministic sanitized Markdown report for one task.
+    """Return a stable sanitized report and prepare local duplicate state.
 
-    This function only reads the validated local ledger and never publishes,
-    uploads, or mutates the ledger.
+    The attempts ledger remains read-only. The separate owner-only issue state
+    records a random public report ID and local-only attempt fingerprints so a
+    later report can exclude history already attached to a recorded issue.
     """
-    pairs = _read_pairs_for_issue_report(Path(ledger_path))
-    _selected_task, selected_pairs = _select_issue_report_pairs(pairs, task_id)
-    return _issue_report_markdown(selected_pairs, task_id is not None)
+    ledger = Path(ledger_path)
+    state_path = (
+        Path(issue_state_path)
+        if issue_state_path is not None
+        else ledger.parent / DEFAULT_ISSUE_STATE.name
+    )
+    if task_id is not None and (
+        not isinstance(task_id, str) or not _ID_RE.fullmatch(task_id)
+    ):
+        raise AuditError("task_id must be a bounded safe identifier")
+    pairs = _read_pairs_for_issue_report(ledger)
+    if not pairs:
+        raise AuditError("ledger contains no completed task")
+    pair_by_fingerprint = {
+        _issue_attempt_fingerprint(pair): pair for pair in pairs
+    }
+    requested_fingerprint = (
+        _issue_task_fingerprint(task_id) if task_id is not None else None
+    )
+    fd = _open_ledger(state_path, writable=True)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            events = _parse_issue_state(fd)
+            prepared, submitted = _check_issue_state_sequence(events)
+            pending = [
+                event
+                for report_id, event in prepared.items()
+                if report_id not in submitted
+                and (
+                    requested_fingerprint is None
+                    or event["task_fingerprint"] == requested_fingerprint
+                )
+            ]
+            if pending:
+                selected_event = max(
+                    pending, key=lambda event: _parse_timestamp(event["created_at"])
+                )
+                try:
+                    selected_pairs = [
+                        pair_by_fingerprint[fingerprint]
+                        for fingerprint in selected_event["attempt_fingerprints"]
+                    ]
+                except KeyError as exc:
+                    raise AuditError(
+                        "prepared report no longer matches the validated attempts ledger"
+                    ) from exc
+                markdown = _issue_report_markdown(
+                    selected_pairs,
+                    selected_event["requested_task"],
+                    selected_event["report_id"],
+                )
+                if _sha256_text(markdown) != selected_event["report_digest"]:
+                    raise AuditError("prepared report digest does not match")
+                return markdown
+
+            submitted_fingerprints = {
+                fingerprint
+                for report_id in submitted
+                for fingerprint in prepared[report_id]["attempt_fingerprints"]
+            }
+            available_pairs = [
+                pair
+                for fingerprint, pair in pair_by_fingerprint.items()
+                if fingerprint not in submitted_fingerprints
+            ]
+            if not available_pairs and pairs:
+                raise NoUnsubmittedReportError(
+                    "no unsubmitted completed task remains"
+                )
+            try:
+                selected_task, selected_pairs = _select_issue_report_pairs(
+                    available_pairs, task_id
+                )
+            except AuditError as exc:
+                if task_id is not None and any(
+                    pair[0]["task_id"] == task_id for pair in pairs
+                ):
+                    raise NoUnsubmittedReportError(
+                        "no unsubmitted completed task remains"
+                    ) from exc
+                raise
+            if len(selected_pairs) > MAX_REPORT_ATTEMPTS:
+                raise AuditError("selected task exceeds the report attempt bound")
+            existing_ids = set(prepared)
+            for _attempt in range(100):
+                report_id = "adr1-" + secrets.token_hex(16)
+                if report_id not in existing_ids:
+                    break
+            else:
+                raise AuditError("could not allocate a unique report identifier")
+            markdown = _issue_report_markdown(
+                selected_pairs, task_id is not None, report_id
+            )
+            generated = (
+                _datetime.datetime.now(_datetime.timezone.utc)
+                .isoformat(timespec="microseconds")
+                .replace("+00:00", "Z")
+            )
+            prepared_event = {
+                "schema_version": ISSUE_STATE_SCHEMA_VERSION,
+                "event_type": "prepared",
+                "report_id": report_id,
+                "task_fingerprint": _issue_task_fingerprint(selected_task),
+                "attempt_fingerprints": [
+                    _issue_attempt_fingerprint(pair) for pair in selected_pairs
+                ],
+                "report_digest": _sha256_text(markdown),
+                "requested_task": task_id is not None,
+                "created_at": generated,
+            }
+            _append_issue_state_locked(fd, prepared_event)
+            return markdown
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def record_issue_submission(
+    report_id: str,
+    issue_url: str,
+    issue_state_path: Path = DEFAULT_ISSUE_STATE,
+) -> dict[str, Any]:
+    """Record a successful canonical issue publication idempotently."""
+    if not isinstance(report_id, str) or not _REPORT_ID_RE.fullmatch(report_id):
+        raise AuditError("report_id is invalid")
+    if not isinstance(issue_url, str) or not _ISSUE_URL_RE.fullmatch(issue_url):
+        raise AuditError("issue_url is not a canonical adaptive-delegation issue")
+    state_path = Path(issue_state_path)
+    if not os.path.lexists(state_path):
+        raise AuditError("issue report state does not exist")
+    fd = _open_ledger(state_path, writable=True)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            events = _parse_issue_state(fd)
+            prepared, submitted = _check_issue_state_sequence(events)
+            if report_id not in prepared:
+                raise AuditError("report_id has no prepared report")
+            prior = submitted.get(report_id)
+            if prior is not None:
+                if prior["issue_url"] != issue_url:
+                    raise AuditError("report_id is already bound to another issue")
+                return {
+                    "recorded": False,
+                    "idempotent": True,
+                    "report_id": report_id,
+                    "issue_url": issue_url,
+                }
+            submitted_at = (
+                _datetime.datetime.now(_datetime.timezone.utc)
+                .isoformat(timespec="microseconds")
+                .replace("+00:00", "Z")
+            )
+            event = {
+                "schema_version": ISSUE_STATE_SCHEMA_VERSION,
+                "event_type": "submitted",
+                "report_id": report_id,
+                "repository": CANONICAL_ISSUE_REPOSITORY,
+                "issue_url": issue_url,
+                "submitted_at": submitted_at,
+            }
+            _append_issue_state_locked(fd, event)
+            return {
+                "recorded": True,
+                "idempotent": False,
+                "report_id": report_id,
+                "issue_url": issue_url,
+            }
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1994,6 +2325,24 @@ def _build_parser() -> argparse.ArgumentParser:
         "--task-id",
         help="select one completed task; omitted selects the latest completed task",
     )
+    issue.add_argument(
+        "--issue-state",
+        type=Path,
+        help=(
+            "owner-only prepared/submitted report state; defaults beside the "
+            "attempt ledger"
+        ),
+    )
+
+    submission = subparsers.add_parser(
+        "record-submission",
+        help="record one successfully published canonical GitHub issue",
+    )
+    submission.add_argument("--report-id", required=True)
+    submission.add_argument("--issue-url", required=True)
+    submission.add_argument(
+        "--issue-state", type=Path, default=DEFAULT_ISSUE_STATE
+    )
     return parser
 
 
@@ -2016,13 +2365,29 @@ def main(argv: list[str] | None = None) -> int:
             output = _review(args.ledger, args.review_dir)
             print(output)
         elif args.command == "issue-report":
-            print(issue_report(args.ledger, args.task_id), end="")
+            print(
+                issue_report(args.ledger, args.task_id, args.issue_state),
+                end="",
+            )
+        elif args.command == "record-submission":
+            print(
+                _canonical_json(
+                    record_issue_submission(
+                        args.report_id, args.issue_url, args.issue_state
+                    )
+                )
+            )
         else:
             raise AuditError(f"unsupported command: {args.command}")
+    except NoUnsubmittedReportError:
+        print("error: no unsubmitted completed task remains", file=sys.stderr)
+        return 2
     except (AuditError, OSError, ValueError) as exc:
         message = (
             "issue report could not be generated from the local ledger"
             if args.command == "issue-report"
+            else "submission receipt could not be recorded"
+            if args.command == "record-submission"
             else str(exc)
         )
         print(f"error: {message}", file=sys.stderr)

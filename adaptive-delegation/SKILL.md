@@ -62,6 +62,17 @@ never authority or scope. Use Maker/Checker separation when risk warrants it:
 a Maker makes the bounded change and a distinct-session Checker checks it. Every
 child is a leaf and reports evidence, conflicts, and its stop condition.
 
+Select Checker capability from oracle shape and risk, not from a rule that the
+Checker must exceed the Maker model. A strong deterministic oracle may use a
+cheaper Checker because checking is narrower than making. If the oracle rejects
+the artifact, return to main and advance the exact Maker ladder. If the Checker
+itself has a tool/environment failure, repair or retry that Checker without
+upgrading Maker. If the oracle is weak, stop leaf escalation and use main
+takeover. The optional dispatcher integration-receipt path currently requires
+the distinct installed `adaptive-sol-checker-medium` session as its issuer; do
+not add another Verifier stage after sufficient Checker evidence. Main owns
+final integration acceptance and the stop decision.
+
 ## Primary invariant — Objective Lock
 
 Delegate bounded independent work aggressively when it materially improves
@@ -228,10 +239,13 @@ attempts automatically and the audit CLI auto-creates triggered reviews.
 When asked to validate model selection, read the audit logs automatically:
 consult the model-routing attempts and reviews before reporting a conclusion.
 
-To prepare a privacy-safe GitHub issue, run the local `issue-report` command
-from `scripts/model_routing_audit.py` and follow the repository-level
-`REPORTING.md`. The command prints only an allowlisted Markdown summary and
-never publishes or uploads the ledger.
+When asked to turn local usage experience into a GitHub issue, read
+[references/CODEX-ISSUE-REPORT-PROMPT.md](references/CODEX-ISSUE-REPORT-PROMPT.md),
+then use the `issue-report` and `record-submission` commands from
+`scripts/model_routing_audit.py`. The formatter prints only allowlisted
+Markdown and never publishes or uploads the attempts ledger. A separate
+owner-only issue-state ledger keeps pending random Report IDs and submitted
+attempt fingerprints so later requests do not resend recorded history.
 
 ## Bounded continuity reuse
 
@@ -361,8 +375,10 @@ as cryptographic proof.
 | Adaptive-delegation package | `$RUNTIME_HOME/skills/adaptive-delegation/` |
 | Policy source of truth | `$RUNTIME_HOME/skills/adaptive-delegation/config/model-routing.defaults.json` |
 | Package dispatcher | `$RUNTIME_HOME/scripts/adaptive_dispatch_attestation.py` |
+| Issue-publication prompt | `$RUNTIME_HOME/skills/adaptive-delegation/references/CODEX-ISSUE-REPORT-PROMPT.md` |
 | Model-routing attempts | `$RUNTIME_HOME/state/model-routing/attempts.jsonl` |
 | Model-routing reviews | `$RUNTIME_HOME/state/model-routing/reviews/` |
+| Issue-report duplicate state | `$RUNTIME_HOME/state/model-routing/issue-report-state.jsonl` |
 | Continuity ledger | `$RUNTIME_HOME/state/adaptive-delegation/continuity.jsonl` |
 
 The standalone repository is the portable source for Codex deployment.
@@ -373,5 +389,5 @@ package-declared role bindings.
 Codex normally detects the skill change automatically; restart only when the
 update does not appear.
 
-Never copy authentication, logs, continuity data, or rollout/session data.
-Those files stay on the machine where they were created.
+Never copy authentication, logs, issue-report state, continuity data, or
+rollout/session data. Those files stay on the machine where they were created.

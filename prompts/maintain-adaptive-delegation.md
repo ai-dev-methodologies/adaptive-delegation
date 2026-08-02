@@ -28,7 +28,8 @@ the repository source first. Do not edit installed artifacts directly.
 
 Keep the change portable and minimal. Preserve Luna-first routing, effort-first
 Luna escalation, Terra `medium`/`high` latency/scoped intermediates, the
-quota-first Terra `xhigh`/`max` goal route after observable Luna failure, fixed
+quota-first Terra `xhigh`/`max` latency-insensitive long-horizon route after
+observable Luna failure, fixed
 Native Luna/Terra/Sol leaf role bindings, passive Terra use-mode telemetry
 without paired A/B runs, the Sol
 `high`-or-above main gate, leaf-`ultra` prohibition, observable-evidence escalation, machine-local
@@ -42,7 +43,7 @@ Run the relevant portable checks, normally:
 
 ```sh
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_release_preflight
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 ```
 
@@ -59,6 +60,13 @@ It uses a temporary candidate home and auth symlink; it is a same-user quality
 guard, not a security boundary. Do not proceed from unit tests directly to a
 user-level install: request and receive explicit later user approval after the
 gate passes.
+
+Before merging to `main`, review the complete README against the active skill,
+config, version, installation, role flow, and reporting behavior. Commit and
+push the feature branch, then require
+`python3 scripts/release_preflight.py --mode pre-merge` to pass. After merge
+and push, require `python3 scripts/release_preflight.py --mode deploy` from a
+clean checkout exactly matching `origin/main` before any user-level install.
 
 Do not run Git/GitHub mutations (`git init`, `git add`, commits, remote setup,
 repository creation, or pushes) unless the user separately requests that
