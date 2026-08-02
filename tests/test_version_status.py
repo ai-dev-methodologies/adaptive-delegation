@@ -143,6 +143,8 @@ class VersionStatusTests(unittest.TestCase):
         self.assertRegex(version, re.compile(r"^\d+\.\d+\.\d+(?:[-+].+)?$"))
         self.assertIn(f"## [{version}]", changelog)
         self.assertIn("scripts/version_status.py", prompt)
+        self.assertIn('git fetch --force origin "$SOURCE_REF"', prompt)
+        self.assertIn("git checkout --detach FETCH_HEAD", prompt)
         self.assertIn('AUTH_SOURCE=""', prompt)
         self.assertIn("local Codex authentication is required", normalized_prompt)
         self.assertIn("CODEX-INSTALL-PROMPT.md", readme)

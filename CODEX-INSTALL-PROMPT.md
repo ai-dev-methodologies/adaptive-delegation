@@ -26,8 +26,9 @@ steps:
 1. Clone the repository into a fresh temporary or dedicated checkout, or fetch
    and cleanly switch an existing canonical checkout to SOURCE_REF. Do not
    discard unrelated local changes; use a fresh checkout if the existing one is
-   dirty. Record `git rev-parse HEAD` and use that resolved commit for the
-   remainder of this installation.
+   dirty. From the clean checkout, run `git fetch --force origin "$SOURCE_REF"`
+   and `git checkout --detach FETCH_HEAD`. Record `git rev-parse HEAD` and use
+   that resolved commit for the remainder of this installation.
 2. Read README.md, INSTALL.md, CHANGELOG.md, and
    adaptive-delegation/VERSION before changing the Codex home.
 3. Resolve the target Codex home from CODEX_HOME when set, otherwise use
