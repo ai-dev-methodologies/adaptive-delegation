@@ -4,9 +4,9 @@
 Claude Code and other agent runtimes are not supported execution targets.
 
 `adaptive-delegation` routes bounded Codex work through a Luna-first policy,
-raises Luna effort before model tier, then uses Terra medium/high as an
-evidence-seeking intermediate after observable Luna acceptance or quality
-failure, and fixed Sol leaf roles only when more capability is required. It records observable
+raises Luna effort before model tier, then uses evidence-classified Terra
+routes after observable Luna acceptance or quality failure, and fixed Sol leaf
+roles only when more capability is required. It records observable
 outcomes, permits only declared role/model/effort transitions, and returns
 unresolved work to the main Codex session when the leaf ladder is exhausted or
 the acceptance oracle is weak.
@@ -71,7 +71,7 @@ consistency checks; they are not an operating-system security boundary.
   evidence but deliberately cannot be finalized or backfilled. Re-execute it
   as a fresh chain with a new task ID, attempt index 1, dispatch ID, packet, and
   v3 terminal/receipt plus `0.3.0` audit records.
-- Package 0.4 is still pre-1.0. It keeps Objective Lock v1/v2 audit evidence
+- Package 0.5 is still pre-1.0. It keeps Objective Lock v1/v2 audit evidence
   readable but starts new work with Objective Lock v3 and never continues a
   task across lock or routing-policy versions. Preserve an older pending chain
   as historical evidence and re-execute the bounded task with a new task ID,
@@ -91,9 +91,9 @@ linked audit schema `0.3.0` rejects a changed digest or mixed `0.2.0`/`0.3.0`
 task history. This detects local contract drift on dispatcher-owned paths; it
 does not prove semantic correctness or create a security principal.
 
-Package 0.4.0 requires an explicit `terminal_outcome` and `lane_id` in every packet and
+Package 0.5.0 requires an explicit `terminal_outcome` and `lane_id` in every packet and
 separates the stable terminal-outcome lock from the replaceable path/iteration
-envelope. Re-execute unfinished older packets as fresh 0.4 tasks.
+envelope. Re-execute unfinished older packets as fresh 0.5 tasks.
 
 ## Activate the skill
 
@@ -102,6 +102,8 @@ Implicit activation is also available for matching requests. The skill
 frontmatter contains the only two localized trigger literals; all other package
 documentation is English. See
 [`adaptive-delegation/references/TRIGGERS.md`](adaptive-delegation/references/TRIGGERS.md).
+No additional Luna-first, stop-on-acceptance, or no-extra-review prompt is
+required; those constraints are part of the installed skill contract.
 
 ## Invocation and `ultra` reasoning behavior
 
@@ -127,11 +129,12 @@ After activation, the workflow is identical for explicit and implicit entry:
    skill cannot mutate a failing parent configuration.
 2. Construct one portable Objective Lock before any child launch.
 3. Route simple work to Luna `medium`, clear implementation to Luna `high`, and
-   bounded complex work to Luna `xhigh`.
+   bounded complex work to Luna `xhigh`. Active goal/Ultragoal work with a
+   strong oracle and no latency constraint starts at Luna `max`.
 4. Escalate only from observable failure evidence, preserving the exact lock.
-   Luna effort may rise through `max`; the route may then use a fixed Terra
-   `medium` or `high` intermediate before fixed Sol `medium` and `high` leaf
-   roles, but leaf `ultra` is never allowed.
+   Luna effort may rise through `max`; ordinary work may use Terra
+   `medium/high`, while latency-insensitive long-horizon work may use Terra
+   `xhigh/max` before Sol. Leaf `ultra` is never allowed.
 5. Keep weak-oracle, ambiguous, high-risk, or long-contract work with the main
    at `gpt-5.6-sol/ultra`, or return exhausted leaf work to that main takeover.
 6. Stop as soon as the locked acceptance evidence passes. Do not add another
@@ -144,14 +147,16 @@ The fixed automatic paths are:
 | Simple lookup or extraction | `Luna medium -> high -> xhigh -> max -> Terra medium -> Sol medium -> main Sol ultra` |
 | Clear implementation or transformation | `Luna high -> xhigh -> max -> Terra medium -> Sol medium -> Sol high -> main Sol ultra` |
 | Bounded complex implementation, debugging, or review | `Luna xhigh -> max -> Terra high -> Sol medium -> Sol high -> main Sol ultra` |
+| Active goal/Ultragoal, strong oracle, latency-insensitive | `Luna max -> Terra xhigh -> Terra max -> Sol high -> main Sol ultra` |
 | Weak oracle, ambiguous/high-risk, or long contract | `main Sol ultra` |
 
-Terra `xhigh` and `max` are not automatic routes and no dormant A/B binding is
-retained. Ordinary runs passively log `use_mode=post_luna_failure` or
-`use_mode=direct_latency`; later audits compare accepted-task outcomes rather
-than running perpetual or random paired experiments. The main may directly
-select Terra only with a pre-observable latency-sensitive, scoped,
-strong-oracle, recoverable, non-ambiguous predicate.
+Terra `xhigh` and `max` are restricted to the quota-first long-horizon path and
+require preceding Luna failure. Ordinary runs passively log
+`use_mode=post_luna_failure` or `use_mode=direct_latency`; later audits compare
+accepted-task outcomes rather than running perpetual, random, or duplicate
+paired experiments. The main may directly select Terra only with a
+pre-observable latency-sensitive, scoped, strong-oracle, recoverable,
+non-ambiguous predicate. Terra has no `ultra` route.
 
 ## Install from GitHub
 

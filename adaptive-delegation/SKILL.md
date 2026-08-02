@@ -13,6 +13,13 @@ Use explicit `$adaptive-delegation` when deterministic activation matters.
 Implicit activation remains allowed for requests that match this skill's
 description.
 
+The invocation is sufficient by itself. Do not require the user to append a
+separate Luna-first, stop-on-acceptance, or no-extra-review prompt. This skill
+already requires bounded implementation and verification to start Luna-first,
+forbids Terra or Sol escalation without observable route failure except the
+declared direct-latency case, stops immediately at acceptance, and excludes
+optional reviews, broad tests, and adjacent improvements.
+
 ## Activation gate
 
 Step zero, before routing or launching any child, checks that the current main
@@ -122,6 +129,7 @@ quality failure, followed by bounded Sol leaf escalation before main takeover:
 | Simple lookup or extraction | `gpt-5.6-luna/medium` |
 | Clear implementation or transformation | `gpt-5.6-luna/high` |
 | Bounded complex implementation or verification | `gpt-5.6-luna/xhigh` |
+| Active goal/Ultragoal story that is latency-insensitive, long-horizon, and has a strong oracle | `gpt-5.6-luna/max` |
 | Weak oracle, ambiguous/high-risk, or long contract | Main-authoritative `gpt-5.6-sol/ultra` |
 
 Leaf `ultra` is forbidden. Sol `medium` and `high` are fixed leaf roles; they do
@@ -133,6 +141,9 @@ retry per stage, with reevaluation after every attempt. The fixed ladders are:
 - Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> terra/medium -> sol/medium -> sol/high -> main-takeover sol/ultra`.
 - Bounded complex implementation, debugging, or review: `luna/xhigh -> luna/max -> terra/high -> sol/medium -> sol/high -> main-takeover sol/ultra`.
 - Bounded complex work with a strong oracle uses the same bounded-complex ladder and may not skip a configured step.
+- An active Codex goal or Ultragoal story that is long-horizon,
+  latency-insensitive, risk `low`/`medium`, and has a strong acceptance oracle:
+  `luna/max -> terra/xhigh -> terra/max -> sol/high -> main-takeover sol/ultra`.
 - Weak-oracle, ambiguous/high-risk, or long-contract work stays main-authoritative at `sol/ultra`.
 
 For a `weak_oracle` failure discovered on a leaf, `main_takeover` moves directly
@@ -151,14 +162,16 @@ or credit units are not provider-token equivalents. Routing is
 provisional and evidence-seeking; accepted-task quality, latency, weighted
 tokens, and total cost determine later revisions.
 
-Terra `medium` and `high` are evidence-seeking intermediate routes only:
-`medium` is for scoped implementation or transformation, while `high` is for
-bounded complex, debugging, or review work. Terra `xhigh` and `max` are not
-automatic routes and no dormant A/B binding is retained. Ordinary runs passively
-record Terra `use_mode=post_luna_failure` or `use_mode=direct_latency`; later
-audits compare accepted-task outcomes, with no perpetual or random paired A/B.
-The main may directly choose Terra only when it records a pre-observable,
-latency-sensitive, scoped, strong-oracle, recoverable, non-ambiguous predicate.
+Terra `medium` and `high` remain the evidence-seeking intermediate routes for
+ordinary scoped or latency-sensitive work. Terra `xhigh` and `max` are active
+only in the latency-insensitive long-horizon quota-first ladder after observable
+Luna failure. They trade elapsed time for lower Sol usage and are provisional
+until local accepted-task logs justify retention. Ordinary runs passively
+record Terra `use_mode=post_luna_failure` or `use_mode=direct_latency`; no
+perpetual, random, or duplicate paired A/B is allowed. The main may directly
+choose Terra only when it records a pre-observable, latency-sensitive, scoped,
+strong-oracle, recoverable, non-ambiguous predicate. Terra does not support an
+`ultra` route, and leaf `ultra` remains forbidden.
 
 ## Observable failure and review evidence
 
@@ -223,8 +236,8 @@ triggers external rerouting.
 ## Codex native routing and local admission evidence
 
 After delegation is chosen, prefer Native V2 through a verified fixed
-`agent_type`. Select the installed package role whose TOML fixes the exact Luna
-or Sol leaf model and effort, pass the matching `reasoning_effort` and
+`agent_type`. Select the installed package role whose TOML fixes the exact Luna,
+Terra, or Sol leaf model and effort, pass the matching `reasoning_effort` and
 `fork_turns="none"`, and verify the role binding before creation. In this mode
 the chosen `agent_type` is the explicit model selection; omitting the optional
 `model` override is not leader-model inheritance.

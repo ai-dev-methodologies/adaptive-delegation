@@ -67,6 +67,18 @@ class InstallerTests(unittest.TestCase):
                 ],
             )
             self.assertFalse(policy["routing_observations"]["terra"]["paired_ab"])
+            self.assertEqual(
+                policy["escalation_ladders"][
+                    "latency_insensitive_long_horizon_with_strong_oracle"
+                ],
+                [
+                    "luna_max",
+                    "terra_xhigh",
+                    "terra_max",
+                    "sol_high",
+                    "main_takeover_sol_ultra",
+                ],
+            )
             self.assertTrue((installed / "SKILL.md").is_file())
             source_version = (
                 ROOT / "adaptive-delegation" / "VERSION"
@@ -129,12 +141,12 @@ class InstallerTests(unittest.TestCase):
             obsolete = agents / "adaptive-obsolete-maker.toml"
             unrelated = agents / "custom-role.toml"
             obsolete.write_text("obsolete\n", encoding="utf-8")
-            removed_terra = [
+            restored_terra = [
                 agents / "adaptive-terra-maker-max.toml",
                 agents / "adaptive-terra-checker-max.toml",
                 agents / "adaptive-terra-checker-xhigh.toml",
             ]
-            for role in removed_terra:
+            for role in restored_terra:
                 role.write_text("obsolete Terra route\n", encoding="utf-8")
             unrelated.write_text("preserve\n", encoding="utf-8")
 
@@ -142,7 +154,13 @@ class InstallerTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(obsolete.exists())
-            self.assertTrue(all(not role.exists() for role in removed_terra))
+            self.assertTrue(all(role.is_file() for role in restored_terra))
+            self.assertTrue(
+                all(
+                    role.read_text(encoding="utf-8") != "obsolete Terra route\n"
+                    for role in restored_terra
+                )
+            )
             self.assertTrue((agents / "adaptive-terra-maker-medium.toml").is_file())
             self.assertTrue((agents / "adaptive-terra-maker-high.toml").is_file())
             self.assertEqual(unrelated.read_text(encoding="utf-8"), "preserve\n")

@@ -14,6 +14,22 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.5.0] - 2026-08-02
+
+- Made the skill's built-in contract explicitly sufficient: bounded execution
+  remains Luna-first, stops immediately at declared acceptance, and forbids
+  optional review, broad testing, or adjacent improvement without requiring
+  extra user prompt text.
+- Added a quota-first, latency-insensitive long-horizon route for active Codex
+  goal and Ultragoal work with a strong oracle:
+  `Luna max -> Terra xhigh -> Terra max -> Sol high -> main Sol ultra`.
+- Restored Terra `xhigh`/`max` Maker and Checker bindings only for that route.
+  They require observable preceding-route failure and never run as paired A/B.
+- Preserved the existing direct-latency Terra `medium`/`high` path for work with
+  a measurable time constraint.
+- Kept `ultra` main-authoritative; Terra has no `ultra` route and no leaf may
+  inherit main `ultra`.
+
 ## [0.4.0] - 2026-08-02
 
 - Established the pre-1.0 Codex-only package, portable installer, deterministic

@@ -26,6 +26,7 @@ SUPPORTED_ENFORCEMENT_MODE = "fail-closed-declared-context"
 TASK_CLASSES = frozenset({
     "simple_lookup_or_extraction", "clear_implementation_or_transformation",
     "bounded_complex_implementation_or_verification",
+    "latency_insensitive_long_horizon_with_strong_oracle",
     "weak_oracle_ambiguous_high_risk_or_long_contract",
 })
 ORACLE_STRENGTHS = frozenset({"strong", "weak", "ambiguous"})
@@ -147,9 +148,31 @@ def validate_policy_routes(policy: Mapping[str, Any]) -> dict[str, dict[str, str
     predicate = terra_observation.get("direct_latency_predicate")
     if not isinstance(predicate, list) or set(predicate) != DIRECT_LATENCY_PREDICATE_FIELDS:
         raise _route_error("OBSERVATION_POLICY_INVALID", "direct latency predicate must cover all five pre-observable conditions")
-    automatic_steps = {step for ladder in ladders.values() for step in ladder}
-    if "terra_max" in result or "checker_terra_max" in result:
-        raise _route_error("STALE_TERRA_BINDING", "Terra xhigh/max bindings are not retained by this policy")
+    quota_ladder = ladders.get(
+        "latency_insensitive_long_horizon_with_strong_oracle"
+    )
+    expected_quota_ladder = [
+        "luna_max",
+        "terra_xhigh",
+        "terra_max",
+        "sol_high",
+        "main_takeover_sol_ultra",
+    ]
+    if quota_ladder != expected_quota_ladder:
+        raise _route_error(
+            "QUOTA_LADDER_INVALID",
+            "latency-insensitive long-horizon work must use the fixed quota-first ladder",
+        )
+    premium_terra = {"terra_xhigh", "terra_max"}
+    if any(
+        premium_terra.intersection(ladder)
+        for name, ladder in ladders.items()
+        if name != "latency_insensitive_long_horizon_with_strong_oracle"
+    ):
+        raise _route_error(
+            "QUOTA_LADDER_LEAK",
+            "Terra xhigh/max are restricted to the latency-insensitive quota-first ladder",
+        )
     contract = policy.get("transition_contract")
     if not isinstance(contract, Mapping) or contract.get("max_same_route_retries_per_stage") != 1 or contract.get("require_contiguous_attempt_indices") is not True or contract.get("require_previous_attempt_evidence") is not True or contract.get("require_current_policy_fingerprint") is not True:
         raise _route_error("TRANSITION_CONTRACT_INVALID", "transition contract must be fail-closed and bounded")

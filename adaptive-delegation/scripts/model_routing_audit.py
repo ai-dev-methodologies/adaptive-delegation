@@ -66,6 +66,7 @@ TASK_CLASSES = (
     "simple_lookup_or_extraction",
     "clear_implementation_or_transformation",
     "bounded_complex_implementation_or_verification",
+    "latency_insensitive_long_horizon_with_strong_oracle",
     "weak_oracle_ambiguous_high_risk_or_long_contract",
 )
 # 0.1 ledgers can still be read after policy vocabulary changes.  These values

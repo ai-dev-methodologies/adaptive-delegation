@@ -58,9 +58,10 @@ policy JSON are relative to that resolved runtime home; they are not shell
 templates.
 
 The qualitative starting point is the package's installed Codex role catalog:
-Luna handles clear bounded work, Terra `medium` and `high` are evidence-seeking
-post-Luna intermediates, Sol `medium` and `high` are bounded leaf escalations,
-and Sol `ultra` remains the authoritative main takeover. Effort is raised
+Luna handles clear bounded work, Terra `medium` and `high` are scoped or
+latency-sensitive post-Luna intermediates, Terra `xhigh` and `max` are
+quota-first long-horizon intermediates, Sol `medium` and `high` are bounded
+leaf escalations, and Sol `ultra` remains the authoritative main takeover. Effort is raised
 before model tier when observable evidence supports that transition.
 These are package policy choices, not universal quality equivalence claims.
 The exact thresholds and ladders remain provisional hypotheses evaluated
@@ -71,11 +72,11 @@ positions Sol for frontier capability, Terra for a balance of intelligence and
 cost, and Luna for efficient high-volume work. It recommends representative
 evaluation rather than a universal escalation ladder. A current
 [independent coding comparison](https://artificialanalysis.ai/agents/coding-agents/comparisons/codex-vs-cursor-cli)
-places Luna `max` ahead of Terra `xhigh` on its measured quality/cost frontier
-and makes Sol `medium` the next material capability step. That result is useful
-evidence, not a guarantee for every workload. The package therefore uses Terra
-only as a bounded post-Luna intermediate or explicit direct-latency route and
-revisits the decision from sanitized accepted-task outcomes.
+places Luna `max` ahead of Terra `xhigh` on its captured quality/cost frontier,
+but that cost snapshot predates the latest price cut. That result is useful
+evidence, not a guarantee for this workload. The package therefore exposes a
+bounded quota-first Terra `xhigh/max` path after Luna failure and revisits it
+from sanitized accepted-task outcomes rather than claiming it is optimal.
 
 The policy is provisional and evidence-seeking. Reevaluate after every
 attempt. Use one same-model reasoning-effort retry per stage at most, then
@@ -94,6 +95,7 @@ quality failure, followed by bounded Sol leaf escalation:
 | Simple lookup or extraction | `gpt-5.6-luna/medium` |
 | Clear implementation or transformation | `gpt-5.6-luna/high` |
 | Bounded complex implementation or verification | `gpt-5.6-luna/xhigh` |
+| Latency-insensitive long-horizon goal with strong oracle | `gpt-5.6-luna/max` |
 | Weak oracle, ambiguous/high-risk, or long contract | main-authoritative `gpt-5.6-sol/ultra` |
 
 Effort is increased before changing model tier when the failure evidence is
@@ -116,6 +118,7 @@ The configured ladders are:
 - Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> terra/medium -> sol/medium -> sol/high -> main-takeover sol/ultra`.
 - Bounded complex implementation, debugging, or review: `luna/xhigh -> luna/max -> terra/high -> sol/medium -> sol/high -> main-takeover sol/ultra`.
 - Bounded complex work with a strong oracle: `luna/xhigh -> luna/max -> terra/high -> sol/medium -> sol/high -> main-takeover sol/ultra`.
+- Latency-insensitive long-horizon goal with a strong oracle: `luna/max -> terra/xhigh -> terra/max -> sol/high -> main-takeover sol/ultra`.
 - Weak-oracle, ambiguous/high-risk, or long-contract work: main-authoritative `sol/ultra` only.
 
 The main may take over when the weak-oracle condition means a leaf cannot
@@ -140,12 +143,13 @@ Codex quota or credit units are not provider-token equivalents. Effort can
 change token use and latency, so compare total cost per accepted task, not
 price per token alone.
 
-Terra `xhigh` and `max` are not automatic routes and no dormant A/B binding is
-retained. Ordinary runs passively record `use_mode=post_luna_failure` or
-`use_mode=direct_latency`; later audits compare accepted-task outcomes rather
-than running perpetual or random paired experiments. The main may directly
-choose Terra only after recording a pre-observable predicate proving latency
-sensitivity, scope, a strong oracle, recoverability, and non-ambiguity.
+Terra `xhigh` and `max` are restricted to the quota-first long-horizon ladder
+and require preceding Luna failure. Ordinary runs passively record
+`use_mode=post_luna_failure` or `use_mode=direct_latency`; later audits compare
+accepted-task outcomes rather than running perpetual, random, or duplicate
+paired experiments. The main may directly choose Terra only after recording a
+pre-observable predicate proving latency sensitivity, scope, a strong oracle,
+recoverability, and non-ambiguity. Terra has no `ultra` route.
 
 ## Native role selection
 

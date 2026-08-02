@@ -27,9 +27,10 @@ executor when no Checker is used) record the compact handoff. Update and test
 the repository source first. Do not edit installed artifacts directly.
 
 Keep the change portable and minimal. Preserve Luna-first routing, effort-first
-Luna escalation, Terra `medium`/`high` evidence-seeking intermediates after
-observable Luna quality failures, fixed Native Luna/Terra/Sol leaf role
-bindings, passive Terra use-mode telemetry without paired A/B runs, the Sol
+Luna escalation, Terra `medium`/`high` latency/scoped intermediates, the
+quota-first Terra `xhigh`/`max` goal route after observable Luna failure, fixed
+Native Luna/Terra/Sol leaf role bindings, passive Terra use-mode telemetry
+without paired A/B runs, the Sol
 `high`-or-above main gate, leaf-`ultra` prohibition, observable-evidence escalation, machine-local
 logs/state exclusion, and the repository-as-canonical rule. Do not add
 dependencies or alter product behavior without an explicit envelope. Model or

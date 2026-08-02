@@ -1,7 +1,7 @@
 {
-  "schema_version": "0.4.0",
+  "schema_version": "0.5.0",
   "status": "provisional-evidence-seeking",
-  "policy_id": "adaptive-delegation-luna-terra-sol-v0.4",
+  "policy_id": "adaptive-delegation-luna-terra-sol-v0.5",
   "policy_source": "package-default",
   "policy_ssot": "package-default",
   "required_model": "gpt-5.6-sol",
@@ -132,6 +132,20 @@
       "model_tier": "standard-tier",
       "reasoning_effort": "high"
     },
+    "terra_xhigh": {
+      "authority": "leaf",
+      "role": "adaptive-terra-maker-xhigh",
+      "model": "gpt-5.6-terra",
+      "model_tier": "standard-tier",
+      "reasoning_effort": "xhigh"
+    },
+    "terra_max": {
+      "authority": "leaf",
+      "role": "adaptive-terra-maker-max",
+      "model": "gpt-5.6-terra",
+      "model_tier": "standard-tier",
+      "reasoning_effort": "max"
+    },
     "checker_luna_xhigh": {
       "authority": "leaf",
       "role": "adaptive-luna-checker-xhigh",
@@ -174,6 +188,20 @@
       "model_tier": "standard-tier",
       "reasoning_effort": "high"
     },
+    "checker_terra_xhigh": {
+      "authority": "leaf",
+      "role": "adaptive-terra-checker-xhigh",
+      "model": "gpt-5.6-terra",
+      "model_tier": "standard-tier",
+      "reasoning_effort": "xhigh"
+    },
+    "checker_terra_max": {
+      "authority": "leaf",
+      "role": "adaptive-terra-checker-max",
+      "model": "gpt-5.6-terra",
+      "model_tier": "standard-tier",
+      "reasoning_effort": "max"
+    },
     "main_takeover_sol_ultra": {
       "authority": "main",
       "role": "main-authority",
@@ -186,6 +214,7 @@
     "simple_lookup_or_extraction": "luna_medium",
     "clear_implementation_or_transformation": "luna_high",
     "bounded_complex_implementation_or_verification": "luna_xhigh",
+    "latency_insensitive_long_horizon_with_strong_oracle": "luna_max",
     "weak_oracle_ambiguous_high_risk_or_long_contract": "main_takeover_sol_ultra"
   },
   "escalation_ladders": {
@@ -223,6 +252,13 @@
       "sol_high",
       "main_takeover_sol_ultra"
     ],
+    "latency_insensitive_long_horizon_with_strong_oracle": [
+      "luna_max",
+      "terra_xhigh",
+      "terra_max",
+      "sol_high",
+      "main_takeover_sol_ultra"
+    ],
     "weak_oracle_ambiguous_high_risk_or_long_contract": [
       "main_takeover_sol_ultra"
     ]
@@ -241,7 +277,7 @@
       ],
       "comparison_basis": "accepted-task quality, latency, weighted tokens, and Sol-equivalent cost proxy",
       "paired_ab": false,
-      "selection_note": "Ordinary runs passively record Terra use_mode; later audits compare accepted-task outcomes."
+      "selection_note": "Ordinary runs passively record Terra use_mode; latency-insensitive long-horizon work may use Terra xhigh/max after Luna max failure, while later audits compare accepted-task outcomes."
     }
   },
   "failure_actions": {
@@ -348,6 +384,16 @@
       "model": "gpt-5.6-terra",
       "reasoning_effort": "high"
     },
+    "adaptive-terra-maker-xhigh": {
+      "model_tier": "standard-tier",
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "xhigh"
+    },
+    "adaptive-terra-maker-max": {
+      "model_tier": "standard-tier",
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "max"
+    },
     "adaptive-terra-checker-medium": {
       "model_tier": "standard-tier",
       "model": "gpt-5.6-terra",
@@ -357,6 +403,16 @@
       "model_tier": "standard-tier",
       "model": "gpt-5.6-terra",
       "reasoning_effort": "high"
+    },
+    "adaptive-terra-checker-xhigh": {
+      "model_tier": "standard-tier",
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "xhigh"
+    },
+    "adaptive-terra-checker-max": {
+      "model_tier": "standard-tier",
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "max"
     }
   }
 }

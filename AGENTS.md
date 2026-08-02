@@ -24,9 +24,9 @@ subagents. Claude Code is unsupported.
   `adaptive-delegation/roles/*.toml`. Verify the bound model and effort; do not
   silently substitute another model when a Luna, Terra, or Sol admission is
   rejected.
-- Terra `xhigh`/`max` are excluded from automatic ladders and no dormant A/B
-  bindings are retained. Ordinary Terra use is passively logged by use mode and
-  compared through accepted-task outcomes.
+- Terra `xhigh`/`max` are restricted to the latency-insensitive long-horizon
+  quota-first ladder after observable Luna failure. No dormant or paired A/B
+  bindings are retained; ordinary Terra use is passively logged by use mode.
 - Leaf `ultra` is forbidden. `gpt-5.6-sol/ultra` is a main-authoritative
   takeover only.
 - Model or reasoning escalation changes capability, never authority or scope.

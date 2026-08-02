@@ -270,8 +270,20 @@ class DispatchPolicyTests(unittest.TestCase):
                 next_action="raise_model",
             )
         self.assertEqual(caught.exception.code, "TRANSITION_KIND_MISMATCH")
-        self.assertNotIn("terra_max", policy["route_bindings"])
-        self.assertNotIn("checker_terra_max", policy["route_bindings"])
+        self.assertEqual(
+            policy["escalation_ladders"][
+                "latency_insensitive_long_horizon_with_strong_oracle"
+            ],
+            [
+                "luna_max",
+                "terra_xhigh",
+                "terra_max",
+                "sol_high",
+                "main_takeover_sol_ultra",
+            ],
+        )
+        self.assertIn("terra_max", policy["route_bindings"])
+        self.assertIn("checker_terra_max", policy["route_bindings"])
         self.assertFalse(policy["routing_observations"]["terra"]["paired_ab"])
         self.assertEqual(
             contract.route_for(policy, "sol_medium")["role"],
@@ -282,6 +294,13 @@ class DispatchPolicyTests(unittest.TestCase):
         with self.assertRaises(contract.PolicyContractError) as caught:
             contract.validate_policy_routes(invalid_observation)
         self.assertEqual(caught.exception.code, "OBSERVATION_POLICY_INVALID")
+        leaked_quota_route = copy.deepcopy(policy)
+        leaked_quota_route["escalation_ladders"][
+            "clear_implementation_or_transformation"
+        ].insert(-1, "terra_max")
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.validate_policy_routes(leaked_quota_route)
+        self.assertEqual(caught.exception.code, "QUOTA_LADDER_LEAK")
         with self.assertRaises(contract.PolicyContractError):
             contract.validate_route_selection(
                 policy,
@@ -311,6 +330,19 @@ class DispatchPolicyTests(unittest.TestCase):
             use_mode="direct_latency",
         )
         self.assertEqual(selected["model"], "gpt-5.6-terra")
+        quota_route = contract.validate_route_selection(
+            policy,
+            route_id="terra_xhigh",
+            task_class="latency_insensitive_long_horizon_with_strong_oracle",
+            oracle_strength="strong",
+            selection_basis="failure_action",
+            role="adaptive-terra-maker-xhigh",
+            model="gpt-5.6-terra",
+            reasoning_effort="xhigh",
+            attempt_index=2,
+            use_mode="post_luna_failure",
+        )
+        self.assertEqual(quota_route["reasoning_effort"], "xhigh")
         with self.assertRaisesRegex(contract.PolicyContractError, "direct Terra"):
             contract.validate_route_selection(
                 policy,

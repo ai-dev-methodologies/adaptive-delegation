@@ -26,12 +26,13 @@ local audit review. Do not activate a model or effort from anecdotes alone.
 
 - Default fresh bounded work to Luna and raise Luna effort before changing
   model tier.
-- Use Terra `medium` or `high` only after an observable Luna acceptance or
-  quality failure, or as a main-selected direct-latency lane with a measurable
-  latency constraint, strong oracle, bounded scope, recoverability, and no high
-  risk or ambiguity.
-- Keep Terra `xhigh` and `max` out of automatic routing. Their current external
-  quality/cost position does not justify a general intermediate lane.
+- Use Terra `medium` or `high` after observable Luna failure for ordinary
+  bounded work, or as a main-selected direct-latency lane with a measurable
+  time constraint and strong oracle.
+- Field-test Terra `xhigh` and `max` only after Luna max failure on active
+  goal/Ultragoal work that is latency-insensitive, long-horizon, risk
+  `low`/`medium`, and has a strong oracle. This is a quota-saving hypothesis,
+  not a quality-equivalence claim.
 - Use Sol leaf routes when the bounded result still fails materially. Keep
   weak-oracle, ambiguous, high-risk, and long-contract work main-authoritative.
 - Run no random or perpetual paired A/B. Record ordinary Terra use as
@@ -84,7 +85,9 @@ behavior on a specific repository.
   quality/latency topology, not its cost column, until refreshed.
 
 Inference: Terra `medium/high` has a defensible latency-sensitive niche at
-mid-quality. This does not support automatic Terra `xhigh/max`.
+mid-quality. The stale pre-cut cost column cannot rule out a slower,
+quota-first Terra `xhigh/max` lane, so local post-Luna field evidence now owns
+that decision.
 
 ### Coding and terminal benchmarks
 
@@ -156,7 +159,7 @@ failure, human intervention count, retry count, measurable latency/SLO, and
 Codex quota pressure. Until they are actually recorded, treat related community
 claims as unverified.
 
-Retain Terra medium/high only if representative local tasks show one of these:
+Retain a Terra route only if representative local tasks show one of these:
 
 - materially lower elapsed time than the adjacent Luna/Sol path while meeting
   the same acceptance oracle;
@@ -164,9 +167,11 @@ Retain Terra medium/high only if representative local tasks show one of these:
 - higher accepted outcomes for a clearly bounded task family without greater
   total Sol-equivalent cost.
 
-Remove or narrow Terra if it adds an extra hop without improving accepted-task
-latency, retry count, intervention burden, or cost. Do not wait for a contrived
-paired A/B campaign; use the ordinary evidence accumulated under each use mode.
+For the quota-first `xhigh/max` lane, elapsed time may regress; require lower
+Sol usage or lower total Sol-equivalent cost at comparable acceptance quality.
+Remove or narrow Terra if it adds an extra hop without improving the metric its
+lane owns. Do not wait for a contrived paired A/B campaign; use ordinary
+post-Luna evidence accumulated under each use mode.
 
 ## Review triggers and expiry
 
