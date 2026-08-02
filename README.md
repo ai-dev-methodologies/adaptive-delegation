@@ -11,6 +11,11 @@ session when the leaf ladder is exhausted or the acceptance oracle is weak.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
+For prompt-driven installation or updates on another developer's computer,
+send Codex the copy-paste workflow in
+[`CODEX-INSTALL-PROMPT.md`](CODEX-INSTALL-PROMPT.md). It authorizes the final
+user-level install only after validation and isolated promotion pass.
+
 ## What the skill validates and requires
 
 The dispatcher fails closed on the typed/direct paths it owns. Native child
@@ -74,7 +79,7 @@ Python 3.11 or newer is required.
 git clone https://github.com/ai-dev-methodologies/adaptive-delegation.git
 cd adaptive-delegation
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_isolated_dogfood
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_isolated_dogfood tests.test_version_status
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
 # With explicit user approval only:
@@ -99,12 +104,31 @@ For the complete install, update, rollback, and second-PC workflow, see
 
 ```sh
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_isolated_dogfood tests.test_version_status
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 ```
 
 Codex normally detects installed skill changes automatically. Restart Codex
 only if the updated skill is not visible after installation.
+
+## Version and update comparison
+
+[`adaptive-delegation/VERSION`](adaptive-delegation/VERSION) is the canonical
+Semantic Version and is copied into every installed package. Human-readable
+release changes are recorded in [`CHANGELOG.md`](CHANGELOG.md). Installable
+package changes must update both files.
+
+Compare a checkout with the installed package without changing either:
+
+```sh
+python3 scripts/version_status.py
+```
+
+Use `--codex-home /path/to/.codex` for another target or `--json` for stable
+machine-readable output. The command reports versions, package digests, and
+relative `source_only`, `installed_only`, and `modified` paths. A matching
+version with a different digest is `same_version_drift`; an older unversioned
+installation is `installed_unversioned`.
 
 ## Audit logs and GitHub issues
 
@@ -135,6 +159,11 @@ repository's routing-report issue template. See [`REPORTING.md`](REPORTING.md).
 - [`adaptive-delegation/references/MODEL_ROUTING_POLICY.md`](adaptive-delegation/references/MODEL_ROUTING_POLICY.md)
   — rationale, ladders, failure actions, and metrics.
 - [`INSTALL.md`](INSTALL.md) — installation and cross-PC operations.
+- [`CODEX-INSTALL-PROMPT.md`](CODEX-INSTALL-PROMPT.md) — copy-paste Codex CLI
+  installation and update prompts.
+- [`CHANGELOG.md`](CHANGELOG.md) and
+  [`adaptive-delegation/VERSION`](adaptive-delegation/VERSION) — release
+  history and installed package version.
 - [`REPORTING.md`](REPORTING.md) — privacy-safe issue workflow.
 - [`AGENTS.md`](AGENTS.md) — repository maintenance rules.
 

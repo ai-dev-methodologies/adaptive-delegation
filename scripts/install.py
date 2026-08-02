@@ -25,6 +25,11 @@ DISPATCHER_NAME = "adaptive_dispatch_attestation.py"
 CONTINUITY_READER_NAME = "read_continuity.py"
 SKIP_NAMES = {".DS_Store", "__pycache__"}
 MANAGED_ROLE_NAME = re.compile(r"^adaptive-[a-z0-9-]+$")
+SEMVER_PATTERN = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 
 
 class InstallError(RuntimeError):
@@ -72,8 +77,27 @@ def _load_policy(package: Path) -> dict:
     return value
 
 
+def _load_package_version(package: Path) -> str:
+    version_path = package / "VERSION"
+    try:
+        value = version_path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise InstallError(f"invalid package version: {exc}") from exc
+    match = SEMVER_PATTERN.fullmatch(value)
+    if match is None:
+        raise InstallError("package VERSION must contain one Semantic Version")
+    prerelease = match.group(4)
+    if prerelease and any(
+        identifier.isdigit() and len(identifier) > 1 and identifier[0] == "0"
+        for identifier in prerelease.split(".")
+    ):
+        raise InstallError("package VERSION has an invalid numeric prerelease")
+    return value
+
+
 def _validate_package(package: Path) -> list[Path]:
     required = [
+        package / "VERSION",
         package / "SKILL.md",
         package / "agents" / "openai.yaml",
         package / "config" / "model-routing.defaults.json",
@@ -88,6 +112,7 @@ def _validate_package(package: Path) -> list[Path]:
             "package is incomplete: " + ", ".join(str(path) for path in missing)
         )
 
+    _load_package_version(package)
     policy = _load_policy(package)
     bindings = policy.get("role_bindings")
     if not isinstance(bindings, dict) or not bindings:
@@ -215,6 +240,7 @@ def _atomic_package(source: Path, target: Path) -> None:
 def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool) -> None:
     source = repo_root / PACKAGE_NAME
     role_paths = _validate_package(source)
+    package_version = _load_package_version(source)
     target_skill = skills_root / PACKAGE_NAME
     dispatcher_target = codex_home / "scripts" / DISPATCHER_NAME
     managed_roles = [role for role in role_paths if role.stem.startswith("adaptive-")]
@@ -227,6 +253,7 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
     ]
 
     print(f"skill: {target_skill}")
+    print(f"package version: {package_version}")
     print(f"dispatcher: {dispatcher_target}")
     print(f"role bindings: {len(agent_targets)} under {codex_home / 'agents'}")
     if dry_run:
@@ -251,7 +278,10 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
 
     if stat.S_IMODE(dispatcher_target.stat().st_mode) != 0o700:
         raise InstallError("dispatcher permission verification failed")
-    print("installed: package, dispatcher, and policy-matched role bindings")
+    print(
+        "installed: package version "
+        f"{package_version}, dispatcher, and policy-matched role bindings"
+    )
     print("Codex detects skill changes automatically; restart only if this update is not visible.")
 
 

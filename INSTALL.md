@@ -14,6 +14,30 @@ Canonical repository:
 
 The installer uses `$CODEX_HOME` when set and otherwise uses `~/.codex`.
 
+## Prompt-driven installation
+
+To delegate the complete install or update to Codex CLI, send the target
+developer the prompt in [`CODEX-INSTALL-PROMPT.md`](CODEX-INSTALL-PROMPT.md).
+It uses Git and Python directly, compares the installed and source versions,
+and contains explicit authorization for the final user-level write only after
+the promotion gate passes.
+
+## Version status
+
+The installed skill contains the canonical Semantic Version from
+`adaptive-delegation/VERSION`. Before and after installation, compare the
+checkout with the target Codex home:
+
+```sh
+python3 scripts/version_status.py --codex-home /path/to/.codex
+```
+
+The read-only command reports the source and installed versions, package
+digests, changed relative paths, and a status such as `not_installed`,
+`update_available`, `current`, `same_version_drift`, or
+`installed_unversioned`. Read [`CHANGELOG.md`](CHANGELOG.md) for the
+human-readable changes between versions.
+
 ## First installation
 
 Clone the repository, validate the package without writing, run the portable
@@ -25,12 +49,13 @@ Codex home:
 git clone https://github.com/ai-dev-methodologies/adaptive-delegation.git
 cd adaptive-delegation
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 python3 -m unittest -v tests.test_isolated_dogfood
 python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
 # With explicit user approval only:
 python3 scripts/install.py
+python3 scripts/version_status.py
 ```
 
 For a non-default Codex home:
@@ -94,11 +119,12 @@ Codex home or hidden runtime-state directories.
 git clone https://github.com/ai-dev-methodologies/adaptive-delegation.git
 cd adaptive-delegation
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
 # With explicit user approval only:
 python3 scripts/install.py
+python3 scripts/version_status.py
 ```
 
 Authenticate Codex locally on that computer. Its audit and continuity ledgers
@@ -114,12 +140,14 @@ task ID, attempt index 1, dispatch ID, packet, and v2/`0.3.0` chain.
 
 ```sh
 git pull --ff-only
+python3 scripts/version_status.py
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
 # With explicit user approval only:
 python3 scripts/install.py
+python3 scripts/version_status.py
 ```
 
 Rerunning the installer is the supported repair and reinstall path.
@@ -132,11 +160,12 @@ the same dry run, tests, and installer:
 ```sh
 git checkout <known-good-commit-or-tag>
 python3 scripts/install.py --dry-run
-python3 -m unittest -v tests.test_install tests.test_dispatcher_gate
+python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_version_status
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth.json
 # With explicit user approval only:
 python3 scripts/install.py
+python3 scripts/version_status.py
 ```
 
 Return to the desired branch or revision and repeat those steps to move

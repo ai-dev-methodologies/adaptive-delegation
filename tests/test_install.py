@@ -53,6 +53,13 @@ class InstallerTests(unittest.TestCase):
                 native["model_override_enum_absence_is_native_rejection"]
             )
             self.assertTrue((installed / "SKILL.md").is_file())
+            source_version = (
+                ROOT / "adaptive-delegation" / "VERSION"
+            ).read_text(encoding="utf-8").strip()
+            self.assertEqual(
+                (installed / "VERSION").read_text(encoding="utf-8").strip(),
+                source_version,
+            )
             self.assertTrue((installed / "scripts" / "read_continuity.py").is_file())
             self.assertTrue(dispatcher.is_file())
             self.assertEqual(stat.S_IMODE(dispatcher.stat().st_mode), 0o700)
@@ -62,6 +69,7 @@ class InstallerTests(unittest.TestCase):
                 self.assertTrue(role.is_file(), role)
                 self.assertEqual(stat.S_IMODE(role.stat().st_mode), 0o600)
             self.assertEqual(shared_role.read_text(), "shared role\n")
+            self.assertIn(f"package version: {source_version}", result.stdout)
             self.assertFalse((codex_home / "state").exists())
             self.assertFalse((codex_home / "auth.json").exists())
             self.assertFalse(any(installed.rglob("__pycache__")))
@@ -180,20 +188,25 @@ class InstallerTests(unittest.TestCase):
 
         owned_paths = {
             "AGENTS.md",
+            "CHANGELOG.md",
+            "CODEX-INSTALL-PROMPT.md",
             "README.md",
             "INSTALL.md",
             "REPORTING.md",
             ".gitignore",
             "prompts/maintain-adaptive-delegation.md",
             "adaptive-delegation/SKILL.md",
+            "adaptive-delegation/VERSION",
             "adaptive-delegation/CROSS_PC_TRANSFER.md",
             "adaptive-delegation/TOKEN_EFFICIENCY_CONTINUITY.md",
             "adaptive-delegation/references/MODEL_ROUTING_POLICY.md",
             "adaptive-delegation/references/TRIGGERS.md",
             "adaptive-delegation/scripts/model_routing_audit.py",
+            "scripts/version_status.py",
             "adaptive-delegation/tests/test_model_routing_audit.py",
             ".github/ISSUE_TEMPLATE/routing-report.md",
             "tests/test_install.py",
+            "tests/test_version_status.py",
         }
         text_files = {ROOT / name for name in owned_paths if (ROOT / name).is_file()}
         for path in text_files:
