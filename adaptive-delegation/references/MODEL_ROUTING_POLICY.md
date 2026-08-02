@@ -9,6 +9,30 @@ this document explains its evidence basis and operating rules without
 overriding it. Repository files are canonical; installed files are deployment
 targets and are not additional policy sources.
 
+## Primary invariant: portable Objective Lock
+
+Before the first child launch, derive one self-contained Objective Lock from
+the current user request and repository evidence. Its v2 fields are objective,
+`non_goals`, read/write/network authority, intended behavior, acceptance
+evidence, verification ceiling, known side effects, and stop condition. No
+valid lock means no child launch. A user-global or project `AGENTS.md` may
+further restrict the task but is not required by the installed skill.
+
+Delegate bounded independent work aggressively when it materially improves
+speed, token efficiency, or verification quality. Every Maker, Checker, retry,
+effort/model escalation, and main takeover inherits the exact lock. Run the
+smallest acceptance proof and stop when it passes. Additional reviews,
+repository-wide analysis, repeated validation, optional model consultations,
+and adjacent improvements remain outside the lock unless a new explicitly
+authorized task adds them.
+
+The main session is not exempt: planning, repository inspection, routing
+preflight, package inspection, verification, retries, and integration remain
+inside the same authority and verification ceiling. For a fresh bounded task,
+load the skill once, skip continuity, inspect only the live spawn surface plus
+the selected config binding and role TOML, and do not reverse-engineer package
+source unless a concrete admission failure requires a specific diagnostic.
+
 ## Evidence basis
 
 Routing decisions must be supported by observable evidence: acceptance tests,
@@ -247,8 +271,9 @@ route, including main takeover, inherits the packet's canonical Objective Lock
 and stops when its acceptance evidence is proved. The lock digest excludes
 route, model, effort, attempt index, and resource budget, so capability changes
 cannot silently redefine the task. Linked `0.3.0` audit transitions require the
-same digest; legacy `0.1.0` and `0.2.0` records remain readable but cannot be
-mixed into a `0.3.0` task history.
+same Objective Lock version and digest. Objective Lock v1 and legacy `0.1.0`
+and `0.2.0` records remain readable, but a task history cannot cross schema or
+Objective Lock versions.
 
 A weak oracle is a reason to retain authority at the main and repair the
 oracle or report an inconclusive result, not permission to redesign adjacent

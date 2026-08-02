@@ -1,6 +1,6 @@
 ---
 name: adaptive-delegation
-description: Codex-only skill for Codex native subagents. Use when routing bounded implementation and verification work for token effective, token-effective, token efficiency, token-efficient delegation, cost-efficient subagents, Luna-first delegation, adaptive delegation, effort-first escalation, model routing audit, validate model selection, reduce Sol usage, or evidence-checked delegation requests; also match 토큰효율화 and 토큰 효율화.
+description: Codex-only skill for Codex native subagents. Use when routing bounded implementation and verification work for Objective-Locked delegation, scope-drift prevention, bounded verification, token effective, token-effective, token efficiency, token-efficient delegation, cost-efficient subagents, Luna-first delegation, adaptive delegation, effort-first escalation, model routing audit, validate model selection, reduce Sol usage, or evidence-checked delegation requests; also match 토큰효율화 and 토큰 효율화.
 ---
 
 # Adaptive Delegation
@@ -37,6 +37,61 @@ slice without widening it. Model or reasoning escalation changes capability,
 never authority or scope. Use Maker/Checker separation when risk warrants it:
 a Maker makes the bounded change and a distinct-session Checker checks it. Every
 child is a leaf and reports evidence, conflicts, and its stop condition.
+
+## Primary invariant — Objective Lock
+
+Delegate bounded independent work aggressively when it materially improves
+speed, token efficiency, or verification quality, but only inside one
+canonical **OBJECTIVE LOCK**. No valid Objective Lock, no child launch.
+
+Before routing, construct a self-contained **IMPLEMENTATION ENVELOPE** from the
+current user request and repository evidence. It must declare objective,
+non-goals (`non_goals`), read/write/network authority, intended behavior, acceptance
+evidence, verification ceiling, known side effects, and stop condition. The
+skill must not depend on a user-global `AGENTS.md` or any machine-specific
+policy file to supply these fields.
+
+The dispatcher serializes one route-independent canonical v2 JSON object and
+carries its SHA-256 consistency digest through Native admission, typed
+execution, terminal/integration records, linked audit schema `0.3.0`, retry,
+escalation, Checker review, and main takeover. A stronger model, higher effort,
+retry, or takeover may finish the unresolved slice but may not change any lock
+field. The digest is same-user drift evidence, not a signature or proof that
+the declared acceptance oracle is semantically adequate.
+
+The lock binds the main session too. Main-side planning, repository inspection,
+routing preflight, package inspection, verification, retry decisions, and
+integration must remain inside the same authority and verification ceiling.
+Delegating a narrow leaf never authorizes the main to perform broader discovery
+or extra review around it.
+
+Use the smallest verification path that proves the acceptance evidence. Stop
+as soon as that evidence passes and the stop condition applies. After
+sufficient evidence exists, do not perform additional reviews,
+repository-wide analysis, repeated validation, optional model consultations,
+unrelated cleanup, refactoring, architectural redesign, abstraction,
+documentation expansion, speculative robustness, or consistency polishing.
+Record adjacent improvements as concise backlog findings instead of
+implementing them.
+
+Keep routing preflight proportional to the locked task. After loading this
+`SKILL.md` once, do not reopen it, enumerate the package, inspect dispatcher
+source, invoke `--help`, or read optional references merely to reconstruct
+package internals. For an ordinary bounded Native route, inspect the live spawn
+schema/catalog once, read only the selected entry in
+`config/model-routing.defaults.json` and its installed role TOML, then use the
+documented admission interface. For the config read, select only
+`task_defaults` plus `.role_bindings[$role]` with the exact role name; never
+fall back to printing the whole JSON object. Expand that preflight only after a
+concrete admission failure makes a specific additional read necessary.
+
+Expand scope only when direct evidence proves that the accepted path crosses a
+required public contract, shared invariant, security/auth/financial boundary,
+cross-process concurrency boundary, schema/protocol migration, or
+compatibility/rollback surface. Record the trigger, evidence, added scope,
+budget, side effects, and stop condition. Uncertainty alone never expands
+scope. A materially broader objective requires a new explicitly authorized
+task or packet; do not silently turn a takeover into a redesign.
 
 ## Policy source and routing defaults
 
@@ -116,18 +171,25 @@ from `scripts/model_routing_audit.py` and follow the repository-level
 `REPORTING.md`. The command prints only an allowlisted Markdown summary and
 never publishes or uploads the ledger.
 
-## Always-on continuity
+## Bounded continuity reuse
 
-Before routing, consult
-[TOKEN_EFFICIENCY_CONTINUITY.md](TOKEN_EFFICIENCY_CONTINUITY.md):
-after exporting `RUNTIME_HOME`, run `python3 "$RUNTIME_HOME/skills/adaptive-delegation/scripts/read_continuity.py"
+Continuity is an optimization, not a mandatory preflight. Consult
+[TOKEN_EFFICIENCY_CONTINUITY.md](TOKEN_EFFICIENCY_CONTINUITY.md) only when the
+task repeats a stable workspace/objective pair, the Objective Lock permits the
+state read, and a prior accepted route or evidence path is likely to replace
+material work. Skip continuity for a fresh one-shot task with complete
+acceptance evidence, or whenever the lookup would exceed the read scope or
+verification ceiling.
+
+When consultation is justified, export `RUNTIME_HOME` and run `python3
+"$RUNTIME_HOME/skills/adaptive-delegation/scripts/read_continuity.py"
 --workspace "$WORKSPACE" --objective-key "$OBJECTIVE_KEY"` with exact values;
-it returns at most the
-latest three accepted matching records. Never `tail`, `grep`, or `cat` a
-continuity ledger. Reuse valid decisions and evidence paths unless newer direct evidence invalidates them,
-and do not reload unrelated raw logs. At acceptance or handoff, exactly one
-designated recorder appends the compact record: the distinct-session Checker when
-present, otherwise the sole verified executor. `token_budget` is
+it returns at most the latest three accepted matching records. Never `tail`,
+`grep`, or `cat` a continuity ledger. Reuse valid decisions and evidence paths
+unless newer direct evidence invalidates them, and do not reload unrelated raw
+logs. At acceptance or handoff, append one compact record only when the lock
+permits that state write and reuse is expected; the distinct-session Checker
+records when present, otherwise the sole verified executor. `token_budget` is
 optional/advisory; its absence preserves Native V2 eligibility and never
 triggers external rerouting.
 
@@ -170,9 +232,10 @@ child and returns control to root.
 
 ## Packets, truthful caps, and integration
 
-Every packet states the objective, owned mutable surfaces, acceptance evidence,
-verification ceiling, resource cap, token budget, stop condition, collision ownership, and side
-effects. Packets are narrow planning inputs, not proof of enforcement. For
+Every packet states the objective, required `non_goals`, owned mutable surfaces,
+acceptance evidence, verification ceiling, resource cap, token budget, stop
+condition, collision ownership, and side effects. Packets are narrow planning
+inputs, not proof of enforcement. For
 Native V2, caps are unavailable/planning/advisory unless trusted live parent
 monitoring exists; mark enforcement unavailable and never claim `parent_enforced` or
 `quantitative_caps_enforced` without that proof. The typed direct path may make
@@ -226,43 +289,6 @@ attestation, or a separate security principal. A malicious process running as
 the same operating-system user can forge local files and session records. The
 main remains the final trusted authority and must not describe a local receipt
 as cryptographic proof.
-
-## Objective-bound verification
-
-Every task begins with an **IMPLEMENTATION ENVELOPE**: objective,
-read/write/network authority, intended behavior, acceptance evidence,
-verification ceiling, known side effects, and stop condition. Verify the
-smallest path proving acceptance. These fields form the **OBJECTIVE LOCK**.
-The dispatcher serializes one route-independent canonical v1 JSON object for
-both Native and typed execution and carries its SHA-256 consistency digest
-through Native admission, terminal/integration records, linked audit schema
-`0.3.0`, retry, escalation, and main takeover. Linked `0.2.0` records remain
-readable but cannot be continued into or from a `0.3.0` task history.
-
-The lock applies equally to Luna and Terra leaves, Checker routes, and a Sol
-main-authority takeover. A stronger model, higher reasoning effort, retry, or
-takeover can finish the unresolved slice but cannot broaden its authority.
-The digest is same-user drift evidence, not a signature or proof that the
-declared acceptance oracle is semantically adequate.
-
-Stop as soon as the required acceptance evidence passes and the stop condition
-applies. Do not continue into unrelated cleanup, refactoring, architectural
-generalization, abstraction, documentation expansion, speculative robustness,
-consistency polishing, or a more "complete" design unless the original
-acceptance contract requires it. Completeness, elegance, uncertainty, or spare
-budget is not scope-expansion evidence. Record adjacent improvements as concise
-backlog findings instead of implementing them.
-
-Expand only on direct evidence of a shared public contract or interface,
-shared state or invariant, security/auth/financial boundary,
-cross-process concurrency or lease semantics, schema/protocol migration or
-compatibility/rollback surface, or an accepted path crossing a boundary.
-
-Record every **SCOPE EXPANSION** with trigger, evidence, added scope, budget,
-side effects, and stop condition. Uncertainty alone does not expand scope;
-unrelated defects are backlog findings unless they invalidate the acceptance
-claim. A materially broader objective requires a new, explicitly authorized
-task or packet; do not silently turn a takeover into a redesign.
 
 ## Portable locations and GitHub deployment
 

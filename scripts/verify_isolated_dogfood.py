@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -91,6 +92,99 @@ def write_fixture(fixture: Path) -> None:
     )
 
 
+def write_python_trace_wrapper(directory: Path, trace: Path) -> None:
+    """Trace fresh-child python3 argv, then execute the real interpreter."""
+    directory.mkdir(mode=0o700)
+    wrapper = directory / "python3"
+    interpreter = str(Path(sys.executable).resolve())
+    wrapper.write_text(
+        f"#!{interpreter}\n"
+        "import json, os, pathlib, sys\n"
+        f"trace = pathlib.Path({str(trace)!r})\n"
+        "with trace.open('a', encoding='utf-8') as handle:\n"
+        "    handle.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        f"os.execv({interpreter!r}, [{interpreter!r}, *sys.argv[1:]])\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o700)
+
+
+def read_python_trace(trace: Path) -> list[list[str]]:
+    if not trace.is_file():
+        return []
+    commands: list[list[str]] = []
+    for line in trace.read_text(encoding="utf-8").splitlines():
+        value = json.loads(line)
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise ValueError("python trace entry is not a string list")
+        commands.append(value)
+    return commands
+
+
+def read_completed_commands(output: str) -> list[str]:
+    """Extract completed main-session shell commands from Codex JSONL."""
+    commands: list[str] = []
+    for line in output.splitlines():
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(value, dict) or value.get("type") != "item.completed":
+            continue
+        item = value.get("item")
+        if not isinstance(item, dict) or item.get("type") != "command_execution":
+            continue
+        command = item.get("command")
+        if isinstance(command, str):
+            commands.append(command)
+    return commands
+
+
+def preflight_violations(commands: list[str]) -> list[str]:
+    """Reject optional package archaeology in the fresh bounded fixture."""
+    violations: list[str] = []
+    for command in commands:
+        optional_internal_read = any(
+            marker in command
+            for marker in (
+                "TOKEN_EFFICIENCY_CONTINUITY.md",
+                "read_continuity.py",
+                "MODEL_ROUTING_POLICY.md",
+                "dispatch_policy.py",
+            )
+        )
+        dispatcher_archaeology = "adaptive_dispatch_attestation.py" in command and any(
+            marker in command for marker in (" --help", "sed -n", "rg -n", "rg -l")
+        )
+        package_enumeration = "adaptive-delegation" in command and "rg --files" in command
+        broad_config_dump = (
+            "model-routing.defaults.json" in command
+            and any(marker in command for marker in ("// .", "cat ", "sed -n"))
+        )
+        if (
+            optional_internal_read
+            or dispatcher_archaeology
+            or package_enumeration
+            or broad_config_dump
+        ):
+            violations.append(command)
+    return violations
+
+
+def reported_targeted_evidence(output: str) -> bool:
+    normalized = output.lower()
+    named_target = (
+        TARGET_TEST.lower() in normalized
+        or "exact requested unittest passed" in normalized
+        or "exact targeted test passed" in normalized
+    )
+    scoped_diff = (
+        "git diff -- target.py" in normalized
+        or "scoped diff contains only the requested change" in normalized
+    )
+    return named_target and "ran 1 test" in normalized and scoped_diff
+
+
 def run(command: list[str], cwd: Path, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, cwd=cwd, env=environment, text=True, capture_output=True, check=False)
 
@@ -126,8 +220,11 @@ def run_gate(
     try:
         candidate_home = root / "candidate-codex-home"
         fixture = root / "fixture"
+        trace_bin = root / "trace-bin"
+        python_trace = root / "fresh-python-commands.jsonl"
         fixture.mkdir()
         write_fixture(fixture)
+        write_python_trace_wrapper(trace_bin, python_trace)
         installed = run(
             [sys.executable, str(repo_root / "scripts" / "install.py"), "--codex-home", str(candidate_home)],
             repo_root,
@@ -148,6 +245,9 @@ def run_gate(
         }
         gate_environment["CODEX_HOME"] = str(candidate_home)
         gate_environment["HOME"] = str(candidate_home)
+        gate_environment["PATH"] = (
+            str(trace_bin) + os.pathsep + gate_environment.get("PATH", "")
+        )
         if extra_codex_args and extra_codex_args[0] == "--test-expose-user-home":
             gate_environment["USER_CODEX_HOME"] = str(user_codex_home)
             extra_codex_args = extra_codex_args[1:]
@@ -156,8 +256,12 @@ def run_gate(
 Model: gpt-5.6-sol; reasoning effort: high.
 **OBJECTIVE LOCK**: In this fixture, edit only target.py so normalize(value)
 returns value.strip().lower(). Do not edit tests or any other file.
+Non-goals: do not modify tests, inspect the adjacent failure, refactor unrelated
+code, or add documentation or speculative robustness.
 Acceptance evidence: run exactly `python3 -m unittest -v test_target.TargetTests.test_normalizes_whitespace_and_case`.
 Verification ceiling: do not run broad tests, inspect unrelated files, or perform cleanup.
+After sufficient evidence exists, do not perform additional reviews, repeated
+validation, repository-wide analysis, or optional model consultations.
 Stop condition: when that exact command passes and `git diff -- target.py` shows only the requested change, stop.
 """
         invocation = [
@@ -191,6 +295,48 @@ Stop condition: when that exact command passes and `git diff -- target.py` shows
         if "test_adjacent" in output:
             return checked_result(
                 failed("fresh command exceeded the declared verification ceiling"),
+                user_codex_home,
+                before,
+            )
+        violations = preflight_violations(read_completed_commands(output))
+        if violations:
+            return checked_result(
+                failed(
+                    "fresh main exceeded the Objective Lock during routing preflight: "
+                    + repr(violations)
+                ),
+                user_codex_home,
+                before,
+            )
+        expected_python_commands = [["-m", "unittest", "-v", TARGET_TEST]]
+        try:
+            observed_python_commands = read_python_trace(python_trace)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            return checked_result(
+                failed(f"fresh verification trace is invalid: {exc}"),
+                user_codex_home,
+                before,
+            )
+        observed_unittests = [
+            command
+            for command in observed_python_commands
+            if len(command) >= 2 and command[:2] == ["-m", "unittest"]
+        ]
+        if observed_unittests and observed_unittests != expected_python_commands:
+            return checked_result(
+                failed(
+                    "fresh child must run exactly the declared targeted Python "
+                    f"verification once; observed {observed_unittests!r}"
+                ),
+                user_codex_home,
+                before,
+            )
+        if not observed_unittests and not reported_targeted_evidence(output):
+            return checked_result(
+                failed(
+                    "native child verification was not visible in the Python trace "
+                    "and the fresh result did not report the exact targeted evidence"
+                ),
                 user_codex_home,
                 before,
             )

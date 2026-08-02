@@ -98,6 +98,9 @@ class DispatcherGateTests(unittest.TestCase):
             "reasoning_effort": "xhigh",
             "read_scope": [str(self.root)],
             "write_scope": [str(self.root)],
+            "non_goals": [
+                "Do not modify unrelated files, tests, policy, or documentation."
+            ],
             "intended_behavior": "Run the bounded smoke worker without adjacent changes.",
             "acceptance_evidence": [
                 "The typed child exits successfully.",
@@ -564,12 +567,14 @@ class DispatcherGateTests(unittest.TestCase):
             objective,
         )
         self.assertIn("Stop as soon as the required acceptance evidence passes", objective)
+        self.assertIn("Do not perform additional reviews", objective)
         self.assertIn("A broader objective requires a new explicitly authorized packet.", objective)
         contract_text = objective.split(
             "ADAPTIVE_DISPATCH_CONTRACT (binding):\n", 1
         )[1]
         contract = json.loads(contract_text)
         self.assertEqual(contract["write_scope"], packet["write_scope"])
+        self.assertEqual(contract["non_goals"], packet["non_goals"])
         self.assertEqual(
             contract["acceptance_evidence"], packet["acceptance_evidence"]
         )
@@ -605,6 +610,7 @@ class DispatcherGateTests(unittest.TestCase):
 
         lock_mutations = (
             ("objective", "Perform a broader task."),
+            ("non_goals", ["Permit unrelated redesign."]),
             ("read_scope", [str(self.root / "other")]),
             ("write_scope", ["read-only"]),
             ("network_access", True),
@@ -624,11 +630,39 @@ class DispatcherGateTests(unittest.TestCase):
         module = self.load_dispatcher_module()
         packet = self.packet("objective-lock-envelope", "gpt-5.6-sol", "high")
 
-        for field in ("read_scope", "intended_behavior", "known_side_effects", "network_access"):
+        for field in (
+            "read_scope",
+            "non_goals",
+            "intended_behavior",
+            "known_side_effects",
+            "network_access",
+        ):
             with self.subTest(field=field):
                 candidate = json.loads(json.dumps(packet))
                 candidate.pop(field)
                 self.assertIsNotNone(module._validate_packet(candidate, self.role))
+
+    def test_non_goals_require_a_nonempty_bounded_string_list(self) -> None:
+        module = self.load_dispatcher_module()
+        packet = self.packet("objective-lock-non-goals", "gpt-5.6-sol", "high")
+
+        empty = json.loads(json.dumps(packet))
+        empty["non_goals"] = []
+        self.assertEqual(
+            module._validate_packet(empty, self.role),
+            "packet_field_missing_or_empty:non_goals",
+        )
+
+        for value in (["   "], "no adjacent work", [True]):
+            with self.subTest(value=value):
+                candidate = json.loads(json.dumps(packet))
+                candidate["non_goals"] = value
+                self.assertEqual(
+                    module._validate_packet(candidate, self.role),
+                    "non_goals_invalid",
+                )
+
+        self.assertEqual(module.OBJECTIVE_LOCK_VERSION, "2")
 
     def test_intended_behavior_requires_bounded_text(self) -> None:
         module = self.load_dispatcher_module()

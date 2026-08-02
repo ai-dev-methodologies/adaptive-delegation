@@ -147,7 +147,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
         event.update(
             {
                 "schema_version": "0.3.0",
-                "objective_lock_version": "1",
+                "objective_lock_version": "2",
                 "objective_lock_digest": "c" * 64,
                 "policy_fingerprint": contract.canonical_policy_fingerprint(policy),
                 "model": route["model"],
@@ -241,6 +241,51 @@ class ModelRoutingAuditTests(unittest.TestCase):
         mismatch_post["objective_lock_digest"] = "d" * 64
         with self.assertRaisesRegex(audit.AuditError, "objective_lock_digest"):
             audit._check_pair(mismatch_pre, mismatch_post)
+
+        version_mismatch_post = self.current_post(
+            "lock-version-pair", "objective-lock-version-pair"
+        )
+        version_mismatch_pre = self.current_pre(
+            "lock-version-pair", "objective-lock-version-pair"
+        )
+        version_mismatch_post["objective_lock_version"] = "1"
+        with self.assertRaisesRegex(audit.AuditError, "objective_lock_version"):
+            audit._check_pair(version_mismatch_pre, version_mismatch_post)
+
+    def test_objective_lock_v1_records_remain_readable_but_cannot_continue_as_v2(self):
+        legacy_pre = self.current_pre(
+            "lock-v1-first", "objective-lock-version-history",
+            objective_lock_version="1",
+        )
+        legacy_post = self.current_post(
+            "lock-v1-first", "objective-lock-version-history",
+            objective_lock_version="1",
+        )
+        legacy_post["post_result_detail"]["next_action"] = "raise_effort"
+        self.record("lock-v1-first-pre.json", legacy_pre)
+        self.record("lock-v1-first-post.json", legacy_post)
+
+        next_attempt = self.current_pre(
+            "lock-v2-second",
+            "objective-lock-version-history",
+            index=2,
+            route_id="luna_xhigh",
+        )
+        next_attempt["planned_effort_escalations"] = 1
+        with self.assertRaisesRegex(
+            audit.AuditError,
+            "objective lock version|objective lock digest",
+        ):
+            audit.record_event(
+                next_attempt, self.ledger, self.review_dir, auto_review=False
+            )
+
+        unsupported = self.current_pre(
+            "lock-v3", "objective-lock-unsupported",
+            objective_lock_version="3",
+        )
+        with self.assertRaisesRegex(audit.AuditError, "unsupported objective_lock_version"):
+            audit.validate_event(unsupported)
 
     def test_linked_schema_cannot_upgrade_or_downgrade_within_task_history(self):
         for direction in ("upgrade", "downgrade"):

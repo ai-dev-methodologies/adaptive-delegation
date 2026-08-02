@@ -8,6 +8,10 @@ effort-first policy. It records observable outcomes, permits only declared
 role/model/effort transitions, and returns unresolved work to the main Codex
 session when the leaf ladder is exhausted or the acceptance oracle is weak.
 
+Its primary invariant is: delegate bounded independent work aggressively, but
+only inside one portable Objective Lock. No valid lock means no child launch;
+no external `AGENTS.md` is required to construct or enforce the packaged lock.
+
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
@@ -29,10 +33,16 @@ consistency checks; they are not an operating-system security boundary.
 - Leaf `ultra` and silent model substitution are forbidden.
 - Model or reasoning escalation changes capability, not authority or scope.
   The policy requires every child and main-authority takeover to stay inside
-  the canonical Objective Lock: objective, read/write/network authority,
-  intended behavior, acceptance evidence, verification ceiling, known side
-  effects, and stop condition. Once the declared evidence is satisfied, work
-  stops; adjacent redesign or polishing requires a new explicit task.
+  the canonical Objective Lock: objective, non-goals, read/write/network
+  authority, intended behavior, acceptance evidence, verification ceiling,
+  known side effects, and stop condition. Once the declared evidence is
+  satisfied, work stops; additional reviews, repeated validation, optional
+  model consultations, adjacent redesign, or polishing require a new explicit
+  task.
+- The same lock binds main-side planning, repository inspection, routing
+  preflight, verification, retry decisions, and integration. A fresh one-shot
+  task with complete acceptance evidence skips continuity and does not reopen
+  optional package internals.
 - Retry and escalation decisions must follow observable failure evidence and a
   contiguous route history. Arbitrary jumps and exhausted same-route retries
   fail closed.
@@ -48,6 +58,10 @@ consistency checks; they are not an operating-system security boundary.
   evidence but deliberately cannot be finalized or backfilled. Re-execute it
   as a fresh chain with a new task ID, attempt index 1, dispatch ID, packet, and
   v2 terminal/receipt plus `0.3.0` audit records.
+- Before updating from package `1.x`, finalize every pending Objective Lock v1
+  chain. Version 2 keeps v1 audit evidence readable but starts new work with a
+  fresh task ID and Objective Lock v2; it never continues a task across lock
+  versions.
 
 The main-profile eligibility gate uses declared current-session context; main
 authority comes from the user/control topology, not from model capability.
@@ -56,8 +70,8 @@ not signatures, remote attestation, proof of semantic correctness, or a
 security boundary against a malicious process running as the same
 operating-system user.
 
-The dispatcher renders one route-independent canonical Objective Lock JSON for
-both Native and typed execution. Its version and SHA-256 consistency digest
+The dispatcher renders one route-independent canonical Objective Lock v2 JSON
+for both Native and typed execution. Its version and SHA-256 consistency digest
 remain identical across retries, effort/model escalation, and main takeover;
 linked audit schema `0.3.0` rejects a changed digest or mixed `0.2.0`/`0.3.0`
 task history. This detects local contract drift on dispatcher-owned paths; it

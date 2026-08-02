@@ -24,9 +24,18 @@ subagents. Claude Code is unsupported.
 - Leaf `ultra` is forbidden. `gpt-5.6-sol/ultra` is a main-authoritative
   takeover only.
 - Model or reasoning escalation changes capability, never authority or scope.
-  A main takeover inherits the exact objective, write scope, acceptance
-  evidence, and stop condition of the unresolved slice and must stop when
-  those acceptance conditions are proved.
+  Every child, Checker, retry, escalation, and main takeover inherits the exact
+  canonical Objective Lock and must stop when its acceptance conditions are
+  proved.
+- Construct the complete portable Objective Lock before the first child
+  launch. It includes objective, non-goals, read/write/network authority,
+  intended behavior, acceptance evidence, verification ceiling, known side
+  effects, and stop condition. No valid lock, no child launch.
+- Apply the same lock to the main session's planning, repository inspection,
+  routing preflight, verification, retries, and integration. Do not inspect
+  package internals or optional continuity data unless a concrete admission
+  failure or repeated-objective reuse makes that read necessary inside the
+  declared ceiling.
 - Every default, ladder step, and Checker route must resolve to an installed
   package role with the exact configured model and effort. Reject arbitrary
   jumps, stale counters, exhausted retries, and silent substitutions.
@@ -42,12 +51,12 @@ subagents. Claude Code is unsupported.
   distinct Checker session, but it is not a signature or separate security
   principal.
 
-The calling request or current main-session `AGENTS.md` remains responsible for
-general scope discipline outside an active adaptive-delegation workflow. It
-should state the intended outcome, non-goals, allowed write set, acceptance
-evidence, and stop condition. While this skill is active, the packet and every
-main-authority takeover preserve that boundary; a materially broader objective
-requires a new, explicitly authorized task or packet.
+The skill constructs its self-contained Objective Lock from the current user
+request and repository evidence. A user-global or project `AGENTS.md` may
+further restrict the task but is never a required runtime dependency. While
+this skill is active, every packet and main-authority takeover preserves the
+same lock; a materially broader objective requires a new, explicitly
+authorized task or packet.
 
 The policy source is
 `adaptive-delegation/config/model-routing.defaults.json`; explanatory rules
@@ -58,11 +67,12 @@ guidance is in `adaptive-delegation/TOKEN_EFFICIENCY_CONTINUITY.md`.
 
 Keep diffs minimal, preserve unrelated work, and prefer existing utilities and
 tests over new abstractions or dependencies. Every change must state its
-implementation envelope (objective, owned files, acceptance evidence, and
-stop condition). Use a bounded Maker for implementation and an independent
-Checker when risk warrants it; integration acceptance is separate from a child
-process merely exiting successfully. Public issue reports must use the local
-allowlisted formatter in `REPORTING.md`; raw ledgers never leave the machine.
+implementation envelope (objective, non-goals, owned files, acceptance
+evidence, verification ceiling, and stop condition). Use a bounded Maker for
+implementation and an independent Checker when risk warrants it; integration
+acceptance is separate from a child process merely exiting successfully.
+Public issue reports must use the local allowlisted formatter in
+`REPORTING.md`; raw ledgers never leave the machine.
 
 Every change that alters the installed `adaptive-delegation/` package must bump
 the Semantic Version in `adaptive-delegation/VERSION` and add the corresponding

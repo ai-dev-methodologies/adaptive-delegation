@@ -221,6 +221,8 @@ LINKED_COMMON_FIELDS = {
     "surface_schema_fingerprint",
 }
 OBJECTIVE_LOCK_FIELDS = {"objective_lock_version", "objective_lock_digest"}
+SUPPORTED_OBJECTIVE_LOCK_VERSIONS = {"1", "2"}
+CURRENT_OBJECTIVE_LOCK_VERSION = "2"
 LINKED_POST_FIELDS = {
     "execution_completed",
     "oracle_verdict",
@@ -443,6 +445,8 @@ def _policy_identity(policy: dict[str, Any]) -> tuple[str, str]:
 def _is_current_policy_event(event: dict[str, Any], policy: dict[str, Any]) -> bool:
     if event.get("schema_version") != LINKED_SCHEMA_VERSION:
         return False
+    if event.get("objective_lock_version") != CURRENT_OBJECTIVE_LOCK_VERSION:
+        return False
     try:
         policy_id, fingerprint = _policy_identity(policy)
     except AuditError:
@@ -583,7 +587,7 @@ def validate_event(event: Any) -> dict[str, Any]:
             missing_lock = OBJECTIVE_LOCK_FIELDS - set(event)
             if missing_lock:
                 raise AuditError("missing objective lock field(s): " + ", ".join(sorted(missing_lock)))
-            if event["objective_lock_version"] != "1":
+            if event["objective_lock_version"] not in SUPPORTED_OBJECTIVE_LOCK_VERSIONS:
                 raise AuditError("unsupported objective_lock_version")
             if not isinstance(event["objective_lock_digest"], str) or not _SHA256_RE.fullmatch(event["objective_lock_digest"]):
                 raise AuditError("objective_lock_digest must be a lowercase SHA-256 fingerprint")
@@ -974,8 +978,11 @@ def _check_pair(pre: dict[str, Any], post: dict[str, Any]) -> None:
             raise AuditError(
                 f"linked events disagree: {', '.join(sorted(mismatch))}"
             )
-        if pre["schema_version"] == LINKED_SCHEMA_VERSION and pre["objective_lock_digest"] != post["objective_lock_digest"]:
-            raise AuditError("linked events disagree: objective_lock_digest")
+        if pre["schema_version"] == LINKED_SCHEMA_VERSION:
+            if pre["objective_lock_version"] != post["objective_lock_version"]:
+                raise AuditError("linked events disagree: objective_lock_version")
+            if pre["objective_lock_digest"] != post["objective_lock_digest"]:
+                raise AuditError("linked events disagree: objective_lock_digest")
     if _parse_timestamp(post["timestamp"]) < _parse_timestamp(pre["timestamp"]):
         raise AuditError("post_result timestamp precedes pre_decision")
     policy = _load_policy()
@@ -1109,6 +1116,15 @@ def _check_sequence(events: list[dict[str, Any]]) -> tuple[list[tuple[dict[str, 
                 ):
                     raise AuditError(
                         "linked task history cannot change schema version"
+                    )
+                if (
+                    previous_schema == LINKED_SCHEMA_VERSION
+                    and current_schema == LINKED_SCHEMA_VERSION
+                    and prior_history[-1][0]["objective_lock_version"]
+                    != event["objective_lock_version"]
+                ):
+                    raise AuditError(
+                        "linked task history cannot change objective lock version"
                     )
                 previous_current = all(
                     _is_current_policy_event(item, policy)

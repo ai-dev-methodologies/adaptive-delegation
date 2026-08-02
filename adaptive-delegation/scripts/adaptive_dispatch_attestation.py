@@ -106,6 +106,7 @@ REQUIRED_PACKET_FIELDS = (
     "reasoning_effort",
     "write_scope",
     "read_scope",
+    "non_goals",
     "intended_behavior",
     "acceptance_evidence",
     "verification_ceiling",
@@ -135,7 +136,7 @@ ROLLOUT_PATTERN = re.compile(
 )
 SESSION_ID_OUTPUT_PATTERN = re.compile(rf"^session id:\s*(?P<session_id>{UUID_PATTERN})\s*$")
 TERMINAL_NONCE_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-OBJECTIVE_LOCK_VERSION = "1"
+OBJECTIVE_LOCK_VERSION = "2"
 
 
 @dataclass(frozen=True)
@@ -1782,6 +1783,18 @@ def _validate_packet(packet: Any, source_path: Path | None) -> str | None:
         or any(not isinstance(item, str) or not item.strip() for item in read_scope)
     ):
         return "read_scope_invalid"
+    non_goals = packet.get("non_goals")
+    if (
+        not isinstance(non_goals, list)
+        or not non_goals
+        or any(
+            not isinstance(item, str)
+            or not item.strip()
+            or len(item) > PROJECT_DOC_MAX_BYTES
+            for item in non_goals
+        )
+    ):
+        return "non_goals_invalid"
     known_side_effects = packet.get("known_side_effects")
     if "known_side_effects" not in packet or not isinstance(known_side_effects, list) or any(
         not isinstance(item, str) or not item.strip() for item in known_side_effects
@@ -3170,6 +3183,7 @@ def _typed_objective(packet: dict[str, Any]) -> str:
         "reasoning_effort": packet["reasoning_effort"],
         "network_access": packet.get("network_access", False),
         "write_scope": packet["write_scope"],
+        "non_goals": packet["non_goals"],
         "acceptance_evidence": packet["acceptance_evidence"],
         "verification_ceiling": packet["verification_ceiling"],
         "resource_cap": packet["resource_cap"],
@@ -3196,6 +3210,7 @@ def _typed_objective(packet: dict[str, Any]) -> str:
         + "- Work only inside the stated objective and write_scope.\n"
         + "- Model or reasoning escalation changes capability, not authority or scope.\n"
         + "- Stop as soon as the required acceptance evidence passes and the stop_condition applies.\n"
+        + "- Do not perform additional reviews, repository-wide analysis, repeated validation, or optional model consultations after sufficient evidence exists.\n"
         + "- Do not add unrelated cleanup, refactoring, architectural redesign, abstraction, documentation expansion, speculative robustness, or polishing.\n"
         + "- Report adjacent improvements as backlog findings. A broader objective requires a new explicitly authorized packet."
         + "\n\nADAPTIVE_DISPATCH_CONTRACT (binding):\n"
@@ -3208,6 +3223,7 @@ def _objective_lock(packet: dict[str, Any]) -> dict[str, Any]:
     return {
         "objective_lock_version": OBJECTIVE_LOCK_VERSION,
         "objective": packet["objective"].rstrip(),
+        "non_goals": packet["non_goals"],
         "read_scope": packet.get("read_scope", []),
         "write_scope": packet["write_scope"],
         "network_access": packet.get("network_access", False),

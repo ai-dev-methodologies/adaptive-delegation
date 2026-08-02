@@ -24,6 +24,14 @@ def load_module():
 
 
 class IsolatedDogfoodTests(unittest.TestCase):
+    def test_accepts_native_targeted_evidence_wording(self) -> None:
+        module = load_module()
+        output = (
+            "The exact targeted test passed (Ran 1 test — OK), and the scoped "
+            "diff contains only the requested change."
+        )
+        self.assertTrue(module.reported_targeted_evidence(output))
+
     def test_installation_docs_require_promotion_before_user_level_install(self) -> None:
         for name in ("README.md", "INSTALL.md"):
             content = (ROOT / name).read_text(encoding="utf-8")
@@ -34,15 +42,24 @@ class IsolatedDogfoodTests(unittest.TestCase):
             self.assertLess(approval, install, name)
         prompt = (ROOT / "prompts" / "maintain-adaptive-delegation.md").read_text(encoding="utf-8")
         self.assertIn("Do not proceed from unit tests directly", prompt)
+        gate = (ROOT / "scripts" / "verify_isolated_dogfood.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Non-goals:", gate)
+        self.assertIn("do not perform additional reviews", gate)
 
     def make_fake_codex(self, directory: Path, behavior: str) -> Path:
         executable = directory / "codex"
         executable.write_text(
-            "#!/usr/bin/env python3\n"
+            f"#!{sys.executable}\n"
             "import json, os, pathlib, subprocess, sys\n"
             "fixture = pathlib.Path.cwd()\n"
             "target = fixture / 'target.py'\n"
             + behavior
+            + "\nresult = subprocess.run(['python3', '-m', 'unittest', '-v', "
+            + repr("test_target.TargetTests.test_normalizes_whitespace_and_case")
+            + "], check=False, capture_output=True, text=True)"
+            + "\nprint(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'The exact requested unittest passed (Ran 1 test). git diff -- target.py showed only the requested change.'}}))"
             + "\nprint(json.dumps({'event': 'completed', 'codex_home': os.environ.get('CODEX_HOME', '')}))\n",
             encoding="utf-8",
         )
@@ -126,3 +143,47 @@ class IsolatedDogfoodTests(unittest.TestCase):
         )
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("verification ceiling", result.diagnostic)
+
+    def test_rejects_duplicate_target_verification(self) -> None:
+        module = load_module()
+        result = self.run_gate(
+            module,
+            behavior=(
+                "target.write_text(\"def normalize(value):\\n"
+                "    return value.strip().lower()\\n\", encoding='utf-8'); "
+                "subprocess.run(['python3', '-m', 'unittest', '-v', "
+                f"{module.TARGET_TEST!r}], check=False, capture_output=True, text=True)"
+            ),
+        )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("exactly the declared targeted Python verification once", result.diagnostic)
+
+    def test_rejects_optional_package_archaeology_in_main_preflight(self) -> None:
+        module = load_module()
+        result = self.run_gate(
+            module,
+            behavior=(
+                "target.write_text(\"def normalize(value):\\n"
+                "    return value.strip().lower()\\n\", encoding='utf-8'); "
+                "print(json.dumps({'type': 'item.completed', 'item': {"
+                "'type': 'command_execution', 'command': "
+                "'sed -n 1,200p TOKEN_EFFICIENCY_CONTINUITY.md'}}))"
+            ),
+        )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("routing preflight", result.diagnostic)
+
+    def test_rejects_broad_model_routing_config_dump(self) -> None:
+        module = load_module()
+        result = self.run_gate(
+            module,
+            behavior=(
+                "target.write_text(\"def normalize(value):\\n"
+                "    return value.strip().lower()\\n\", encoding='utf-8'); "
+                "print(json.dumps({'type': 'item.completed', 'item': {"
+                "'type': 'command_execution', 'command': "
+                "\"jq '.routes // .routing // .' model-routing.defaults.json\"}}))"
+            ),
+        )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("routing preflight", result.diagnostic)

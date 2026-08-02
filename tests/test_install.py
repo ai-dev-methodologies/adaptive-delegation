@@ -176,6 +176,17 @@ class InstallerTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("**OBJECTIVE LOCK**", skill)
+        self.assertIn("## Primary invariant — Objective Lock", skill)
+        self.assertIn("No valid Objective Lock, no child launch.", skill)
+        self.assertLess(
+            skill.index("## Primary invariant — Objective Lock"),
+            skill.index("## Policy source and routing defaults"),
+        )
+        self.assertIn("non-goals", skill)
+        self.assertIn("additional reviews", skill)
+        self.assertIn("The lock binds the main session too.", skill)
+        self.assertIn("Continuity is an optimization, not a mandatory preflight.", skill)
+        self.assertIn("do not reopen it, enumerate the package", skill)
         self.assertIn("do not silently turn a takeover into a redesign", skill)
         self.assertIn("issue-report", reporting)
         self.assertIn("dispatch_attestation.jsonl", install)
@@ -185,6 +196,13 @@ class InstallerTests(unittest.TestCase):
             normalized_install,
         )
         self.assertIn("Older installers cannot know", cross_pc)
+
+        for role in (ROOT / "adaptive-delegation" / "roles").glob("adaptive-*.toml"):
+            role_text = role.read_text(encoding="utf-8")
+            normalized_role = " ".join(role_text.split())
+            self.assertNotIn("under the user's current AGENTS.md", role_text)
+            self.assertIn("portable adaptive-delegation", normalized_role)
+            self.assertIn("If no valid lock is supplied, do not act.", normalized_role)
 
         owned_paths = {
             "AGENTS.md",

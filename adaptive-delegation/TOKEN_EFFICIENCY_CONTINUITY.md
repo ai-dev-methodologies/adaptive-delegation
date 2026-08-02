@@ -3,11 +3,17 @@
 This continuity guidance is part of the Codex-only `adaptive-delegation`
 skill and applies to Codex native subagents.
 
-The resolved runtime home is `$CODEX_HOME` when it is set, otherwise
-`$HOME/.codex`; in a shell, run
+Continuity is a bounded optimization, not an unconditional preflight. Use it
+only for a repeated stable workspace/objective pair when the Objective Lock
+permits the state read and prior accepted evidence is likely to replace
+material work. Skip it for fresh one-shot work with complete acceptance
+evidence and whenever it would exceed the read scope or verification ceiling.
+
+When the lookup is justified, the resolved runtime home is `$CODEX_HOME` when
+it is set, otherwise `$HOME/.codex`; in a shell, run
 `RUNTIME_HOME="${CODEX_HOME:-$HOME/.codex}"; export RUNTIME_HOME` before any
 command that expands `$RUNTIME_HOME`, and never read or fall back outside it.
-Before routing, run `python3 "$RUNTIME_HOME/skills/adaptive-delegation/scripts/read_continuity.py"
+Run `python3 "$RUNTIME_HOME/skills/adaptive-delegation/scripts/read_continuity.py"
 --workspace "$WORKSPACE" --objective-key "$OBJECTIVE_KEY"`. It reads only
 `$RUNTIME_HOME/state/adaptive-delegation/continuity.jsonl` and returns at most
 the latest 3 accepted exact workspace/objective_key matches. Never use raw
@@ -16,11 +22,12 @@ still-valid decisions/evidence paths and invalidate them only with newer direct
 evidence. Each new record includes a complete carry_forward snapshot, so older
 raw logs are unnecessary.
 
-At acceptance or handoff, exactly one designated recorder appends one record:
-the independent Checker when present, else sole verified executor. Never use
-multiple writers for one record. The ledger is append only; corrections append
-a new record with supersedes and never rewrite accepted history. No duplicate
-record_id or objective+fingerprint result is permitted.
+At acceptance or handoff, append only when the Objective Lock permits the state
+write and future reuse is expected. Exactly one designated recorder writes the
+record: the independent Checker when present, else the sole verified executor.
+Never use multiple writers for one record. The ledger is append only;
+corrections append a new record with supersedes and never rewrite accepted
+history. No duplicate record_id or objective+fingerprint result is permitted.
 
 Every UTF-8 JSON line <=4096 bytes has these required fields:
 schema_version, record_id, recorded_at, status, workspace, objective_key,

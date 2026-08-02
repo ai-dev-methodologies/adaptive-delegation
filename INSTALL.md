@@ -138,6 +138,11 @@ finalize or backfill pending v1/`0.2.0` chains. If one remains after updating,
 preserve it as historical evidence and re-execute the bounded work with a new
 task ID, attempt index 1, dispatch ID, packet, and v2/`0.3.0` chain.
 
+Package 2.0.0 also introduces Objective Lock v2 with required `non_goals`.
+Finalize pending Objective Lock v1 work before updating. Version 2 continues
+to read v1 audit evidence but will not continue, finalize, or mix a task across
+Objective Lock versions; re-execute unfinished work as a fresh v2 task.
+
 ```sh
 git pull --ff-only
 python3 scripts/version_status.py

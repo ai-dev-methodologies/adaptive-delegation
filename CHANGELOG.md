@@ -13,6 +13,20 @@ This project follows Semantic Versioning:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [2.0.0] - 2026-08-02
+
+- Made the portable Objective Lock the skill's primary invariant, independent
+  of user-global or project `AGENTS.md` files.
+- Added required machine-checked `non_goals` to canonical Objective Lock v2.
+- Bound Maker, Checker, retry, escalation, and main takeover paths to the same
+  lock while explicitly prohibiting post-acceptance review and validation
+  expansion.
+- Applied the same lock to main-side routing preflight and made continuity
+  lookup conditional so fresh bounded tasks do not inspect optional package
+  internals or state.
+- Kept Objective Lock v1 audit evidence readable while rejecting cross-version
+  task continuation and requiring a fresh v2 task for unfinished work.
+
 ## [1.0.0] - 2026-08-02
 
 - Established the Codex-only Adaptive Delegation package and portable installer.
