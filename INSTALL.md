@@ -143,6 +143,16 @@ Finalize pending Objective Lock v1 work before updating. Version 2 continues
 to read v1 audit evidence but will not continue, finalize, or mix a task across
 Objective Lock versions; re-execute unfinished work as a fresh v2 task.
 
+Package 3.0.0 changes the policy fingerprint and automatic route ladder from
+Terra escalation to fixed Sol `medium`/`high` leaf escalation. Finalize pending
+2.x attempts before updating. If an attempt remains pending, preserve it as
+historical evidence and restart the bounded work with a new task ID, attempt
+index 1, dispatch ID, and packet after installing 3.0.0. The audit schema and
+Objective Lock remain `0.3.0` and v2, but cross-policy continuation still fails
+closed. The installer removes obsolete Terra `xhigh`/`high` roles and retains
+only the dormant Terra `max` experiment bindings; it does not activate an A/B
+experiment.
+
 ```sh
 git pull --ff-only
 python3 scripts/version_status.py

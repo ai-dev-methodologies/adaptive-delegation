@@ -1,6 +1,6 @@
 interface:
   display_name: "Adaptive Delegation"
   short_description: "Codex-only Objective-Locked delegation"
-  default_prompt: "Use $adaptive-delegation to construct one portable Objective Lock, then route this bounded task through Native fixed-role Luna-first, effort-first, evidence-checked delegation."
+  default_prompt: "Use $adaptive-delegation to construct one portable Objective Lock, then route this bounded task through Native fixed-role Luna-first escalation into Sol leaf roles only when evidence requires it."
 policy:
   allow_implicit_invocation: true

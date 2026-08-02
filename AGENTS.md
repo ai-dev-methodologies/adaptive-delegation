@@ -12,15 +12,19 @@ subagents. Claude Code is unsupported.
 
 ## Policy invariants
 
-- Keep routing Luna-first and effort-first. Bounded work starts on the lowest
-  suitable Luna effort and escalates from observable evidence.
+- Keep routing Luna-first, effort-first within Luna, then through fixed Sol
+  `medium`/`high` leaf roles. Bounded work starts on the lowest suitable Luna
+  effort and escalates only from observable evidence.
 - The main-authority gate is fail-closed over declared current-session context:
   the main must be `gpt-5.6-sol` with reasoning effort `high`, `xhigh`, `max`,
   or `ultra` before delegation can launch. Do not describe this declaration as
   cryptographic runtime proof.
-- Native Luna uses the fixed, package-declared role bindings in
-  `adaptive-delegation/roles/*.toml`. Verify the bound model and effort; do
-  not silently substitute Terra when Luna admission is rejected.
+- Native leaves use fixed, package-declared role bindings in
+  `adaptive-delegation/roles/*.toml`. Verify the bound model and effort; do not
+  silently substitute another model when a Luna or Sol admission is rejected.
+- Terra is excluded from automatic ladders. Its retained `max` Maker/Checker
+  bindings remain dormant until a future versioned, explicitly evaluated A/B
+  contract activates them.
 - Leaf `ultra` is forbidden. `gpt-5.6-sol/ultra` is a main-authoritative
   takeover only.
 - Model or reasoning escalation changes capability, never authority or scope.

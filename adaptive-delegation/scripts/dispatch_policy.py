@@ -106,8 +106,8 @@ def validate_policy_routes(policy: Mapping[str, Any]) -> dict[str, dict[str, str
             binding = roles.get(fields["role"])
             if not isinstance(binding, Mapping):
                 raise _route_error("ROUTE_ROLE_UNBOUND", f"route {route_id!r} has no package role")
-            if fields["model"] == "gpt-5.6-sol" or fields["reasoning_effort"] == "ultra":
-                raise _route_error("LEAF_PREMIUM_FORBIDDEN", f"leaf route {route_id!r} cannot use Sol/Ultra")
+            if fields["reasoning_effort"] == "ultra":
+                raise _route_error("LEAF_ULTRA_FORBIDDEN", f"leaf route {route_id!r} cannot use ultra")
             if any(binding.get(key) != fields[key] for key in ("model", "model_tier", "reasoning_effort")):
                 raise _route_error("ROUTE_ROLE_MISMATCH", f"route {route_id!r} disagrees with package role")
         elif fields["authority"] == "main":
@@ -132,6 +132,16 @@ def validate_policy_routes(policy: Mapping[str, Any]) -> dict[str, dict[str, str
             raise _route_error("LADDER_MAIN_JUMP_INVALID", f"ladder {ladder_name!r} reaches main before its final step")
         if ladder_name in defaults and ladder[0] != defaults[ladder_name]:
             raise _route_error("LADDER_DEFAULT_MISMATCH", f"ladder {ladder_name!r} does not start at its task default")
+    experiments = policy.get("routing_experiments")
+    if not isinstance(experiments, Mapping) or not experiments:
+        raise _route_error("EXPERIMENT_POLICY_INVALID", "routing_experiments must declare dormant optional routes")
+    automatic_steps = {step for ladder in ladders.values() for step in ladder}
+    for name, experiment in experiments.items():
+        if not isinstance(name, str) or not isinstance(experiment, Mapping) or experiment.get("status") != "dormant" or experiment.get("automatic_selection") is not False:
+            raise _route_error("EXPERIMENT_POLICY_INVALID", f"experiment {name!r} must remain dormant and explicit")
+        maker, checker = experiment.get("maker_route_id"), experiment.get("checker_route_id")
+        if maker not in result or checker not in result or maker in automatic_steps or checker in automatic_steps:
+            raise _route_error("EXPERIMENT_ROUTE_INVALID", f"experiment {name!r} is missing or appears in an automatic ladder")
     contract = policy.get("transition_contract")
     if not isinstance(contract, Mapping) or contract.get("max_same_route_retries_per_stage") != 1 or contract.get("require_contiguous_attempt_indices") is not True or contract.get("require_previous_attempt_evidence") is not True or contract.get("require_current_policy_fingerprint") is not True:
         raise _route_error("TRANSITION_CONTRACT_INVALID", "transition contract must be fail-closed and bounded")
@@ -208,12 +218,12 @@ def route_transition(policy: Mapping[str, Any], task_class: str, oracle_strength
             raise _route_error("LADDER_EXHAUSTED", "no next route remains")
         candidate = ladder[index + 1]
         previous, following = route_for(policy, previous_route), route_for(policy, candidate)
+        if next_action == "raise_model" and following["authority"] == "main":
+            raise _route_error("TRANSITION_KIND_MISMATCH", "raise_model cannot select main authority")
         if next_action == "raise_effort" and previous["model"] != following["model"]:
             raise _route_error("TRANSITION_KIND_MISMATCH", "raise_effort must retain the model")
         if next_action == "raise_model" and previous["model"] == following["model"]:
             raise _route_error("TRANSITION_KIND_MISMATCH", "raise_model must change the model")
-        if next_action == "raise_model" and following["authority"] == "main":
-            raise _route_error("TRANSITION_KIND_MISMATCH", "raise_model cannot select main authority")
         return candidate
     raise _route_error("NEXT_ACTION_TERMINAL", "next action does not select another route")
 

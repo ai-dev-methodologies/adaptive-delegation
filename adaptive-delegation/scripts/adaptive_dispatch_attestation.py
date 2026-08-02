@@ -62,7 +62,7 @@ V2_COMMAND_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 RECEIPT_VERSION = 2
 RECEIPT_MARKER_TYPE = "adaptive_dispatch_receipt"
 TERMINAL_EVENT_VERSION = 2
-INTEGRATION_CHECKER_AGENT_TYPE = "adaptive-terra-checker-high"
+INTEGRATION_CHECKER_AGENT_TYPE = "adaptive-sol-checker-medium"
 CHILD_ENV_ALLOWLIST = (
     "PATH",
     "LANG",
@@ -2249,11 +2249,8 @@ def _finish_adaptive_audit(
     if not isinstance(weighted_tokens, int) or isinstance(weighted_tokens, bool):
         weighted_tokens = 0
     price = context.policy.get("price_evidence", {})
-    fraction = 1.0
-    if context.binding["model"] == "gpt-5.6-luna":
-        fraction = float(price.get("luna_previous_price_fraction", 1.0))
-    elif context.binding["model"] == "gpt-5.6-terra":
-        fraction = float(price.get("terra_previous_price_fraction", 1.0))
+    fractions = price.get("sol_equivalent_price_fraction", {})
+    fraction = float(fractions.get(context.binding["model"], 1.0))
     elapsed_ms = status.get("execution_elapsed_ms")
     if (
         isinstance(elapsed_ms, bool)

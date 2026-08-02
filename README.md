@@ -3,10 +3,12 @@
 **Codex-only skill:** this repository packages a skill for Codex native subagents.
 Claude Code and other agent runtimes are not supported execution targets.
 
-`adaptive-delegation` routes bounded Codex work through a Luna-first,
-effort-first policy. It records observable outcomes, permits only declared
-role/model/effort transitions, and returns unresolved work to the main Codex
-session when the leaf ladder is exhausted or the acceptance oracle is weak.
+`adaptive-delegation` routes bounded Codex work through a Luna-first policy,
+raises Luna effort before model tier, and then uses fixed Sol leaf roles only
+when observable evidence requires more capability. It records observable
+outcomes, permits only declared role/model/effort transitions, and returns
+unresolved work to the main Codex session when the leaf ladder is exhausted or
+the acceptance oracle is weak.
 
 Its primary invariant is: delegate bounded independent work aggressively, but
 only inside one portable Objective Lock. No valid lock means no child launch;
@@ -62,6 +64,10 @@ consistency checks; they are not an operating-system security boundary.
   chain. Version 2 keeps v1 audit evidence readable but starts new work with a
   fresh task ID and Objective Lock v2; it never continues a task across lock
   versions.
+- Before updating from package `2.x`, finalize pending attempts because package
+  3 changes the routing-policy fingerprint. Historical Terra records remain
+  readable, but unfinished work restarts at attempt index 1 under the new
+  Luna-to-Sol ladder.
 
 The main-profile eligibility gate uses declared current-session context; main
 authority comes from the user/control topology, not from model capability.
@@ -96,7 +102,7 @@ skill does not change the running main model or its effort, and requesting
 | `$adaptive-delegation ...` | Deterministic explicit activation. | The main-authority gate runs, an Objective Lock is created, and bounded work follows the Luna-first route. |
 | `$adaptive-delegation ... Use ultra reasoning.` | Deterministic explicit activation. | `ultra` applies to the main only if the current runtime is already configured as `gpt-5.6-sol/ultra`. Prompt text cannot upgrade the session. Leaf `ultra` remains forbidden. |
 | A bounded task request containing either localized token-efficiency literal declared in the skill frontmatter | Eligible for implicit activation because the localized literal is in the skill description and implicit invocation is enabled. Explicit `$adaptive-delegation` remains the deterministic choice. | If activated, it runs the same Objective Lock and Luna-first workflow as explicit invocation. |
-| The same localized token-efficiency request plus `Use ultra reasoning.` | Eligible for implicit activation because of the localized token-efficiency literal, not because of `ultra`. | An already-`ultra` main remains the authority; bounded children still use fixed Luna/Terra roles and never inherit main `ultra`. |
+| The same localized token-efficiency request plus `Use ultra reasoning.` | Eligible for implicit activation because of the localized token-efficiency literal, not because of `ultra`. | An already-`ultra` main remains the authority; bounded children still use fixed Luna/Sol leaf roles and never inherit main `ultra`. |
 | `Use ultra reasoning.` | Does not activate this skill by itself. | Normal session-level model and effort rules apply. |
 
 A localized trigger must occur in an actionable delegation, implementation, or
@@ -111,12 +117,27 @@ After activation, the workflow is identical for explicit and implicit entry:
 3. Route simple work to Luna `medium`, clear implementation to Luna `high`, and
    bounded complex work to Luna `xhigh`.
 4. Escalate only from observable failure evidence, preserving the exact lock.
-   Leaf effort may rise and the route may later move to Terra, but leaf
-   `ultra` is never allowed.
+   Luna effort may rise through `max`; the route may then move to fixed Sol
+   `medium` and `high` leaf roles, but leaf `ultra` is never allowed.
 5. Keep weak-oracle, ambiguous, high-risk, or long-contract work with the main
    at `gpt-5.6-sol/ultra`, or return exhausted leaf work to that main takeover.
 6. Stop as soon as the locked acceptance evidence passes. Do not add another
    review or broader verification merely because the main has `ultra` effort.
+
+The fixed automatic paths are:
+
+| Work shape | Fixed path |
+| --- | --- |
+| Simple lookup or extraction | `Luna medium -> high -> xhigh -> max -> Sol medium -> main Sol ultra` |
+| Clear implementation or transformation | `Luna high -> xhigh -> max -> Sol medium -> Sol high -> main Sol ultra` |
+| Bounded complex implementation or verification | `Luna xhigh -> max -> Sol medium -> Sol high -> main Sol ultra` |
+| Weak oracle, ambiguous/high-risk, or long contract | `main Sol ultra` |
+
+Terra is not part of any automatic path. Terra `max` remains a dormant binding
+for a future versioned A/B experiment and cannot be selected by the current
+default, failure-action, or human-override contract. Historical Terra logs
+remain readable; later routing changes should be based on representative
+accepted-task quality, latency, weighted tokens, and total cost.
 
 ## Install from GitHub
 

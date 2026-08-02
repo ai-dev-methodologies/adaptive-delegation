@@ -201,8 +201,8 @@ class DispatchPolicyTests(unittest.TestCase):
                         ),
                     )
                     if route["authority"] == "leaf":
-                        self.assertNotEqual(route["model"], "gpt-5.6-sol")
                         self.assertNotEqual(route["reasoning_effort"], "ultra")
+                        self.assertNotEqual(route["model"], "gpt-5.6-terra")
             for previous, following in zip(ladder, ladder[1:]):
                 previous_route = routes[previous]
                 following_route = routes[following]
@@ -267,7 +267,7 @@ class DispatchPolicyTests(unittest.TestCase):
                 policy,
                 task_class="bounded_complex_implementation_or_verification",
                 oracle_strength="weak",
-                previous_route="terra_max",
+                previous_route="sol_high",
                 next_action="raise_model",
             )
         self.assertEqual(caught.exception.code, "TRANSITION_KIND_MISMATCH")
@@ -282,6 +282,30 @@ class DispatchPolicyTests(unittest.TestCase):
                 model="gpt-5.6-terra",
                 reasoning_effort="max",
             )
+        self.assertNotIn(
+            "terra_max",
+            {
+                step
+                for ladder in policy["escalation_ladders"].values()
+                for step in ladder
+            },
+        )
+        self.assertFalse(
+            policy["routing_experiments"]["terra_max_coding_ab"][
+                "automatic_selection"
+            ]
+        )
+        self.assertEqual(
+            contract.route_for(policy, "sol_medium")["role"],
+            "adaptive-sol-maker-medium",
+        )
+        invalid_experiment = copy.deepcopy(policy)
+        invalid_experiment["routing_experiments"]["terra_max_coding_ab"][
+            "automatic_selection"
+        ] = True
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.validate_policy_routes(invalid_experiment)
+        self.assertEqual(caught.exception.code, "EXPERIMENT_POLICY_INVALID")
         with self.assertRaises(contract.PolicyContractError):
             contract.validate_route_selection(
                 policy,

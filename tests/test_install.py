@@ -52,6 +52,24 @@ class InstallerTests(unittest.TestCase):
             self.assertFalse(
                 native["model_override_enum_absence_is_native_rejection"]
             )
+            self.assertEqual(
+                policy["escalation_ladders"][
+                    "clear_implementation_or_transformation"
+                ],
+                [
+                    "luna_high",
+                    "luna_xhigh",
+                    "luna_max",
+                    "sol_medium",
+                    "sol_high",
+                    "main_takeover_sol_ultra",
+                ],
+            )
+            self.assertFalse(
+                policy["routing_experiments"]["terra_max_coding_ab"][
+                    "automatic_selection"
+                ]
+            )
             self.assertTrue((installed / "SKILL.md").is_file())
             source_version = (
                 ROOT / "adaptive-delegation" / "VERSION"
@@ -93,7 +111,19 @@ class InstallerTests(unittest.TestCase):
                             "adaptive-obsolete-maker": {
                                 "model": "obsolete",
                                 "reasoning_effort": "low",
-                            }
+                            },
+                            "adaptive-terra-maker-xhigh": {
+                                "model": "gpt-5.6-terra",
+                                "reasoning_effort": "xhigh",
+                            },
+                            "adaptive-terra-checker-high": {
+                                "model": "gpt-5.6-terra",
+                                "reasoning_effort": "high",
+                            },
+                            "adaptive-terra-checker-xhigh": {
+                                "model": "gpt-5.6-terra",
+                                "reasoning_effort": "xhigh",
+                            },
                         }
                     }
                 ),
@@ -102,12 +132,22 @@ class InstallerTests(unittest.TestCase):
             obsolete = agents / "adaptive-obsolete-maker.toml"
             unrelated = agents / "custom-role.toml"
             obsolete.write_text("obsolete\n", encoding="utf-8")
+            removed_terra = [
+                agents / "adaptive-terra-maker-xhigh.toml",
+                agents / "adaptive-terra-checker-high.toml",
+                agents / "adaptive-terra-checker-xhigh.toml",
+            ]
+            for role in removed_terra:
+                role.write_text("obsolete Terra route\n", encoding="utf-8")
             unrelated.write_text("preserve\n", encoding="utf-8")
 
             result = self.run_installer(codex_home)
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(obsolete.exists())
+            self.assertTrue(all(not role.exists() for role in removed_terra))
+            self.assertTrue((agents / "adaptive-terra-maker-max.toml").is_file())
+            self.assertTrue((agents / "adaptive-terra-checker-max.toml").is_file())
             self.assertEqual(unrelated.read_text(encoding="utf-8"), "preserve\n")
 
     def test_existing_codex_home_permissions_are_preserved(self) -> None:
@@ -144,16 +184,16 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("ceil(input_tokens / 4) + output_tokens", skill)
         self.assertIn("routing proxy, not a provider", skill)
         self.assertIn("Model-relative price factors are never aggregated", reference)
-        self.assertIn("not absolute prices", reference)
+        self.assertIn("API token prices", reference)
         self.assertIn("token-effective", skill)
         self.assertIn("\ud1a0\ud070\ud6a8\uc728\ud654", skill)
         self.assertIn("\ud1a0\ud070 \ud6a8\uc728\ud654", skill)
         self.assertIn(
-            "absence of Luna from the optional `model` override enum does not reject",
+            "absence of a selected model from the optional `model` override enum does not reject",
             normalized_skill,
         )
         self.assertIn("prefer Native V2 through a verified fixed `agent_type`", normalized_skill)
-        self.assertIn("Select the installed Luna role", normalized_skill)
+        self.assertIn("Select the installed package role", normalized_skill)
         self.assertIn("Use typed direct only when", reference)
 
     def test_public_docs_are_codex_only_and_links_resolve(self) -> None:

@@ -100,7 +100,8 @@ The policy source of truth is the package config at
 The repository and package sources are canonical; an installed copy is a
 deployment target and does not become a second policy source.
 
-The default strategy is Luna-first and effort-first:
+The default strategy is Luna-first, effort-first within Luna, then bounded Sol
+leaf escalation before main takeover:
 
 | Work shape | Default route |
 | --- | --- |
@@ -109,14 +110,15 @@ The default strategy is Luna-first and effort-first:
 | Bounded complex implementation or verification | `gpt-5.6-luna/xhigh` |
 | Weak oracle, ambiguous/high-risk, or long contract | Main-authoritative `gpt-5.6-sol/ultra` |
 
-Leaf `ultra` is forbidden. The main retains authority and may take over at
-`gpt-5.6-sol/ultra`. There is one same-model reasoning retry per stage, with
-reevaluation after every attempt. The effort-first ladders are:
+Leaf `ultra` is forbidden. Sol `medium` and `high` are fixed leaf roles; they do
+not inherit the main's authority or `ultra` effort. The main retains authority
+and may take over at `gpt-5.6-sol/ultra`. There is one same-model reasoning
+retry per stage, with reevaluation after every attempt. The fixed ladders are:
 
-- Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> main-takeover sol/ultra`.
-- Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> terra/xhigh -> terra/max -> main-takeover sol/ultra`.
-- Bounded complex implementation or verification: `luna/xhigh -> luna/max -> terra/xhigh -> terra/max -> main-takeover sol/ultra`.
-- Bounded complex work with a strong oracle may omit `terra/xhigh` but may not skip any other configured step.
+- Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> sol/medium -> main-takeover sol/ultra`.
+- Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> sol/medium -> sol/high -> main-takeover sol/ultra`.
+- Bounded complex implementation or verification: `luna/xhigh -> luna/max -> sol/medium -> sol/high -> main-takeover sol/ultra`.
+- Bounded complex work with a strong oracle uses the same bounded-complex ladder and may not skip a configured step.
 - Weak-oracle, ambiguous/high-risk, or long-contract work stays main-authoritative at `sol/ultra`.
 
 For a `weak_oracle` failure discovered on a leaf, `main_takeover` moves directly
@@ -128,10 +130,16 @@ exact model and effort. `sol/ultra` is a main-authority route, never a child
 role. The runtime validator rejects unknown routes, skipped steps, mismatched
 counters, exhausted same-route retries, and model/effort substitutions.
 
-The config records Luna as a user-provided 80% reduction versus its prior
-price and Terra as a user-provided 20% reduction versus its prior price. These
-are relative, user-provided changes, not absolute prices or official API-price
-claims; routing is provisional and evidence-seeking.
+The config records the official 2026-08-02 API token prices and normalized
+Sol-equivalent factors: Luna `0.2`, Terra `0.5`, and Sol `1.0`. Effort changes
+token consumption, so per-token price alone never selects a route. Routing is
+provisional and evidence-seeking; accepted-task quality, latency, weighted
+tokens, and total cost determine later revisions.
+
+Terra is absent from every automatic ladder. `terra/max` remains installed as
+a dormant future A/B experiment binding only. The current dispatcher cannot
+select it by default, failure action, or human override; activating it requires
+a future versioned experiment contract with representative acceptance oracles.
 
 ## Observable failure and review evidence
 
@@ -155,7 +163,7 @@ The resolved runtime home is `$CODEX_HOME` when it is set, otherwise
 fall back outside it. Central
 append-only attempt records live at `$RUNTIME_HOME/state/model-routing/attempts.jsonl`;
 review records live at `$RUNTIME_HOME/state/model-routing/reviews/`. Every attempt record has a
-`pre_decision` or `post_result` type. Linked v0.2 records capture the declared
+`pre_decision` or `post_result` type. Linked v0.3 records capture the declared
 main authority, policy and surface fingerprints, pre-selection rationale,
 observed result, exact effort/model escalation counts, execution completion,
 oracle verdict, and integration acceptance. A successful child process is not
@@ -196,17 +204,18 @@ triggers external rerouting.
 ## Codex native routing and local admission evidence
 
 After delegation is chosen, prefer Native V2 through a verified fixed
-`agent_type`. Select the installed Luna role whose TOML fixes the exact model
-and effort, pass the matching `reasoning_effort` and `fork_turns="none"`, and
-verify the role binding before creation. In this mode the chosen `agent_type`
-is the explicit model selection; omitting the optional `model` override is not
-leader-model inheritance.
+`agent_type`. Select the installed package role whose TOML fixes the exact Luna
+or Sol leaf model and effort, pass the matching `reasoning_effort` and
+`fork_turns="none"`, and verify the role binding before creation. In this mode
+the chosen `agent_type` is the explicit model selection; omitting the optional
+`model` override is not leader-model inheritance.
 
 Inspect the live `collaboration.spawn_agent` schema and agent-type catalog
-before every route; do not reuse an old capability claim. The absence of Luna
-from the optional `model` override enum does not reject Native Luna when an
-allowlisted fixed Luna `agent_type` exists. A surface that uses explicit model
-overrides instead must support `agent_type`, `model`, `reasoning_effort`, and
+before every route; do not reuse an old capability claim. The absence of a
+selected model from the optional `model` override enum does not reject a Native
+route when its allowlisted fixed `agent_type` exists. A surface that uses
+explicit model overrides instead must support `agent_type`, `model`,
+`reasoning_effort`, and
 `fork_turns="none"`. Both modes require the installed role TOML/launch binding,
 exact resolved role/model/effort allowlist, `desired=explicit=native_v2`, and
 locally validated runtime metadata. Before creation, require the bounded local
@@ -216,9 +225,10 @@ this is consistency evidence, not a clock-backed security proof.
 Use the exact typed direct path (`--direct-typed`) only when the fixed role or
 Native surface is unavailable, the Native call is rejected, validated runtime
 model/effort mismatches the binding, or a hard parent-enforced cap is required.
-Terra substitution is forbidden for a rejected Luna admission. A pre-creation
-rejection means no child and child token 0. Network defaults to off unless the
-packet explicitly permits it.
+Model substitution is forbidden for a rejected admission. In particular,
+Terra may not replace Luna or Sol merely because the chosen fixed role is
+unavailable. A pre-creation rejection means no child and child token 0. Network
+defaults to off unless the packet explicitly permits it.
 
 A corrected or fallback launch envelope must canonically match the dispatched
 packet in full, including objective, scope, network, resource, budget, and
@@ -266,7 +276,7 @@ path that reads an integration receipt. The receipt must match the exact packet
 digest, canonical Objective Lock version/digest, route/model/effort, child and
 rollout, terminal nonce/result/digest, captured output digest, declared
 worktree digest, verification checks, evidence artifact, and the
-package-declared `adaptive-terra-checker-high` session. The Checker session
+package-declared `adaptive-sol-checker-medium` session. The Checker session
 must differ from both the child and the declared main session. Pre-created,
 stale, mutable, or mismatched evidence fails closed.
 

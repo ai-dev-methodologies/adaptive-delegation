@@ -1051,10 +1051,10 @@ def _check_current_transition(previous: tuple[dict[str, Any], dict[str, Any]], c
             raise AuditError("route transition skipped or repeated a ladder step")
         if action == "raise_effort" and current["model"] != prior_pre["model"]:
             raise AuditError("raise_effort must retain the model")
-        if action == "raise_model" and current["model"] == prior_pre["model"]:
-            raise AuditError("raise_model must change the model")
         if action == "raise_model" and current["role"] == "main-authority":
             raise AuditError("raise_model cannot select the main-authority route")
+        if action == "raise_model" and current["model"] == prior_pre["model"]:
+            raise AuditError("raise_model must change the model")
         if action == "main_takeover" and current["role"] != "main-authority":
             raise AuditError("main_takeover must select the main-authority route")
     else:

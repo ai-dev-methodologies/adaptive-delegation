@@ -56,6 +56,11 @@ an installed fixed Codex role, leaf `ultra` is forbidden, and unresolved or
 weak-oracle work returns to the main `gpt-5.6-sol/ultra` authority. The main gate
 uses declared session context and cannot mutate the parent model.
 
+Automatic escalation is Luna `medium/high/xhigh/max` as applicable, then Sol
+`medium` and, for implementation or complex work, Sol `high`, followed by main
+Sol `ultra` takeover. Terra is not automatic; its retained `max` bindings are
+dormant for a future versioned A/B experiment.
+
 ## Report a target-PC result
 
 Keep raw ledgers on the target computer. From the repository clone, generate an

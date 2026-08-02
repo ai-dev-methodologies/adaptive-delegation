@@ -593,8 +593,8 @@ class DispatcherGateTests(unittest.TestCase):
 
         for field, value in (
             ("dispatch_id", "objective-lock-digest-retry"),
-            ("agent_type", "adaptive-terra-maker-xhigh"),
-            ("model_tier", "standard-tier"),
+            ("agent_type", "adaptive-sol-maker-medium"),
+            ("model_tier", "frontier-tier"),
             ("reasoning_effort", "high"),
             ("token_budget", packet["token_budget"] + 1),
             ("resource_cap", {**packet["resource_cap"], "max_tool_calls": 5}),
@@ -841,9 +841,9 @@ class DispatcherGateTests(unittest.TestCase):
             "child role": lambda value: value.__setitem__(
                 "child_role",
                 {
-                    "agent_type": "adaptive-terra-checker-high",
-                    "model": "gpt-5.6-terra",
-                    "reasoning_effort": "high",
+                    "agent_type": "adaptive-sol-checker-medium",
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "medium",
                 },
             ),
             "output": lambda value: value.__setitem__("output_digest", "0" * 64),
@@ -852,8 +852,8 @@ class DispatcherGateTests(unittest.TestCase):
                 "role",
                 {
                     "agent_type": "unapproved-checker",
-                    "model": "gpt-5.6-terra",
-                    "reasoning_effort": "high",
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "medium",
                 },
             ),
             "checker session": lambda value: value["issuer"].__setitem__(
@@ -1209,7 +1209,8 @@ class DispatcherGateTests(unittest.TestCase):
 
         self.assertEqual(action("luna_high"), "raise_effort")
         self.assertEqual(action("luna_max"), "raise_model")
-        self.assertEqual(action("terra_max"), "main_takeover")
+        self.assertEqual(action("sol_medium"), "raise_effort")
+        self.assertEqual(action("sol_high"), "main_takeover")
 
     def test_external_legacy_file_cannot_authorize_undeclared_role(self) -> None:
         module = self.load_dispatcher_module()
@@ -1278,63 +1279,70 @@ class DispatcherGateTests(unittest.TestCase):
         packet["model_tier"] = "standard-tier"
         self.assertIsNone(module._role_binding(packet))
 
-    def test_fixed_luna_agent_type_is_native_without_model_override(self) -> None:
+    def test_fixed_luna_and_sol_agent_types_are_native_without_model_override(self) -> None:
         module = self.load_dispatcher_module()
-
-        binding = module.RoleBinding(
-            agent_type="adaptive-luna-maker-xhigh",
-            model_tier="spark-tier",
-            model="gpt-5.6-luna",
-            effort="xhigh",
-            instructions="",
-            role_config=self.role,
+        cases = (
+            ("adaptive-luna-maker-xhigh", "spark-tier", "gpt-5.6-luna", "xhigh"),
+            ("adaptive-sol-maker-medium", "frontier-tier", "gpt-5.6-sol", "medium"),
         )
-        triple = {
-            "agent_type": binding.agent_type,
-            "model": binding.model,
-            "reasoning_effort": binding.effort,
-        }
-        receipt_value = {
-            "objective_lock_version": module.OBJECTIVE_LOCK_VERSION,
-            "objective_lock_digest": "c" * 64,
-            "surface_identity": "codex-app.collaboration.spawn_agent",
-            "original_callable_schema": {
-                "agent_type": "installed-role-enum",
-                "reasoning_effort": "string",
-                "fork_turns": "none",
-            },
-            "selection_mode": "verified-fixed-agent-type",
-            "desired_route": "native_v2",
-            "explicit_route": "native_v2",
-            "installed_binding": {**triple, "fork_turns": "none"},
-            "explicit_arguments": {
-                "agent_type": binding.agent_type,
-                "reasoning_effort": binding.effort,
-                "fork_turns": "none",
-            },
-            "allowlist": [triple],
-            "gate_events": [
-                {"name": "pending_receipt", "monotonic_ns": 1},
-                {"name": "native_spawn_gate", "monotonic_ns": 2},
-                {"name": "child_creation_eligibility", "monotonic_ns": 3},
-            ],
-        }
-        receipt_path = self.root / "native-fixed-role-receipt.json"
-        receipt_path.write_text(json.dumps(receipt_value), encoding="utf-8")
-        receipt_path.chmod(0o600)
+        for agent_type, model_tier, model, effort in cases:
+            with self.subTest(agent_type=agent_type):
+                binding = module.RoleBinding(
+                    agent_type=agent_type,
+                    model_tier=model_tier,
+                    model=model,
+                    effort=effort,
+                    instructions="",
+                    role_config=self.codex_home / "agents" / f"{agent_type}.toml",
+                )
+                triple = {
+                    "agent_type": binding.agent_type,
+                    "model": binding.model,
+                    "reasoning_effort": binding.effort,
+                }
+                receipt_value = {
+                    "objective_lock_version": module.OBJECTIVE_LOCK_VERSION,
+                    "objective_lock_digest": "c" * 64,
+                    "surface_identity": "codex-app.collaboration.spawn_agent",
+                    "original_callable_schema": {
+                        "agent_type": "installed-role-enum",
+                        "reasoning_effort": "string",
+                        "fork_turns": "none",
+                    },
+                    "selection_mode": "verified-fixed-agent-type",
+                    "desired_route": "native_v2",
+                    "explicit_route": "native_v2",
+                    "installed_binding": {**triple, "fork_turns": "none"},
+                    "explicit_arguments": {
+                        "agent_type": binding.agent_type,
+                        "reasoning_effort": binding.effort,
+                        "fork_turns": "none",
+                    },
+                    "allowlist": [triple],
+                    "gate_events": [
+                        {"name": "pending_receipt", "monotonic_ns": 1},
+                        {"name": "native_spawn_gate", "monotonic_ns": 2},
+                        {"name": "child_creation_eligibility", "monotonic_ns": 3},
+                    ],
+                }
+                receipt_path = self.root / f"native-{agent_type}-receipt.json"
+                receipt_path.write_text(json.dumps(receipt_value), encoding="utf-8")
+                receipt_path.chmod(0o600)
 
-        admission = module._native_structural_admission(
-            module.ReceiptEnvelope(receipt_value, receipt_path),
-            binding,
-            dispatch_id="portable-native-luna",
-            objective_lock_version=module.OBJECTIVE_LOCK_VERSION,
-            objective_lock_digest="c" * 64,
-        )
+                admission = module._native_structural_admission(
+                    module.ReceiptEnvelope(receipt_value, receipt_path),
+                    binding,
+                    dispatch_id=f"portable-native-{agent_type}",
+                    objective_lock_version=module.OBJECTIVE_LOCK_VERSION,
+                    objective_lock_digest="c" * 64,
+                )
 
-        self.assertEqual(admission["status"], "structurally_eligible")
-        self.assertEqual(admission["selection_mode"], "verified-fixed-agent-type")
-        self.assertIsNone(admission["rejection_reason"])
-        self.assertNotIn("model", receipt_value["original_callable_schema"])
+                self.assertEqual(admission["status"], "structurally_eligible")
+                self.assertEqual(
+                    admission["selection_mode"], "verified-fixed-agent-type"
+                )
+                self.assertIsNone(admission["rejection_reason"])
+                self.assertNotIn("model", receipt_value["original_callable_schema"])
 
     def test_schema_cutover_rejects_legacy_pending_chain_and_fresh_chain_finalizes(self) -> None:
         module = self.load_dispatcher_module()
@@ -1508,30 +1516,31 @@ class DispatcherGateTests(unittest.TestCase):
     def test_recovery_launch_is_bound_to_dispatched_packet_and_route(self) -> None:
         module = self.load_dispatcher_module()
         primary = self.packet("bound-recovery", "gpt-5.6-sol", "high")
-        terra = json.loads(json.dumps(primary))
-        terra_role = self.codex_home / "agents" / "adaptive-terra-maker-xhigh.toml"
-        terra.update(
-            agent_type="adaptive-terra-maker-xhigh",
-            model_tier="standard-tier",
-            evidence_path=str(terra_role),
+        fallback = json.loads(json.dumps(primary))
+        fallback_role = self.codex_home / "agents" / "adaptive-sol-maker-medium.toml"
+        fallback.update(
+            agent_type="adaptive-sol-maker-medium",
+            model_tier="frontier-tier",
+            reasoning_effort="medium",
+            evidence_path=str(fallback_role),
         )
-        terra["routing_audit"].update(
+        fallback["routing_audit"].update(
             selection_basis="human_override",
             override_reason="Bounded fallback substitution regression setup.",
-            route_id="terra_xhigh",
-            role="adaptive-terra-maker-xhigh",
-            route_model="gpt-5.6-terra",
-            route_model_tier="standard-tier",
-            route_reasoning_effort="xhigh",
+            route_id="sol_medium",
+            role="adaptive-sol-maker-medium",
+            route_model="gpt-5.6-sol",
+            route_model_tier="frontier-tier",
+            route_reasoning_effort="medium",
         )
-        binding = module._role_binding(terra)
+        binding = module._role_binding(fallback)
         self.assertIsNotNone(binding)
         with mock.patch.dict(os.environ, self.environment, clear=False):
-            tail = module._typed_exec_tail(binding, terra)
+            tail = module._typed_exec_tail(binding, fallback)
             self.assertIsNotNone(tail)
             payload = {
                 "launch_type": "typed_external_worker",
-                "packet": terra,
+                "packet": fallback,
                 "agent_type": binding.agent_type,
                 "role_config": str(binding.role_config),
                 "runtime_home": str(self.leaf_home),
@@ -1544,10 +1553,10 @@ class DispatcherGateTests(unittest.TestCase):
             )
             self.assertIsNotNone(
                 module._typed_launch_binding(
-                    payload, "typed_external_worker", terra
+                    payload, "typed_external_worker", fallback
                 )
             )
-            altered = json.loads(json.dumps(terra))
+            altered = json.loads(json.dumps(fallback))
             altered["objective"] = "Broaden the fallback objective unexpectedly."
             altered_tail = module._typed_exec_tail(binding, altered)
             self.assertIsNotNone(altered_tail)
@@ -1558,7 +1567,7 @@ class DispatcherGateTests(unittest.TestCase):
             }
             self.assertIsNone(
                 module._typed_launch_binding(
-                    altered_payload, "typed_external_worker", terra
+                    altered_payload, "typed_external_worker", fallback
                 )
             )
 

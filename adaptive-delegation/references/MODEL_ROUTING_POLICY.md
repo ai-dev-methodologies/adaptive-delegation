@@ -49,12 +49,23 @@ policy JSON are relative to that resolved runtime home; they are not shell
 templates.
 
 The qualitative starting point is the package's installed Codex role catalog:
-Luna handles clear bounded work, Terra is a higher leaf tier for demonstrated
-capability pressure, and Sol remains the authoritative main. Effort is raised
-before model tier when observable evidence supports that transition. These are
-package policy choices, not universal quality equivalence or pricing claims.
+Luna handles clear bounded work, Sol `medium` and `high` are bounded leaf
+escalations, and Sol `ultra` remains the authoritative main takeover. Effort is
+raised before model tier when observable evidence supports that transition.
+These are package policy choices, not universal quality equivalence claims.
 The exact thresholds and ladders remain provisional hypotheses evaluated
 through local audit outcomes and acceptance oracles.
+
+As of 2026-08-02, [OpenAI's model guidance](https://developers.openai.com/api/docs/guides/latest-model)
+positions Sol for frontier capability, Terra for a balance of intelligence and
+cost, and Luna for efficient high-volume work. It recommends representative
+evaluation rather than a universal escalation ladder. A current
+[independent coding comparison](https://artificialanalysis.ai/agents/coding-agents/comparisons/codex-vs-cursor-cli)
+places Luna `max` ahead of Terra `xhigh` on its measured quality/cost frontier
+and makes Sol `medium` the next material capability step. That result is useful
+evidence, not a guarantee for every workload. The package therefore removes
+Terra from automatic escalation and will revisit the decision from sanitized
+real-use logs and representative acceptance results.
 
 The policy is provisional and evidence-seeking. Reevaluate after every
 attempt. Use one same-model reasoning-effort retry per stage at most, then
@@ -64,7 +75,8 @@ used to update the evidence base.
 
 ## Defaults and ladders
 
-The default strategy is Luna-first and effort-first:
+The default strategy is Luna-first, effort-first within Luna, then bounded Sol
+leaf escalation:
 
 | Work shape | Default route |
 | --- | --- |
@@ -89,16 +101,17 @@ main-authority step. `raise_model` can never select that main-authority step.
 
 The configured ladders are:
 
-- Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> main-takeover sol/ultra`.
-- Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> terra/xhigh -> terra/max -> main-takeover sol/ultra`.
-- Bounded complex implementation or verification: `luna/xhigh -> luna/max -> terra/xhigh -> terra/max -> main-takeover sol/ultra`.
-- Bounded complex work with a strong oracle: `luna/xhigh -> luna/max -> terra/max -> main-takeover sol/ultra`.
+- Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> sol/medium -> main-takeover sol/ultra`.
+- Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> sol/medium -> sol/high -> main-takeover sol/ultra`.
+- Bounded complex implementation or verification: `luna/xhigh -> luna/max -> sol/medium -> sol/high -> main-takeover sol/ultra`.
+- Bounded complex work with a strong oracle: `luna/xhigh -> luna/max -> sol/medium -> sol/high -> main-takeover sol/ultra`.
 - Weak-oracle, ambiguous/high-risk, or long-contract work: main-authoritative `sol/ultra` only.
 
 The main may take over when the weak-oracle condition means a leaf cannot
 truthfully establish acceptance, or when the ladder reaches its takeover
 step. Main takeover is authoritative `gpt-5.6-sol/ultra`; a leaf may never use
-`ultra`, and no leaf Sol route exists.
+`ultra`. Fixed Sol `medium` and `high` leaf roles change capability only and do
+not inherit main authority.
 
 The runtime validates the exact role/model/effort for every route. It rejects
 unknown first routes, skipped ladder steps, repeated exhausted routes,
@@ -106,25 +119,35 @@ counter/history mismatches, and silent substitutions. Checker routes are also
 package-declared exact Codex roles; they do not participate in the Maker
 escalation ladder.
 
-The package records Luna as a **user-provided 80% reduction versus its prior
-price** and Terra as a **user-provided 20% reduction versus its prior price**.
-These are relative changes supplied by the user, not absolute prices and not
-official API-price claims. A price-change observation is an audit trigger; it
-does not turn those labels into price facts.
+The package records [OpenAI's published GPT-5.6 API token prices](https://openai.com/index/gpt-5-6/)
+as of 2026-08-02: Sol `$5/$30`, Terra `$2.50/$15`, and Luna `$1/$6` per
+million input/output tokens. Because both input and output ratios are stable,
+the routing cost proxy normalizes them to Sol-equivalent factors of `1.0`,
+`0.5`, and `0.2`. Model-relative price factors are never aggregated across
+models as if they were provider invoices. Effort can change token use and
+latency, so compare total cost per accepted task, not price per token alone.
+
+Terra `max` remains a dormant compatibility binding for a possible future
+versioned A/B experiment. It appears in no automatic ladder and cannot be
+selected by the current default, failure-action, or human-override contract.
+Historical Terra audit records remain readable. Any future activation must
+define a representative oracle and compare accepted-task quality, latency,
+weighted tokens, and Sol-equivalent cost before changing the fixed ladders.
 
 ## Native role selection
 
-Prefer Native Luna by choosing an installed fixed Luna `agent_type`, verifying
-its TOML model/effort binding, passing the same effort and `fork_turns="none"`,
-and validating local runtime model/effort metadata. The role selection is an
-explicit model choice. Luna need not appear in the optional `model` override
-enum, so its absence there is not evidence that Native Luna is unsupported.
+Prefer Native routing by choosing the installed fixed `agent_type` for the
+selected Luna or Sol leaf route, verifying its TOML model/effort binding,
+passing the same effort and `fork_turns="none"`, and validating local runtime
+model/effort metadata. The role selection is an explicit model choice. The
+selected model need not appear in the optional `model` override enum, so its
+absence there is not evidence that the fixed Native route is unsupported.
 
 Use an explicit `model` override only on a surface that supports it and accepts
 the exact requested value. Use typed direct only when the fixed role or Native
 surface is unavailable/rejected, validated runtime metadata mismatches, or the
-task requires a hard parent-enforced cap. Never substitute Terra merely because
-the optional override enum omits Luna.
+task requires a hard parent-enforced cap. Never substitute another model merely
+because the optional override enum omits the selected fixed role's model.
 
 Corrected and fallback launch envelopes must match the dispatched packet's
 canonical digest, not only its dispatch identifier and routing triple. This

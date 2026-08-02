@@ -13,6 +13,21 @@ This project follows Semantic Versioning:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [3.0.0] - 2026-08-02
+
+- Replaced mandatory Terra escalation with fixed Sol `medium` and `high` leaf
+  routes while preserving main-authoritative Sol `ultra` takeover.
+- Changed the fixed ladders to Luna effort escalation followed by Sol leaf
+  escalation; weak-oracle, ambiguous/high-risk, and long-contract work still
+  routes directly to the main.
+- Replaced the integration Checker with `adaptive-sol-checker-medium` and added
+  exact Sol Maker/Checker role bindings.
+- Retained Terra `max` Maker/Checker bindings only as a dormant future A/B
+  experiment and removed every Terra route from automatic selection.
+- Replaced relative price-change labels with dated official GPT-5.6 API token
+  prices and Sol-equivalent cost factors; routing remains evidence-seeking and
+  must be reevaluated from representative accepted-task logs.
+
 ## [2.0.0] - 2026-08-02
 
 - Made the portable Objective Lock the skill's primary invariant, independent

@@ -23,9 +23,10 @@ evidence and any scope expansion, and have the Checker (or the sole verified
 executor when no Checker is used) record the compact handoff. Update and test
 the repository source first. Do not edit installed artifacts directly.
 
-Keep the change portable and minimal. Preserve Luna-first/effort-first
-routing, the Sol `high`-or-above main gate, fixed Native Luna role bindings,
-leaf-`ultra` prohibition, observable-evidence escalation, machine-local
+Keep the change portable and minimal. Preserve Luna-first routing, effort-first
+Luna escalation, fixed Native Luna/Sol leaf role bindings, dormant Terra
+experiment isolation, the Sol `high`-or-above main gate, leaf-`ultra`
+prohibition, observable-evidence escalation, machine-local
 logs/state exclusion, and the repository-as-canonical rule. Do not add
 dependencies or alter product behavior without an explicit envelope. Model or
 reasoning escalation changes capability, not authority or scope. Stop when the

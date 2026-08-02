@@ -149,6 +149,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
                 "schema_version": "0.3.0",
                 "objective_lock_version": "2",
                 "objective_lock_digest": "c" * 64,
+                "policy_id": policy["policy_id"],
                 "policy_fingerprint": contract.canonical_policy_fingerprint(policy),
                 "model": route["model"],
                 "model_tier": route["model_tier"],
@@ -179,6 +180,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
                 "schema_version": pre["schema_version"],
                 "objective_lock_version": pre["objective_lock_version"],
                 "objective_lock_digest": pre["objective_lock_digest"],
+                "policy_id": pre["policy_id"],
                 "policy_fingerprint": pre["policy_fingerprint"],
                 "final_model": pre["model"],
                 "final_model_tier": pre["model_tier"],
@@ -804,7 +806,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
             self.ledger,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("FIRST_ROUTE_INVALID", result.stderr)
+        self.assertIn("ROUTE_NOT_IN_LADDER", result.stderr)
 
         bad_failure = self.current_post(
             "strict-bad-failure",
@@ -928,34 +930,34 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.record("weak-oracle-main-pre.json", takeover)
 
         wrong_task = "raise-model-main-task"
-        terra = self.current_pre(
-            "raise-model-terra",
+        final_leaf = self.current_pre(
+            "raise-model-sol-high",
             wrong_task,
-            route_id="terra_max",
+            route_id="sol_high",
         )
-        terra["override_reason"] = "Bounded test setup at the final leaf route."
-        terra["rationale"].update(
+        final_leaf["override_reason"] = "Bounded test setup at the final leaf route."
+        final_leaf["rationale"].update(
             task_class="bounded_complex_implementation_or_verification",
             oracle_strength="weak",
             selection_basis="human_override",
         )
-        self.record("raise-model-terra-pre.json", terra)
-        terra_post = self.current_post("raise-model-terra", wrong_task)
-        terra_post.update(
-            final_model=terra["model"],
-            final_model_tier=terra["model_tier"],
-            final_reasoning_effort=terra["reasoning_effort"],
-            final_route_id=terra["route_id"],
-            final_role=terra["role"],
+        self.record("raise-model-sol-high-pre.json", final_leaf)
+        final_leaf_post = self.current_post("raise-model-sol-high", wrong_task)
+        final_leaf_post.update(
+            final_model=final_leaf["model"],
+            final_model_tier=final_leaf["model_tier"],
+            final_reasoning_effort=final_leaf["reasoning_effort"],
+            final_route_id=final_leaf["route_id"],
+            final_role=final_leaf["role"],
             failure_class="reasoning_insufficiency",
             post_result_detail={
                 "observable_result_signals": ["tests_failed"],
-                "evidence_references": ["receipt-raise-model-terra"],
+                "evidence_references": ["receipt-raise-model-sol-high"],
                 "route_assessment": "inconclusive",
                 "next_action": "raise_model",
             },
         )
-        self.record("raise-model-terra-post.json", terra_post)
+        self.record("raise-model-sol-high-post.json", final_leaf_post)
         invalid_main = self.current_pre(
             "raise-model-main",
             wrong_task,

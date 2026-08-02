@@ -31,6 +31,11 @@ class IsolatedDogfoodTests(unittest.TestCase):
             "diff contains only the requested change."
         )
         self.assertTrue(module.reported_targeted_evidence(output))
+        native_output = (
+            "The exact requested unittest passed: 1 test, `OK`. "
+            "`git diff -- target.py` showed only the requested change."
+        )
+        self.assertTrue(module.reported_targeted_evidence(native_output))
 
     def test_installation_docs_require_promotion_before_user_level_install(self) -> None:
         for name in ("README.md", "INSTALL.md"):
@@ -187,3 +192,25 @@ class IsolatedDogfoodTests(unittest.TestCase):
         )
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("routing preflight", result.diagnostic)
+
+    def test_accepts_bounded_config_and_role_reads_in_one_command(self) -> None:
+        module = load_module()
+        command = (
+            "jq '{task_defaults, role_binding: "
+            ".role_bindings[\"adaptive-luna-maker-high\"]}' "
+            '"$RUNTIME_HOME/skills/adaptive-delegation/config/'
+            'model-routing.defaults.json"; '
+            "sed -n '1,200p' "
+            '"$RUNTIME_HOME/agents/adaptive-luna-maker-high.toml"'
+        )
+        result = self.run_gate(
+            module,
+            behavior=(
+                "target.write_text(\"def normalize(value):\\n"
+                "    return value.strip().lower()\\n\", encoding='utf-8'); "
+                "print(json.dumps({'type': 'item.completed', 'item': {"
+                "'type': 'command_execution', 'command': "
+                f"{command!r}" "}}))"
+            ),
+        )
+        self.assertEqual(result.exit_code, 0, result.diagnostic)

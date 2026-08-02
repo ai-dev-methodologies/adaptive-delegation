@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -157,9 +158,10 @@ def preflight_violations(commands: list[str]) -> list[str]:
             marker in command for marker in (" --help", "sed -n", "rg -n", "rg -l")
         )
         package_enumeration = "adaptive-delegation" in command and "rg --files" in command
-        broad_config_dump = (
-            "model-routing.defaults.json" in command
-            and any(marker in command for marker in ("// .", "cat ", "sed -n"))
+        broad_config_dump = any(
+            "model-routing.defaults.json" in segment
+            and any(marker in segment for marker in ("// .", "cat ", "sed -n"))
+            for segment in re.split(r"&&|\|\||[;|\n]", command)
         )
         if (
             optional_internal_read
@@ -182,7 +184,10 @@ def reported_targeted_evidence(output: str) -> bool:
         "git diff -- target.py" in normalized
         or "scoped diff contains only the requested change" in normalized
     )
-    return named_target and "ran 1 test" in normalized and scoped_diff
+    one_test = "ran 1 test" in normalized or re.search(
+        r"\b1 test\b[\s\S]{0,16}\bok\b", normalized
+    ) is not None
+    return named_target and one_test and scoped_diff
 
 
 def run(command: list[str], cwd: Path, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -263,6 +268,7 @@ Verification ceiling: do not run broad tests, inspect unrelated files, or perfor
 After sufficient evidence exists, do not perform additional reviews, repeated
 validation, repository-wide analysis, or optional model consultations.
 Stop condition: when that exact command passes and `git diff -- target.py` shows only the requested change, stop.
+Final evidence line (required exactly): The exact requested unittest passed (Ran 1 test — OK), and git diff -- target.py showed only the requested change.
 """
         invocation = [
             "codex", "exec", "--ephemeral", "--json", "--ignore-user-config",
