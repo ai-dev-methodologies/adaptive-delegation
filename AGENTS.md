@@ -12,29 +12,35 @@ subagents. Claude Code is unsupported.
 
 ## Policy invariants
 
-- Keep routing Luna-first, effort-first within Luna, then through fixed Sol
-  `medium`/`high` leaf roles. Bounded work starts on the lowest suitable Luna
-  effort and escalates only from observable evidence.
+- Keep routing Luna-first, effort-first within Luna, then through fixed Terra
+  `medium`/`high` evidence-seeking intermediates after observable Luna quality
+  failures, and fixed Sol `medium`/`high` leaf roles. Bounded work starts on
+  the lowest suitable Luna effort and escalates only from observable evidence.
 - The main-authority gate is fail-closed over declared current-session context:
   the main must be `gpt-5.6-sol` with reasoning effort `high`, `xhigh`, `max`,
   or `ultra` before delegation can launch. Do not describe this declaration as
   cryptographic runtime proof.
 - Native leaves use fixed, package-declared role bindings in
   `adaptive-delegation/roles/*.toml`. Verify the bound model and effort; do not
-  silently substitute another model when a Luna or Sol admission is rejected.
-- Terra is excluded from automatic ladders. Its retained `max` Maker/Checker
-  bindings remain dormant until a future versioned, explicitly evaluated A/B
-  contract activates them.
+  silently substitute another model when a Luna, Terra, or Sol admission is
+  rejected.
+- Terra `xhigh`/`max` are excluded from automatic ladders and no dormant A/B
+  bindings are retained. Ordinary Terra use is passively logged by use mode and
+  compared through accepted-task outcomes.
 - Leaf `ultra` is forbidden. `gpt-5.6-sol/ultra` is a main-authoritative
   takeover only.
 - Model or reasoning escalation changes capability, never authority or scope.
   Every child, Checker, retry, escalation, and main takeover inherits the exact
-  canonical Objective Lock and must stop when its acceptance conditions are
-  proved.
-- Construct the complete portable Objective Lock before the first child
-  launch. It includes objective, non-goals, read/write/network authority,
-  intended behavior, acceptance evidence, verification ceiling, known side
-  effects, and stop condition. No valid lock, no child launch.
+  canonical terminal-outcome lock. A blocked path returns to main for an
+  in-scope alternative; final BLOCKED requires evidence that no meaningful
+  authorized lane remains. Fabrication and unauthorized substitution remain
+  forbidden.
+- Construct the complete portable terminal-outcome Objective Lock before the
+  first child launch. It includes the terminal outcome, non-goals,
+  read/write/network authority, authorized lanes, progression policy, and
+  global terminal conditions. Current method/data source/stage/test plan and
+  path-local verification belong to a replaceable path envelope. No valid lock,
+  no child launch.
 - Apply the same lock to the main session's planning, repository inspection,
   routing preflight, verification, retries, and integration. Do not inspect
   package internals or optional continuity data unless a concrete admission
@@ -66,6 +72,10 @@ The policy source is
 `adaptive-delegation/config/model-routing.defaults.json`; explanatory rules
 live in `adaptive-delegation/references/MODEL_ROUTING_POLICY.md`. Continuity
 guidance is in `adaptive-delegation/TOKEN_EFFICIENCY_CONTINUITY.md`.
+Before changing routing policy, read
+`docs/research/MODEL_ROUTING_EVIDENCE.md` and inspect the latest local accepted
+task/review logs; the dossier is non-deployed evidence and never overrides
+observable runtime outcomes.
 
 ## Change and review rules
 

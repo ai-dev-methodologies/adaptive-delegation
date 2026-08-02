@@ -147,7 +147,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
         event.update(
             {
                 "schema_version": "0.3.0",
-                "objective_lock_version": "2",
+                "objective_lock_version": audit.CURRENT_OBJECTIVE_LOCK_VERSION,
                 "objective_lock_digest": "c" * 64,
                 "policy_id": policy["policy_id"],
                 "policy_fingerprint": contract.canonical_policy_fingerprint(policy),
@@ -254,7 +254,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(audit.AuditError, "objective_lock_version"):
             audit._check_pair(version_mismatch_pre, version_mismatch_post)
 
-    def test_objective_lock_v1_records_remain_readable_but_cannot_continue_as_v2(self):
+    def test_objective_lock_v1_records_remain_readable_but_cannot_continue_as_v3(self):
         legacy_pre = self.current_pre(
             "lock-v1-first", "objective-lock-version-history",
             objective_lock_version="1",
@@ -268,7 +268,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.record("lock-v1-first-post.json", legacy_post)
 
         next_attempt = self.current_pre(
-            "lock-v2-second",
+            "lock-v3-second",
             "objective-lock-version-history",
             index=2,
             route_id="luna_xhigh",
@@ -284,7 +284,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
 
         unsupported = self.current_pre(
             "lock-v3", "objective-lock-unsupported",
-            objective_lock_version="3",
+            objective_lock_version="4",
         )
         with self.assertRaisesRegex(audit.AuditError, "unsupported objective_lock_version"):
             audit.validate_event(unsupported)
@@ -796,7 +796,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
         illegal_first = self.current_pre(
             "strict-bad-first",
             "strict-bad-first-task",
-            route_id="terra_max",
+            route_id="terra_medium",
         )
         result = self.run_cli(
             "record",
@@ -806,7 +806,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
             self.ledger,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("ROUTE_NOT_IN_LADDER", result.stderr)
+        self.assertIn("FIRST_ROUTE_INVALID", result.stderr)
 
         bad_failure = self.current_post(
             "strict-bad-failure",

@@ -138,20 +138,17 @@ finalize or backfill pending v1/`0.2.0` chains. If one remains after updating,
 preserve it as historical evidence and re-execute the bounded work with a new
 task ID, attempt index 1, dispatch ID, packet, and v2/`0.3.0` chain.
 
-Package 2.0.0 also introduces Objective Lock v2 with required `non_goals`.
-Finalize pending Objective Lock v1 work before updating. Version 2 continues
-to read v1 audit evidence but will not continue, finalize, or mix a task across
-Objective Lock versions; re-execute unfinished work as a fresh v2 task.
-
-Package 3.0.0 changes the policy fingerprint and automatic route ladder from
-Terra escalation to fixed Sol `medium`/`high` leaf escalation. Finalize pending
-2.x attempts before updating. If an attempt remains pending, preserve it as
+Package 0.4.0 changes the policy fingerprint and automatic route ladder to
+Luna -> Terra medium/high -> Sol leaf escalation. Finalize pending older
+attempts before updating. If an attempt remains pending, preserve it as
 historical evidence and restart the bounded work with a new task ID, attempt
-index 1, dispatch ID, and packet after installing 3.0.0. The audit schema and
-Objective Lock remain `0.3.0` and v2, but cross-policy continuation still fails
-closed. The installer removes obsolete Terra `xhigh`/`high` roles and retains
-only the dormant Terra `max` experiment bindings; it does not activate an A/B
-experiment.
+index 1, dispatch ID, and packet after installing 0.4.0. Packets now require
+an explicit `terminal_outcome` and `lane_id`; Objective Lock v3 carries the stable terminal
+outcome/authority layer while method/data source/stage/test plan move to a
+replaceable path/iteration envelope. Cross-policy continuation still fails
+closed. Terra `xhigh`/`max` and dormant A/B experiment bindings are removed;
+ordinary Terra use is passively logged by `use_mode` and compared by accepted
+task outcomes.
 
 ```sh
 git pull --ff-only

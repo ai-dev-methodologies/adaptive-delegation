@@ -101,6 +101,7 @@ EXIT_MODEL_ROUTING_AUDIT_FAILURE = 26
 REQUIRED_PACKET_FIELDS = (
     "dispatch_id",
     "objective",
+    "terminal_outcome",
     "agent_type",
     "model_tier",
     "reasoning_effort",
@@ -136,7 +137,7 @@ ROLLOUT_PATTERN = re.compile(
 )
 SESSION_ID_OUTPUT_PATTERN = re.compile(rf"^session id:\s*(?P<session_id>{UUID_PATTERN})\s*$")
 TERMINAL_NONCE_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-OBJECTIVE_LOCK_VERSION = "2"
+OBJECTIVE_LOCK_VERSION = "3"
 
 
 @dataclass(frozen=True)
@@ -521,6 +522,37 @@ def _integration_gate(
     if value.get("receipt_kind") != "integration" or value.get("receipt_version") != RECEIPT_VERSION:
         gate["reason"] = "receipt_kind_or_version_invalid"
         return gate
+    outcome_state = value.get("outcome_state")
+    if outcome_state not in {
+        "path_accepted",
+        "path_blocked",
+        "terminal_outcome_accepted",
+        "all_lanes_exhausted",
+    }:
+        gate["reason"] = "outcome_state_invalid"
+        return gate
+    lane_id = value.get("lane_id")
+    authorized_lanes = packet.get("authorized_lanes", ["declared_write_scope"])
+    if not isinstance(lane_id, str) or lane_id not in authorized_lanes or lane_id != packet.get("lane_id", "declared_write_scope"):
+        gate["reason"] = "lane_id_invalid"
+        return gate
+    if outcome_state == "all_lanes_exhausted":
+        lane_results = value.get("lane_results")
+        if (
+            not isinstance(lane_results, dict)
+            or set(lane_results) != set(authorized_lanes)
+            or any(item != "path_blocked" for item in lane_results.values())
+        ):
+            gate["reason"] = "all_lanes_exhaustion_evidence_missing"
+            return gate
+    if outcome_state == "path_blocked" and value.get("blocked_reason") not in {
+        "data_unavailable", "authority_unavailable", "other"
+    }:
+        gate["reason"] = "blocked_reason_invalid"
+        return gate
+    if value.get("path_envelope_digest") != _path_iteration_envelope_digest(packet, lane_id):
+        gate["reason"] = "path_envelope_digest_mismatch"
+        return gate
     if dispatch_id is None or value.get("dispatch_id") != dispatch_id:
         gate["reason"] = "integration_dispatch_id_mismatch"
         return gate
@@ -677,6 +709,13 @@ def _integration_gate(
                 "parent_enforced": observed_parent,
                 "quantitative_caps_enforced": observed_caps,
             },
+            "outcome_state": outcome_state,
+            "lane_id": lane_id,
+            "blocked_reason": value.get("blocked_reason"),
+            "path_accepted": outcome_state == "path_accepted",
+            "terminal_outcome_accepted": outcome_state == "terminal_outcome_accepted",
+            "path_blocked": outcome_state == "path_blocked",
+            "all_lanes_exhausted": outcome_state == "all_lanes_exhausted",
         }
     )
     return gate
@@ -1761,8 +1800,12 @@ def _validate_packet(packet: Any, source_path: Path | None) -> str | None:
     if not isinstance(packet, dict):
         return "packet_not_object"
     for field in REQUIRED_PACKET_FIELDS:
+        if field == "terminal_outcome":
+            continue
         if field not in packet or not _nonempty(packet[field]):
             return f"packet_field_missing_or_empty:{field}"
+    if "terminal_outcome" not in packet:
+        return "packet_field_missing_or_empty:terminal_outcome"
     if not isinstance(packet["dispatch_id"], str) or not DISPATCH_ID_PATTERN.fullmatch(
         packet["dispatch_id"].strip()
     ):
@@ -1776,6 +1819,66 @@ def _validate_packet(packet: Any, source_path: Path | None) -> str | None:
         or len(intended_behavior) > PROJECT_DOC_MAX_BYTES
     ):
         return "intended_behavior_invalid"
+    terminal_outcome = packet.get("terminal_outcome")
+    if (
+        terminal_outcome is None
+        or
+        not isinstance(terminal_outcome, str)
+        or not terminal_outcome.strip()
+        or len(terminal_outcome) > PROJECT_DOC_MAX_BYTES
+    ):
+        return "terminal_outcome_invalid"
+    for field in ("objective_kind", "progression_mode"):
+        value = packet.get(field)
+        if value is not None and (
+            not isinstance(value, str) or not value.strip() or len(value) > 128
+        ):
+            return f"{field}_invalid"
+    if packet.get("objective_kind", "terminal_outcome") != "terminal_outcome":
+        return "objective_kind_invalid"
+    progression_mode = packet.get(
+        "progression_mode", "iterative_until_outcome_or_user_stop"
+    )
+    if progression_mode not in {"single_path", "iterative_until_outcome_or_user_stop"}:
+        return "progression_mode_invalid"
+    authorized_lanes = packet.get("authorized_lanes")
+    if authorized_lanes is not None:
+        if (
+            not isinstance(authorized_lanes, list)
+            or not authorized_lanes
+            or len(authorized_lanes) > 32
+            or any(not isinstance(item, str) or not item.strip() for item in authorized_lanes)
+        ):
+            return "authorized_lanes_invalid"
+        if len(set(authorized_lanes)) != len(authorized_lanes) or any(
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", item) is None
+            for item in authorized_lanes
+        ):
+            return "authorized_lanes_invalid"
+    lane_names = authorized_lanes or ["declared_write_scope"]
+    if "lane_id" not in packet:
+        return "lane_id_invalid"
+    lane_id = packet.get("lane_id")
+    if not isinstance(lane_id, str) or lane_id not in lane_names:
+        return "lane_id_invalid"
+    if progression_mode == "single_path" and len(lane_names) != 1:
+        return "progression_mode_lane_mismatch"
+    for field in ("method_id", "data_source_id", "stage_id"):
+        value = packet.get(field)
+        if value is not None and (
+            not isinstance(value, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value)
+        ):
+            return f"{field}_invalid"
+    non_goals = packet.get("non_goals", [])
+    for lane in lane_names:
+        if any(
+            isinstance(item, str)
+            and re.search(r"\b(?:do\s+not|never|exclude|out\s+of\s+scope|only)\b", item, re.I)
+            and lane.casefold() in item.casefold()
+            for item in non_goals
+        ):
+            return "objective_non_goal_conflict"
     read_scope = packet.get("read_scope")
     if (
         not isinstance(read_scope, list)
@@ -2026,6 +2129,9 @@ def _start_adaptive_audit(
             reasoning_effort=selected_effort,
             attempt_index=routing["attempt_index"],
             override_reason=routing.get("override_reason"),
+            direct_latency_predicate=routing.get("direct_latency_predicate"),
+            use_mode=routing.get("use_mode"),
+            risk_class=routing.get("risk_class"),
         )
         if selected_model_tier != route["model_tier"]:
             raise contract.PolicyContractError(
@@ -2126,6 +2232,10 @@ def _start_adaptive_audit(
         "planned_model_escalations": routing["model_escalations"],
         **_linked_fields(context),
     }
+    if routing.get("use_mode") is not None:
+        pre_event["rationale"]["use_mode"] = routing["use_mode"]
+    if routing.get("direct_latency_predicate") is not None:
+        pre_event["rationale"]["direct_latency_predicate"] = routing["direct_latency_predicate"]
     if routing.get("override_reason") is not None:
         pre_event["override_reason"] = routing["override_reason"]
     if require_existing_pre and not audit.exact_unpaired_pre_exists(
@@ -2178,12 +2288,30 @@ def _finish_adaptive_audit(
 ) -> None:
     execution_completed = bool(status.get("execution_completed"))
     child_succeeded = bool(status.get("child_succeeded"))
+    path_accepted = bool(status.get("path_accepted"))
+    terminal_outcome_accepted = bool(status.get("terminal_outcome_accepted"))
+    outcome_state = status.get("outcome_state")
     integration_accepted = (
         bool(status.get("integration_accepted"))
         and child_succeeded
         and result_code == 0
     )
-    if integration_accepted:
+    all_lanes_exhausted = bool(status.get("all_lanes_exhausted"))
+    if outcome_state in {"path_accepted", "path_blocked", "all_lanes_exhausted"}:
+        integration_accepted = False
+    if all_lanes_exhausted:
+        integration_accepted = False
+    elif path_accepted and not terminal_outcome_accepted:
+        # A completed path/iteration is not the terminal user outcome. Keep
+        # the audit chain open so the main can continue an authorized lane.
+        integration_accepted = False
+    if all_lanes_exhausted:
+        failure_class = "all_lanes_exhausted"
+    elif path_accepted and not terminal_outcome_accepted:
+        failure_class = "path_accepted"
+    elif status.get("path_blocked"):
+        failure_class = "lane_blocked"
+    elif integration_accepted:
         failure_class = "none"
     elif failure_override is not None:
         failure_class = failure_override
@@ -2197,7 +2325,22 @@ def _finish_adaptive_audit(
         failure_class = "other"
     else:
         failure_class = "tool_or_environment"
-    if integration_accepted:
+    if all_lanes_exhausted:
+        oracle_verdict = "fail"
+        signals = ["all_lanes_exhausted"]
+        route_assessment = "inconclusive"
+        next_action = "stop"
+    elif path_accepted and not terminal_outcome_accepted:
+        oracle_verdict = "pass"
+        signals = ["path_accepted", "output_complete"]
+        route_assessment = "correct"
+        next_action = "continue_lane"
+    elif status.get("path_blocked"):
+        oracle_verdict = "inconclusive"
+        signals = ["path_blocked", "evidence_inconclusive"]
+        route_assessment = "inconclusive"
+        next_action = "return_to_main"
+    elif integration_accepted:
         oracle_verdict = "pass"
         signals = ["accepted_by_oracle", "constraints_met", "output_complete"]
         route_assessment = "correct"
@@ -2218,6 +2361,11 @@ def _finish_adaptive_audit(
             "context_ceiling": ["budget_exhausted", "output_incomplete"],
             "capability_ceiling": ["constraints_missed", "output_incomplete"],
         }[failure_class]
+        route_assessment = "inconclusive"
+        next_action = _configured_escalation_action(context)
+    elif failure_class == "acceptance_quality_failure":
+        oracle_verdict = "fail"
+        signals = ["acceptance_failed", "rejected_by_oracle"]
         route_assessment = "inconclusive"
         next_action = _configured_escalation_action(context)
     elif failure_class == "scope_or_retrieval_overbreadth":
@@ -2284,6 +2432,12 @@ def _finish_adaptive_audit(
             "next_action": next_action,
             "token_observation": "exact" if weighted_tokens else "unavailable",
             "elapsed_observation": "exact",
+            **(
+                {"blocked_reason": status.get("blocked_reason")}
+                if status.get("path_blocked")
+                and isinstance(status.get("blocked_reason"), str)
+                else {}
+            ),
         },
         "execution_completed": execution_completed,
         "oracle_verdict": oracle_verdict,
@@ -3186,6 +3340,8 @@ def _typed_objective(packet: dict[str, Any]) -> str:
         "resource_cap": packet["resource_cap"],
         "stop_condition": packet["stop_condition"],
         "token_budget": packet["token_budget"],
+        "path_iteration_envelope": _path_iteration_envelope(packet),
+        "path_iteration_envelope_digest": _path_iteration_envelope_digest(packet),
     }
     for field in (
         "packet_version",
@@ -3200,13 +3356,20 @@ def _typed_objective(packet: dict[str, Any]) -> str:
         if field in packet:
             contract[field] = packet[field]
     return (
-        packet["objective"].rstrip()
+        "TERMINAL_OUTCOME (binding): "
+        + packet["terminal_outcome"].rstrip()
+        + "\nCURRENT_PATH_OBJECTIVE (replaceable): "
+        + packet["objective"].rstrip()
         + "\n\nOBJECTIVE_LOCK (canonical):\n"
         + _canonical_json(objective_lock)
         + "\n\nOBJECTIVE_LOCK (binding):\n"
         + "- Work only inside the stated objective and write_scope.\n"
         + "- Model or reasoning escalation changes capability, not authority or scope.\n"
-        + "- Stop as soon as the required acceptance evidence passes and the stop_condition applies.\n"
+        + "- Path acceptance evidence or its stop_condition closes only the current lane/iteration; the global terminal_outcome and user stop condition take precedence for the whole task.\n"
+        + "- A blocked path returns to the main for an in-scope alternative; final BLOCKED is valid only when all authorized lanes are terminal.\n"
+        + "- Continue iterative discovery or flywheel work until the terminal outcome passes or the user stop condition applies.\n"
+        + "- The verification ceiling limits nonessential verification and never truncates core outcome work.\n"
+        + "- Never fabricate evidence or substitute an unauthorized method.\n"
         + "- Do not perform additional reviews, repository-wide analysis, repeated validation, or optional model consultations after sufficient evidence exists.\n"
         + "- Do not add unrelated cleanup, refactoring, architectural redesign, abstraction, documentation expansion, speculative robustness, or polishing.\n"
         + "- Report adjacent improvements as backlog findings. A broader objective requires a new explicitly authorized packet."
@@ -3216,20 +3379,73 @@ def _typed_objective(packet: dict[str, Any]) -> str:
 
 
 def _objective_lock(packet: dict[str, Any]) -> dict[str, Any]:
-    """Canonical, route-independent task authority and completion boundary."""
+    """Canonical, route-independent terminal outcome and authority boundary.
+
+    Current methods, data sources, preregistration, stages, test plans, and
+    path-local verification belong to the replaceable path envelope below. The
+    lock therefore remains stable while the main returns a blocked path for an
+    in-scope alternative.
+    """
+    terminal_outcome = packet.get("terminal_outcome", packet.get("objective"))
+    if not isinstance(terminal_outcome, str) or not terminal_outcome.strip():
+        raise ValueError("terminal_outcome must be a non-empty string")
+    terminal_outcome = terminal_outcome.rstrip()
+    objective_kind = packet.get("objective_kind", "terminal_outcome")
+    progression_mode = packet.get("progression_mode", "iterative_until_outcome_or_user_stop")
+    authorized_lanes = packet.get("authorized_lanes", ["declared_write_scope"])
+    if not isinstance(authorized_lanes, list) or any(
+        not isinstance(item, str) or not item.strip() for item in authorized_lanes
+    ):
+        raise ValueError("authorized_lanes must be a bounded list of stable lane IDs")
     return {
         "objective_lock_version": OBJECTIVE_LOCK_VERSION,
-        "objective": packet["objective"].rstrip(),
+        "objective": terminal_outcome,
+        "terminal_outcome": terminal_outcome,
         "non_goals": packet["non_goals"],
-        "read_scope": packet.get("read_scope", []),
-        "write_scope": packet["write_scope"],
-        "network_access": packet.get("network_access", False),
+        "authorized_lanes": authorized_lanes,
+        "progression_policy": {
+            "objective_kind": objective_kind,
+            "progression_mode": progression_mode,
+            "path_blocked": "return_to_main_for_in_scope_alternative",
+            "final_blocked_requires": "all_authorized_lanes_terminal",
+            "continue_until": "terminal_outcome_or_user_stop",
+        },
+        "objective_kind": objective_kind,
+        "progression_mode": progression_mode,
+        "authority": {
+            "read_scope": packet.get("read_scope", []),
+            "write_scope": packet["write_scope"],
+            "network_access": packet.get("network_access", False),
+        },
+        "global_terminal_conditions": {
+            "blocked_path": "return_to_main_for_in_scope_alternative",
+            "final_blocked": "all_authorized_lanes_terminal",
+            "iteration": "continue_until_terminal_outcome_or_user_stop",
+            "verification": "ceiling_limits_nonessential_verification_only",
+            "truthfulness": "fabrication_and_unauthorized_substitution_forbidden",
+        },
+    }
+
+
+def _path_iteration_envelope(packet: dict[str, Any], lane_id: str | None = None) -> dict[str, Any]:
+    """Replaceable method/data-source/stage/test-plan contract for one path."""
+    return {
+        "path_iteration_envelope_version": "1",
+        "lane_id": lane_id or packet.get("lane_id", "declared_write_scope"),
+        "current_path_objective": packet["objective"],
+        "method_id": packet.get("method_id"),
+        "data_source_id": packet.get("data_source_id"),
+        "stage_id": packet.get("stage_id"),
         "intended_behavior": packet.get("intended_behavior"),
         "acceptance_evidence": packet["acceptance_evidence"],
         "verification_ceiling": packet["verification_ceiling"],
         "known_side_effects": packet.get("known_side_effects", []),
         "stop_condition": packet["stop_condition"],
     }
+
+
+def _path_iteration_envelope_digest(packet: dict[str, Any], lane_id: str | None = None) -> str:
+    return _canonical_digest(_path_iteration_envelope(packet, lane_id))
 
 
 def _objective_lock_text(packet: dict[str, Any]) -> str:
@@ -3813,7 +4029,15 @@ def _finalize_integration(
             execution_completed=isinstance(child_returncode, int)
             and not isinstance(child_returncode, bool),
             child_succeeded=child_returncode == EXIT_SUCCESS,
-            integration_accepted=gate["status"] == "passed",
+            integration_accepted=(
+                gate["status"] == "passed"
+                and gate.get("outcome_state") == "terminal_outcome_accepted"
+            ),
+            path_accepted=gate.get("path_accepted", False),
+            terminal_outcome_accepted=gate.get("terminal_outcome_accepted", gate["status"] == "passed"),
+            path_blocked=gate.get("path_blocked", False),
+            all_lanes_exhausted=gate.get("outcome_state") == "all_lanes_exhausted",
+            blocked_reason=gate.get("blocked_reason"),
             weighted_tokens=terminal.get("weighted_tokens"),
             execution_elapsed_ms=terminal.get("execution_elapsed_ms"),
         )
@@ -3828,7 +4052,17 @@ def _finalize_integration(
             "path": rollout["path"],
             "status": "trusted",
         },
-        verdict="integration_accepted" if gate["status"] == "passed" else "integration_blocked",
+        verdict=(
+            "integration_accepted"
+            if gate["status"] == "passed" and gate.get("outcome_state") == "terminal_outcome_accepted"
+            else "path_accepted"
+            if gate["status"] == "passed" and gate.get("outcome_state") == "path_accepted"
+            else "all_lanes_exhausted"
+            if gate["status"] == "passed" and gate.get("outcome_state") == "all_lanes_exhausted"
+            else "path_blocked"
+            if gate["status"] == "passed"
+            else "integration_blocked"
+        ),
         reason="receipt_finalized" if gate["status"] == "passed" else gate["reason"],
         selected_launch_path=selected_launch_path,
         parent_enforced=parent_enforced,

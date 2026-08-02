@@ -51,15 +51,20 @@ behavior, and installer portability without using state from the source
 computer. Codex normally detects the skill after installation; restart only if
 the skill is not visible.
 
-The current policy is Luna-first and effort-first. Every leaf route resolves to
-an installed fixed Codex role, leaf `ultra` is forbidden, and unresolved or
-weak-oracle work returns to the main `gpt-5.6-sol/ultra` authority. The main gate
-uses declared session context and cannot mutate the parent model.
+The current policy is Luna-first and effort-first. After observable Luna
+acceptance/quality failure, scoped implementation/transformation uses Terra
+medium and bounded complex/debug/review uses Terra high before Sol leaf routes.
+Every leaf route resolves to an installed fixed Codex role, leaf `ultra` is
+forbidden, and unresolved or weak-oracle work returns to the main
+`gpt-5.6-sol/ultra` authority. The main gate uses declared session context and
+cannot mutate the parent model.
 
-Automatic escalation is Luna `medium/high/xhigh/max` as applicable, then Sol
-`medium` and, for implementation or complex work, Sol `high`, followed by main
-Sol `ultra` takeover. Terra is not automatic; its retained `max` bindings are
-dormant for a future versioned A/B experiment.
+Automatic escalation is Luna `medium/high/xhigh/max` as applicable, then Terra
+`medium` or `high` by task shape, then Sol `medium` and (for implementation or
+complex work) Sol `high`, followed by main Sol `ultra` takeover. Terra
+`xhigh`/`max` bindings and dormant A/B experiments are not retained. Ordinary
+runs passively record `use_mode=post_luna_failure` or `direct_latency` for
+accepted-task outcome audits.
 
 ## Report a target-PC result
 

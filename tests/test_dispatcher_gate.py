@@ -93,6 +93,9 @@ class DispatcherGateTests(unittest.TestCase):
         return {
             "dispatch_id": dispatch_id,
             "objective": "Run the portable dispatcher smoke worker.",
+            "terminal_outcome": "Run the portable dispatcher smoke worker.",
+            "authorized_lanes": ["declared_write_scope"],
+            "lane_id": "declared_write_scope",
             "agent_type": "adaptive-luna-maker-xhigh",
             "model_tier": "spark-tier",
             "reasoning_effort": "xhigh",
@@ -237,10 +240,19 @@ class DispatcherGateTests(unittest.TestCase):
         rollout.chmod(0o600)
 
     def terminal_fixture(
-        self, module, dispatch_id: str = "integration-terminal", write_scope=None
+        self,
+        module,
+        dispatch_id: str = "integration-terminal",
+        write_scope=None,
+        *,
+        authorized_lanes: list[str] | None = None,
+        lane_id: str | None = None,
     ):
         packet = self.packet(dispatch_id, "gpt-5.6-sol", "high")
         packet["write_scope"] = ["read-only"] if write_scope is None else write_scope
+        if authorized_lanes is not None:
+            packet["authorized_lanes"] = authorized_lanes
+            packet["lane_id"] = lane_id or authorized_lanes[0]
         binding = module._role_binding(packet)
         self.assertIsNotNone(binding)
         session_id = str(uuid.uuid4())
@@ -288,6 +300,9 @@ class DispatcherGateTests(unittest.TestCase):
         receipt = {
             "receipt_kind": "integration",
             "receipt_version": module.RECEIPT_VERSION,
+            "outcome_state": "terminal_outcome_accepted",
+            "lane_id": packet["lane_id"],
+            "path_envelope_digest": module._path_iteration_envelope_digest(packet),
             "dispatch_id": packet["dispatch_id"],
             "packet_digest": module._canonical_digest(packet),
             "objective_lock_version": module.OBJECTIVE_LOCK_VERSION,
@@ -560,13 +575,13 @@ class DispatcherGateTests(unittest.TestCase):
 
         objective = module._typed_objective(packet)
 
-        self.assertTrue(objective.startswith(packet["objective"]))
+        self.assertTrue(objective.startswith("TERMINAL_OUTCOME (binding): " + packet["terminal_outcome"]))
         self.assertIn("OBJECTIVE_LOCK (canonical):", objective)
         self.assertIn(
             "Model or reasoning escalation changes capability, not authority or scope.",
             objective,
         )
-        self.assertIn("Stop as soon as the required acceptance evidence passes", objective)
+        self.assertIn("Path acceptance evidence or its stop_condition closes only the current lane/iteration", objective)
         self.assertIn("Do not perform additional reviews", objective)
         self.assertIn("A broader objective requires a new explicitly authorized packet.", objective)
         contract_text = objective.split(
@@ -609,22 +624,27 @@ class DispatcherGateTests(unittest.TestCase):
             self.assertNotEqual(module._canonical_digest(changed), packet_digest)
 
         lock_mutations = (
-            ("objective", "Perform a broader task."),
+            ("terminal_outcome", "Perform a broader task."),
             ("non_goals", ["Permit unrelated redesign."]),
             ("read_scope", [str(self.root / "other")]),
             ("write_scope", ["read-only"]),
             ("network_access", True),
-            ("intended_behavior", "Redesign adjacent behavior."),
-            ("acceptance_evidence", ["An unrelated test passes."]),
-            ("verification_ceiling", "Run every repository test."),
-            ("known_side_effects", ["Modify adjacent files."]),
-            ("stop_condition", "Do not stop at the original condition."),
         )
         for field, value in lock_mutations:
             with self.subTest(lock_field=field):
                 changed = json.loads(json.dumps(packet))
                 changed[field] = value
                 self.assertNotEqual(module._objective_lock_digest(changed), digest)
+        for field, value in (
+            ("intended_behavior", "Try another path."),
+            ("acceptance_evidence", ["A path-specific test passes."]),
+            ("verification_ceiling", "Run only this path's checks."),
+            ("known_side_effects", ["Change the current path."]),
+            ("stop_condition", "Close only this iteration."),
+        ):
+            changed = json.loads(json.dumps(packet))
+            changed[field] = value
+            self.assertEqual(module._objective_lock_digest(changed), digest)
 
     def test_packet_requires_explicit_objective_lock_envelope(self) -> None:
         module = self.load_dispatcher_module()
@@ -641,6 +661,28 @@ class DispatcherGateTests(unittest.TestCase):
                 candidate = json.loads(json.dumps(packet))
                 candidate.pop(field)
                 self.assertIsNotNone(module._validate_packet(candidate, self.role))
+
+    def test_terminal_outcome_is_bounded_when_explicit(self) -> None:
+        module = self.load_dispatcher_module()
+        packet = self.packet("terminal-outcome", "gpt-5.6-sol", "high")
+        missing = json.loads(json.dumps(packet))
+        missing.pop("terminal_outcome")
+        self.assertEqual(
+            module._validate_packet(missing, self.role),
+            "packet_field_missing_or_empty:terminal_outcome",
+        )
+        for value in ("", "   ", ["outcome"], True):
+            candidate = json.loads(json.dumps(packet))
+            candidate["terminal_outcome"] = value
+            self.assertEqual(module._validate_packet(candidate, self.role), "terminal_outcome_invalid")
+
+    def test_non_goals_cannot_exclude_an_authorized_progression_lane(self) -> None:
+        module = self.load_dispatcher_module()
+        packet = self.packet("lane-conflict", "gpt-5.6-sol", "high")
+        packet["authorized_lanes"] = ["G009", "G010"]
+        packet["lane_id"] = "G009"
+        packet["non_goals"] = ["Do not continue G010 when G009 is blocked."]
+        self.assertEqual(module._validate_packet(packet, self.role), "objective_non_goal_conflict")
 
     def test_non_goals_require_a_nonempty_bounded_string_list(self) -> None:
         module = self.load_dispatcher_module()
@@ -662,7 +704,7 @@ class DispatcherGateTests(unittest.TestCase):
                     "non_goals_invalid",
                 )
 
-        self.assertEqual(module.OBJECTIVE_LOCK_VERSION, "2")
+        self.assertEqual(module.OBJECTIVE_LOCK_VERSION, "3")
 
     def test_intended_behavior_requires_bounded_text(self) -> None:
         module = self.load_dispatcher_module()
@@ -880,6 +922,84 @@ class DispatcherGateTests(unittest.TestCase):
         )
         self.assertEqual(artifact_gate["status"], "blocked")
         self.assertEqual(artifact_gate["reason"], "evidence_artifact_invalid")
+
+    def test_receipt_outcomes_bind_lane_and_require_all_lanes_blocked(self) -> None:
+        module = self.load_dispatcher_module()
+        packet, binding, runtime, _rollout, terminal = self.terminal_fixture(
+            module,
+            "lane-outcomes",
+            authorized_lanes=["G009", "G010"],
+            lane_id="G009",
+        )
+        receipt, receipt_path, checker_rollout, _artifact = self.receipt_fixture(
+            module, packet, binding, terminal
+        )
+
+        path_blocked = json.loads(json.dumps(receipt))
+        path_blocked.update(
+            {
+                "outcome_state": "path_blocked",
+                "blocked_reason": "data_unavailable",
+            }
+        )
+        self.replace_receipt(module, receipt_path, checker_rollout, path_blocked)
+        gate = self.gate_for(
+            module, packet, binding, runtime, terminal, receipt_path
+        )
+        self.assertEqual(gate["status"], "passed")
+        self.assertTrue(gate["path_blocked"])
+        self.assertFalse(gate["terminal_outcome_accepted"])
+
+        wrong_lane = json.loads(json.dumps(path_blocked))
+        wrong_lane["lane_id"] = "G010"
+        wrong_lane["path_envelope_digest"] = module._path_iteration_envelope_digest(
+            packet, "G010"
+        )
+        self.replace_receipt(module, receipt_path, checker_rollout, wrong_lane)
+        self.assertEqual(
+            self.gate_for(
+                module, packet, binding, runtime, terminal, receipt_path
+            )["reason"],
+            "lane_id_invalid",
+        )
+
+        incomplete_exhaustion = json.loads(json.dumps(receipt))
+        incomplete_exhaustion.update(
+            {
+                "outcome_state": "all_lanes_exhausted",
+                "lane_results": {
+                    "G009": "path_blocked",
+                    "G010": "terminal_outcome_accepted",
+                },
+            }
+        )
+        self.replace_receipt(
+            module, receipt_path, checker_rollout, incomplete_exhaustion
+        )
+        self.assertEqual(
+            self.gate_for(
+                module, packet, binding, runtime, terminal, receipt_path
+            )["reason"],
+            "all_lanes_exhaustion_evidence_missing",
+        )
+
+        exhausted = json.loads(json.dumps(receipt))
+        exhausted.update(
+            {
+                "outcome_state": "all_lanes_exhausted",
+                "lane_results": {
+                    "G009": "path_blocked",
+                    "G010": "path_blocked",
+                },
+            }
+        )
+        self.replace_receipt(module, receipt_path, checker_rollout, exhausted)
+        gate = self.gate_for(
+            module, packet, binding, runtime, terminal, receipt_path
+        )
+        self.assertEqual(gate["status"], "passed")
+        self.assertTrue(gate["all_lanes_exhausted"])
+        self.assertFalse(gate["terminal_outcome_accepted"])
 
     def test_mutable_receipt_after_checker_marker_is_rejected(self) -> None:
         module = self.load_dispatcher_module()
@@ -1279,10 +1399,11 @@ class DispatcherGateTests(unittest.TestCase):
         packet["model_tier"] = "standard-tier"
         self.assertIsNone(module._role_binding(packet))
 
-    def test_fixed_luna_and_sol_agent_types_are_native_without_model_override(self) -> None:
+    def test_fixed_leaf_agent_types_are_native_without_model_override(self) -> None:
         module = self.load_dispatcher_module()
         cases = (
             ("adaptive-luna-maker-xhigh", "spark-tier", "gpt-5.6-luna", "xhigh"),
+            ("adaptive-terra-maker-high", "standard-tier", "gpt-5.6-terra", "high"),
             ("adaptive-sol-maker-medium", "frontier-tier", "gpt-5.6-sol", "medium"),
         )
         for agent_type, model_tier, model, effort in cases:

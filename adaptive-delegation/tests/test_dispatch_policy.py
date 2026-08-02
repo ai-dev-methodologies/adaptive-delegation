@@ -202,7 +202,6 @@ class DispatchPolicyTests(unittest.TestCase):
                     )
                     if route["authority"] == "leaf":
                         self.assertNotEqual(route["reasoning_effort"], "ultra")
-                        self.assertNotEqual(route["model"], "gpt-5.6-terra")
             for previous, following in zip(ladder, ladder[1:]):
                 previous_route = routes[previous]
                 following_route = routes[following]
@@ -271,41 +270,18 @@ class DispatchPolicyTests(unittest.TestCase):
                 next_action="raise_model",
             )
         self.assertEqual(caught.exception.code, "TRANSITION_KIND_MISMATCH")
-        with self.assertRaises(contract.PolicyContractError):
-            contract.validate_route_selection(
-                policy,
-                route_id="terra_max",
-                task_class="clear_implementation_or_transformation",
-                oracle_strength="strong",
-                selection_basis="policy_default",
-                role="adaptive-terra-maker-max",
-                model="gpt-5.6-terra",
-                reasoning_effort="max",
-            )
-        self.assertNotIn(
-            "terra_max",
-            {
-                step
-                for ladder in policy["escalation_ladders"].values()
-                for step in ladder
-            },
-        )
-        self.assertFalse(
-            policy["routing_experiments"]["terra_max_coding_ab"][
-                "automatic_selection"
-            ]
-        )
+        self.assertNotIn("terra_max", policy["route_bindings"])
+        self.assertNotIn("checker_terra_max", policy["route_bindings"])
+        self.assertFalse(policy["routing_observations"]["terra"]["paired_ab"])
         self.assertEqual(
             contract.route_for(policy, "sol_medium")["role"],
             "adaptive-sol-maker-medium",
         )
-        invalid_experiment = copy.deepcopy(policy)
-        invalid_experiment["routing_experiments"]["terra_max_coding_ab"][
-            "automatic_selection"
-        ] = True
+        invalid_observation = copy.deepcopy(policy)
+        invalid_observation["routing_observations"]["terra"]["paired_ab"] = True
         with self.assertRaises(contract.PolicyContractError) as caught:
-            contract.validate_policy_routes(invalid_experiment)
-        self.assertEqual(caught.exception.code, "EXPERIMENT_POLICY_INVALID")
+            contract.validate_policy_routes(invalid_observation)
+        self.assertEqual(caught.exception.code, "OBSERVATION_POLICY_INVALID")
         with self.assertRaises(contract.PolicyContractError):
             contract.validate_route_selection(
                 policy,
@@ -318,9 +294,47 @@ class DispatchPolicyTests(unittest.TestCase):
                 reasoning_effort="xhigh",
             )
 
+    def test_terra_routes_require_observed_failure_or_direct_latency_predicate(self):
+        policy = load_policy()
+        predicate = {field: True for field in contract.DIRECT_LATENCY_PREDICATE_FIELDS}
+        predicate["latency_budget_ms"] = 5000
+        selected = contract.validate_route_selection(
+            policy,
+            route_id="terra_medium",
+            task_class="clear_implementation_or_transformation",
+            oracle_strength="strong",
+            selection_basis="direct_latency",
+            role="adaptive-terra-maker-medium",
+            model="gpt-5.6-terra",
+            reasoning_effort="medium",
+            direct_latency_predicate=predicate,
+            use_mode="direct_latency",
+        )
+        self.assertEqual(selected["model"], "gpt-5.6-terra")
+        with self.assertRaisesRegex(contract.PolicyContractError, "direct Terra"):
+            contract.validate_route_selection(
+                policy,
+                route_id="terra_medium",
+                task_class="clear_implementation_or_transformation",
+                oracle_strength="strong",
+                selection_basis="direct_latency",
+                role="adaptive-terra-maker-medium",
+                model="gpt-5.6-terra",
+                reasoning_effort="medium",
+            )
+        with self.assertRaisesRegex(contract.PolicyContractError, "runtime or tool"):
+            contract.route_transition(
+                policy,
+                "clear_implementation_or_transformation",
+                "strong",
+                "luna_max",
+                "raise_model",
+                failure_class="tool_or_environment",
+            )
+
     def test_module_has_no_content_or_event_builder_surface(self):
         source = (PACKAGE_ROOT / "scripts" / "dispatch_policy.py").read_text()
-        self.assertLessEqual(len(source.splitlines()), 350)
+        self.assertLessEqual(len(source.splitlines()), 420)
         for name in (
             "build_pre_decision_event",
             "build_post_result_event",

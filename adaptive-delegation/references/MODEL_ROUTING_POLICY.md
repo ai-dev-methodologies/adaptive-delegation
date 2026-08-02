@@ -12,17 +12,26 @@ targets and are not additional policy sources.
 ## Primary invariant: portable Objective Lock
 
 Before the first child launch, derive one self-contained Objective Lock from
-the current user request and repository evidence. Its v2 fields are objective,
-`non_goals`, read/write/network authority, intended behavior, acceptance
-evidence, verification ceiling, known side effects, and stop condition. No
-valid lock means no child launch. A user-global or project `AGENTS.md` may
+the current user request and repository evidence. Its v3 fields are terminal outcome,
+`non_goals`, read/write/network authority, authorized lanes, progression policy,
+and global terminal conditions. Current path/iteration method and evidence are
+separately bound by a replaceable path envelope. No valid lock means no child
+launch. A user-global or project `AGENTS.md` may
 further restrict the task but is not required by the installed skill.
 
 Delegate bounded independent work aggressively when it materially improves
 speed, token efficiency, or verification quality. Every Maker, Checker, retry,
-effort/model escalation, and main takeover inherits the exact lock. Run the
-smallest acceptance proof and stop when it passes. Additional reviews,
-repository-wide analysis, repeated validation, optional model consultations,
+effort/model escalation, and main takeover inherits the exact terminal-outcome
+lock. Path-local methods, data sources, preregistration, stages, test plans,
+and verification ceilings belong to a replaceable path/iteration envelope. A
+blocked path returns to the main for an in-scope alternative and ends the
+current lane attempt chain; the main starts the next authorized lane with a new
+path envelope under the same lock. Final BLOCKED requires all authorized lanes
+to be terminal. A truthful blocked-lane report is represented as a successful
+child process with receipt outcome `path_blocked`; it is process success, not
+terminal-outcome acceptance. Continue discovery
+or flywheel work until the terminal outcome or user stop condition. Never
+fabricate evidence or substitute an unauthorized method. Additional reviews
 and adjacent improvements remain outside the lock unless a new explicitly
 authorized task adds them.
 
@@ -49,9 +58,10 @@ policy JSON are relative to that resolved runtime home; they are not shell
 templates.
 
 The qualitative starting point is the package's installed Codex role catalog:
-Luna handles clear bounded work, Sol `medium` and `high` are bounded leaf
-escalations, and Sol `ultra` remains the authoritative main takeover. Effort is
-raised before model tier when observable evidence supports that transition.
+Luna handles clear bounded work, Terra `medium` and `high` are evidence-seeking
+post-Luna intermediates, Sol `medium` and `high` are bounded leaf escalations,
+and Sol `ultra` remains the authoritative main takeover. Effort is raised
+before model tier when observable evidence supports that transition.
 These are package policy choices, not universal quality equivalence claims.
 The exact thresholds and ladders remain provisional hypotheses evaluated
 through local audit outcomes and acceptance oracles.
@@ -63,9 +73,9 @@ evaluation rather than a universal escalation ladder. A current
 [independent coding comparison](https://artificialanalysis.ai/agents/coding-agents/comparisons/codex-vs-cursor-cli)
 places Luna `max` ahead of Terra `xhigh` on its measured quality/cost frontier
 and makes Sol `medium` the next material capability step. That result is useful
-evidence, not a guarantee for every workload. The package therefore removes
-Terra from automatic escalation and will revisit the decision from sanitized
-real-use logs and representative acceptance results.
+evidence, not a guarantee for every workload. The package therefore uses Terra
+only as a bounded post-Luna intermediate or explicit direct-latency route and
+revisits the decision from sanitized accepted-task outcomes.
 
 The policy is provisional and evidence-seeking. Reevaluate after every
 attempt. Use one same-model reasoning-effort retry per stage at most, then
@@ -75,8 +85,9 @@ used to update the evidence base.
 
 ## Defaults and ladders
 
-The default strategy is Luna-first, effort-first within Luna, then bounded Sol
-leaf escalation:
+The default strategy is Luna-first, effort-first within Luna, then an
+evidence-seeking Terra intermediate after an observable Luna acceptance or
+quality failure, followed by bounded Sol leaf escalation:
 
 | Work shape | Default route |
 | --- | --- |
@@ -101,10 +112,10 @@ main-authority step. `raise_model` can never select that main-authority step.
 
 The configured ladders are:
 
-- Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> sol/medium -> main-takeover sol/ultra`.
-- Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> sol/medium -> sol/high -> main-takeover sol/ultra`.
-- Bounded complex implementation or verification: `luna/xhigh -> luna/max -> sol/medium -> sol/high -> main-takeover sol/ultra`.
-- Bounded complex work with a strong oracle: `luna/xhigh -> luna/max -> sol/medium -> sol/high -> main-takeover sol/ultra`.
+- Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> terra/medium -> sol/medium -> main-takeover sol/ultra`.
+- Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> terra/medium -> sol/medium -> sol/high -> main-takeover sol/ultra`.
+- Bounded complex implementation, debugging, or review: `luna/xhigh -> luna/max -> terra/high -> sol/medium -> sol/high -> main-takeover sol/ultra`.
+- Bounded complex work with a strong oracle: `luna/xhigh -> luna/max -> terra/high -> sol/medium -> sol/high -> main-takeover sol/ultra`.
 - Weak-oracle, ambiguous/high-risk, or long-contract work: main-authoritative `sol/ultra` only.
 
 The main may take over when the weak-oracle condition means a leaf cannot
@@ -119,25 +130,27 @@ counter/history mismatches, and silent substitutions. Checker routes are also
 package-declared exact Codex roles; they do not participate in the Maker
 escalation ladder.
 
-The package records [OpenAI's published GPT-5.6 API token prices](https://openai.com/index/gpt-5-6/)
-as of 2026-08-02: Sol `$5/$30`, Terra `$2.50/$15`, and Luna `$1/$6` per
-million input/output tokens. Because both input and output ratios are stable,
-the routing cost proxy normalizes them to Sol-equivalent factors of `1.0`,
-`0.5`, and `0.2`. Model-relative price factors are never aggregated across
-models as if they were provider invoices. Effort can change token use and
-latency, so compare total cost per accepted task, not price per token alone.
+The package records
+[OpenAI's published API token prices](https://openai.com/index/advancing-the-price-performance-frontier-with-gpt-5-6/)
+as of 2026-07-30: Sol `$5/$30`, Terra `$2/$12`, and Luna `$0.2/$1.2` per
+million input/output tokens. The routing cost proxy normalizes them to
+Sol-equivalent factors of `1.0`, `0.4`, and `0.04`. Model-relative price
+factors are never aggregated across models as if they were provider invoices;
+Codex quota or credit units are not provider-token equivalents. Effort can
+change token use and latency, so compare total cost per accepted task, not
+price per token alone.
 
-Terra `max` remains a dormant compatibility binding for a possible future
-versioned A/B experiment. It appears in no automatic ladder and cannot be
-selected by the current default, failure-action, or human-override contract.
-Historical Terra audit records remain readable. Any future activation must
-define a representative oracle and compare accepted-task quality, latency,
-weighted tokens, and Sol-equivalent cost before changing the fixed ladders.
+Terra `xhigh` and `max` are not automatic routes and no dormant A/B binding is
+retained. Ordinary runs passively record `use_mode=post_luna_failure` or
+`use_mode=direct_latency`; later audits compare accepted-task outcomes rather
+than running perpetual or random paired experiments. The main may directly
+choose Terra only after recording a pre-observable predicate proving latency
+sensitivity, scope, a strong oracle, recoverability, and non-ambiguity.
 
 ## Native role selection
 
 Prefer Native routing by choosing the installed fixed `agent_type` for the
-selected Luna or Sol leaf route, verifying its TOML model/effort binding,
+selected Luna, Terra, or Sol leaf route, verifying its TOML model/effort binding,
 passing the same effort and `fork_turns="none"`, and validating local runtime
 model/effort metadata. The role selection is an explicit model choice. The
 selected model need not appear in the optional `model` override enum, so its
@@ -161,6 +174,7 @@ Classify only what can be observed at the task boundary:
 | Failure class | Observable signal | Action |
 | --- | --- | --- |
 | `reasoning_insufficiency` | The route remains in scope, but a check or contradiction shows the current effort was insufficient. | Advance one configured ladder step, preserving the model while an effort step remains. |
+| `acceptance_quality_failure` | A declared acceptance or quality oracle rejects the current Luna result. | Advance to the configured Terra medium/high intermediate, preserving the lock. |
 | `context_ceiling` | Weighted token-budget exhaustion, truncation, context exhaustion, or a directly observed context limit. | Advance one configured ladder step without skipping effort/model stages. |
 | `scope_or_retrieval_overbreadth` | The task envelope or retrieved material is too broad for the bounded acceptance claim. | Narrow the envelope or retrieval, then retry the same route. |
 | `tool_or_environment` | A runtime, tool, dependency, or environment error prevents a meaningful attempt. | Repair the environment, then retry the same route. |

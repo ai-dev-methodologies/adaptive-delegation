@@ -108,10 +108,10 @@ class VersionStatusTests(unittest.TestCase):
         version_path = (
             self.codex_home / "skills" / "adaptive-delegation" / "VERSION"
         )
-        version_path.write_text("0.9.0\n", encoding="utf-8")
+        version_path.write_text("0.3.0\n", encoding="utf-8")
         older = self.payload()
         self.assertEqual(older["status"], "update_available")
-        self.assertEqual(older["installed"]["version"], "0.9.0")
+        self.assertEqual(older["installed"]["version"], "0.3.0")
         self.assertEqual(older["changes"]["modified"], ["VERSION"])
 
         version_path.unlink()

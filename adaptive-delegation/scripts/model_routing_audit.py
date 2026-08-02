@@ -73,7 +73,11 @@ TASK_CLASSES = (
 LEGACY_TASK_CLASS_PREFIX = "former" + "_"
 FAILURE_CLASSES = (
     "none",
+    "path_accepted",
+    "lane_blocked",
+    "all_lanes_exhausted",
     "reasoning_insufficiency",
+    "acceptance_quality_failure",
     "context_ceiling",
     "scope_or_retrieval_overbreadth",
     "tool_or_environment",
@@ -85,7 +89,11 @@ FAILURE_CLASSES = (
 ORACLE_VERDICTS = ("pass", "fail", "inconclusive", "not_run")
 ORACLE_STRENGTHS = ("strong", "weak", "ambiguous")
 RISK_CLASSES = ("low", "medium", "high")
-SELECTION_BASES = ("policy_default", "failure_action", "human_override")
+SELECTION_BASES = ("policy_default", "failure_action", "human_override", "direct_latency")
+USE_MODES = ("post_luna_failure", "direct_latency")
+DIRECT_LATENCY_PREDICATE_FIELDS = (
+    "latency_sensitive", "scoped", "strong_oracle", "recoverable", "non_ambiguous"
+)
 BOUNDEDNESS_VALUES = ("bounded", "partially_bounded", "unbounded")
 CONTEXT_PRESSURES = ("low", "medium", "high", "critical")
 TASK_SHAPE_SIGNALS = (
@@ -131,6 +139,9 @@ CHEAPER_ROUTE_REASONS = (
 )
 OBSERVABLE_RESULT_SIGNALS = (
     "accepted_by_oracle",
+    "path_accepted",
+    "path_blocked",
+    "all_lanes_exhausted",
     "rejected_by_oracle",
     "tests_passed",
     "tests_failed",
@@ -143,6 +154,7 @@ OBSERVABLE_RESULT_SIGNALS = (
     "escalation_required",
     "tool_failure",
     "regression_observed",
+    "acceptance_failed",
     "no_regression_observed",
     "evidence_inconclusive",
     "human_review_required",
@@ -160,6 +172,8 @@ NEXT_ACTIONS = (
     "narrow_scope",
     "split_task",
     "environment_retry",
+    "continue_lane",
+    "return_to_main",
     "main_takeover",
     "collect_more_evidence",
     "human_review",
@@ -221,8 +235,8 @@ LINKED_COMMON_FIELDS = {
     "surface_schema_fingerprint",
 }
 OBJECTIVE_LOCK_FIELDS = {"objective_lock_version", "objective_lock_digest"}
-SUPPORTED_OBJECTIVE_LOCK_VERSIONS = {"1", "2"}
-CURRENT_OBJECTIVE_LOCK_VERSION = "2"
+SUPPORTED_OBJECTIVE_LOCK_VERSIONS = {"1", "2", "3"}
+CURRENT_OBJECTIVE_LOCK_VERSION = "3"
 LINKED_POST_FIELDS = {
     "execution_completed",
     "oracle_verdict",
@@ -236,6 +250,8 @@ RATIONALE_FIELDS = {
     "prior_attempts",
     "selection_basis",
     "override_reason",
+    "use_mode",
+    "direct_latency_predicate",
 }
 PRE_DETAIL_FIELDS = {
     "boundedness",
@@ -252,7 +268,9 @@ POST_DETAIL_FIELDS = {
     "next_action",
     "token_observation",
     "elapsed_observation",
+    "blocked_reason",
 }
+BLOCKED_REASONS = ("data_unavailable", "authority_unavailable", "other")
 
 # Explicitly reject sensitive names even when the error would otherwise be an
 # ordinary unknown-field error.  Token counts are allowed; credential tokens
@@ -467,6 +485,20 @@ def _validate_current_route(event: dict[str, Any], policy: dict[str, Any], *, st
     if not isinstance(event["role"], str) or not _ID_RE.fullmatch(event["role"]):
         raise AuditError("role must be a bounded safe identifier")
     reason = event.get("override_reason", rationale.get("override_reason"))
+    predicate = rationale.get("direct_latency_predicate")
+    if predicate is not None:
+        if not isinstance(predicate, dict) or not set(DIRECT_LATENCY_PREDICATE_FIELDS).issubset(predicate) or any(
+            predicate[field] is not True for field in DIRECT_LATENCY_PREDICATE_FIELDS
+        ):
+            raise AuditError("direct_latency_predicate must prove all five true pre-observable conditions")
+        budget = predicate.get("latency_budget_ms")
+        evidence = predicate.get("latency_evidence_ref")
+        if not (
+            isinstance(budget, int) and not isinstance(budget, bool) and 1 <= budget <= 86_400_000
+        ) and not (
+            isinstance(evidence, str) and 1 <= len(evidence) <= MAX_STRING_LENGTH and _ID_RE.fullmatch(evidence)
+        ):
+            raise AuditError("direct_latency_predicate requires bounded latency evidence")
     try:
         _route_policy.validate_route_selection(
             policy,
@@ -479,17 +511,28 @@ def _validate_current_route(event: dict[str, Any], policy: dict[str, Any], *, st
             reasoning_effort=event["reasoning_effort"],
             attempt_index=event["attempt_index"],
             override_reason=reason,
+            direct_latency_predicate=predicate,
+            use_mode=rationale.get("use_mode"),
+            risk_class=rationale.get("risk_class"),
         )
     except _route_policy.PolicyContractError as exc:
         raise AuditError(f"route contract: {exc.code}: {exc}") from exc
     if selection_basis == "human_override" and event.get("override_reason") not in (None, reason):
         raise AuditError("human override reason fields disagree")
+    if event.get("model") == "gpt-5.6-terra":
+        expected_mode = "direct_latency" if selection_basis == "direct_latency" else "post_luna_failure"
+        if rationale.get("use_mode") != expected_mode:
+            raise AuditError("Terra pre_decision requires use_mode matching its route basis")
 
 
 def _validate_failure_observation(failure_class: str, detail: dict[str, Any]) -> None:
     signals = set(detail["observable_result_signals"])
     required = {
+        "path_accepted": {"path_accepted"},
+        "lane_blocked": {"path_blocked"},
+        "all_lanes_exhausted": {"all_lanes_exhausted"},
         "reasoning_insufficiency": {"tests_failed", "regression_observed", "evidence_inconclusive"},
+        "acceptance_quality_failure": {"acceptance_failed", "rejected_by_oracle", "tests_failed", "regression_observed"},
         "context_ceiling": {"output_incomplete", "budget_exhausted"},
         "scope_or_retrieval_overbreadth": {"constraints_missed"},
         "tool_or_environment": {"tool_failure"},
@@ -653,6 +696,22 @@ def validate_event(event: Any) -> dict[str, Any]:
             _check_nonnegative_int(rationale["prior_attempts"], "rationale.prior_attempts", 1000000)
         if "selection_basis" in rationale:
             _check_enum(rationale["selection_basis"], "rationale.selection_basis", SELECTION_BASES)
+        if "use_mode" in rationale:
+            _check_enum(rationale["use_mode"], "rationale.use_mode", USE_MODES)
+        if "direct_latency_predicate" in rationale:
+            predicate = rationale["direct_latency_predicate"]
+            if not isinstance(predicate, dict) or not set(DIRECT_LATENCY_PREDICATE_FIELDS).issubset(predicate):
+                raise AuditError("rationale.direct_latency_predicate is incomplete")
+            if any(predicate[field] is not True for field in DIRECT_LATENCY_PREDICATE_FIELDS):
+                raise AuditError("rationale.direct_latency_predicate must contain only true values")
+            budget = predicate.get("latency_budget_ms")
+            evidence = predicate.get("latency_evidence_ref")
+            if not (
+                isinstance(budget, int) and not isinstance(budget, bool) and 1 <= budget <= 86_400_000
+            ) and not (
+                isinstance(evidence, str) and 1 <= len(evidence) <= MAX_STRING_LENGTH and _ID_RE.fullmatch(evidence)
+            ):
+                raise AuditError("direct_latency_predicate requires bounded latency evidence")
         if "override_reason" in rationale:
             if not isinstance(rationale["override_reason"], str) or not 1 <= len(rationale["override_reason"]) <= MAX_STRING_LENGTH:
                 raise AuditError("rationale.override_reason must be a bounded string")
@@ -825,6 +884,14 @@ def validate_event(event: Any) -> dict[str, Any]:
                     "post_result_detail.elapsed_observation",
                     ELAPSED_OBSERVATIONS,
                 )
+            if "blocked_reason" in detail:
+                _check_enum(
+                    detail["blocked_reason"],
+                    "post_result_detail.blocked_reason",
+                    BLOCKED_REASONS,
+                )
+            if event["failure_class"] == "lane_blocked" and "blocked_reason" not in detail:
+                raise AuditError("lane_blocked post_result requires blocked_reason")
             if strict_current:
                 _validate_failure_action(policy, event["failure_class"], detail)
         elif strict_current:
@@ -1031,7 +1098,12 @@ def _check_current_transition(previous: tuple[dict[str, Any], dict[str, Any]], c
     previous_index = ladder.index(prior_pre["route_id"])
     current_index = ladder.index(current["route_id"]) if current["route_id"] in ladder else -1
     same_route = current["route_id"] == prior_pre["route_id"]
-    same_actions = {"retain_route", "retry_same_route", "narrow_scope", "environment_retry"}
+    same_actions = {"retain_route", "retry_same_route", "narrow_scope", "environment_retry", "continue_lane", "return_to_main"}
+    if (
+        prior_post["failure_class"] == "tool_or_environment"
+        and action in {"raise_effort", "raise_model", "main_takeover"}
+    ):
+        raise AuditError("tool_or_environment cannot escalate model or reasoning effort")
     if action in same_actions:
         if prior_post["accepted"]:
             raise AuditError("an accepted attempt cannot be retried")
@@ -1468,6 +1540,7 @@ def _make_review(
     accepted_task_values: list[
         tuple[int | None, int | None, float | None]
     ] = []
+    accepted_task_use_modes: dict[str, int] = {mode: 0 for mode in USE_MODES}
     first_pass_accepted = 0
     accepted_tasks = 0
     for attempts in task_pairs.values():
@@ -1499,6 +1572,12 @@ def _make_review(
                     None,
                 )
             )
+            first_pre = next(
+                pre for pre, _post in attempts if pre["attempt_index"] == first_accepted_index
+            )
+            mode = first_pre.get("rationale", {}).get("use_mode")
+            if mode in accepted_task_use_modes:
+                accepted_task_use_modes[mode] += 1
 
     paired_attempts = len(pairs)
     all_paired_attempts = len(all_pairs)
@@ -1529,12 +1608,14 @@ def _make_review(
     for pre, post in pairs:
         fingerprint = pre.get("policy_fingerprint", "legacy")
         segment_key = f"{pre['schema_version']}:{fingerprint}"
-        route_key = f"{segment_key}:{pre['model']}/{pre['reasoning_effort']}"
+        use_mode = pre.get("rationale", {}).get("use_mode")
+        route_key = f"{segment_key}:{pre['model']}/{pre['reasoning_effort']}:{use_mode or 'unspecified'}"
         route = route_metrics.setdefault(route_key, {
             "schema_version": pre["schema_version"],
             "policy_fingerprint": fingerprint,
             "model": pre["model"],
             "reasoning_effort": pre["reasoning_effort"],
+            "use_mode": use_mode,
             "calls": 0,
             "accepted_calls": 0,
             "weighted_tokens": 0,
@@ -1616,6 +1697,27 @@ def _make_review(
             "next_actions": next_action_counts,
         },
         "metrics": metrics,
+        "terra_observations": {
+            "use_modes": {
+                mode: {
+                    "calls": sum(
+                        1 for pre, _post in pairs
+                        if pre.get("model") == "gpt-5.6-terra"
+                        and pre.get("rationale", {}).get("use_mode") == mode
+                    ),
+                    "accepted_calls": sum(
+                        1 for pre, post in pairs
+                        if pre.get("model") == "gpt-5.6-terra"
+                        and pre.get("rationale", {}).get("use_mode") == mode
+                        and post.get("accepted")
+                    ),
+                    "accepted_tasks": accepted_task_use_modes[mode],
+                }
+                for mode in USE_MODES
+            },
+            "paired_ab": False,
+            "comparison_basis": "accepted-task outcomes",
+        },
     }
 
 

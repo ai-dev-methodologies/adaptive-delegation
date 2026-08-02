@@ -1,7 +1,7 @@
 {
-  "schema_version": "0.3.0",
+  "schema_version": "0.4.0",
   "status": "provisional-evidence-seeking",
-  "policy_id": "adaptive-delegation-luna-sol-v0.3",
+  "policy_id": "adaptive-delegation-luna-terra-sol-v0.4",
   "policy_source": "package-default",
   "policy_ssot": "package-default",
   "required_model": "gpt-5.6-sol",
@@ -10,7 +10,7 @@
   "enforcement_mode": "fail-closed-declared-context",
   "parent_model_mutation": false,
   "strategy": {
-    "primary": "luna-first-then-sol-leaf",
+    "primary": "luna-first-terra-evidence-intermediate-then-sol-leaf",
     "leaf_ultra": "forbidden",
     "main_authority": {
       "model": "gpt-5.6-sol",
@@ -37,26 +37,26 @@
   },
   "price_evidence": {
     "kind": "official-api-token-price",
-    "as_of": "2026-08-02",
-    "source_url": "https://openai.com/index/gpt-5-6/",
+    "as_of": "2026-07-30",
+    "source_url": "https://openai.com/index/advancing-the-price-performance-frontier-with-gpt-5-6/",
     "currency": "USD",
     "unit": "per-million-tokens",
     "input_per_million": {
       "gpt-5.6-sol": 5.0,
-      "gpt-5.6-terra": 2.5,
-      "gpt-5.6-luna": 1.0
+      "gpt-5.6-terra": 2.0,
+      "gpt-5.6-luna": 0.2
     },
     "output_per_million": {
       "gpt-5.6-sol": 30.0,
-      "gpt-5.6-terra": 15.0,
-      "gpt-5.6-luna": 6.0
+      "gpt-5.6-terra": 12.0,
+      "gpt-5.6-luna": 1.2
     },
     "sol_equivalent_price_fraction": {
       "gpt-5.6-sol": 1.0,
-      "gpt-5.6-terra": 0.5,
-      "gpt-5.6-luna": 0.2
+      "gpt-5.6-terra": 0.4,
+      "gpt-5.6-luna": 0.04
     },
-    "cost_proxy_note": "Effort changes token use; compare accepted-task quality, latency, weighted tokens, and total Sol-equivalent cost rather than per-token price alone."
+    "cost_proxy_note": "Effort changes token use; compare accepted-task quality, latency, weighted tokens, and total Sol-equivalent cost rather than per-token price alone. Codex quota or credit units are not provider-token equivalents."
   },
   "model_capabilities": {
     "gpt-5.6-luna": {
@@ -118,12 +118,19 @@
       "model_tier": "frontier-tier",
       "reasoning_effort": "high"
     },
-    "terra_max": {
+    "terra_medium": {
       "authority": "leaf",
-      "role": "adaptive-terra-maker-max",
+      "role": "adaptive-terra-maker-medium",
       "model": "gpt-5.6-terra",
       "model_tier": "standard-tier",
-      "reasoning_effort": "max"
+      "reasoning_effort": "medium"
+    },
+    "terra_high": {
+      "authority": "leaf",
+      "role": "adaptive-terra-maker-high",
+      "model": "gpt-5.6-terra",
+      "model_tier": "standard-tier",
+      "reasoning_effort": "high"
     },
     "checker_luna_xhigh": {
       "authority": "leaf",
@@ -153,12 +160,19 @@
       "model_tier": "frontier-tier",
       "reasoning_effort": "high"
     },
-    "checker_terra_max": {
+    "checker_terra_medium": {
       "authority": "leaf",
-      "role": "adaptive-terra-checker-max",
+      "role": "adaptive-terra-checker-medium",
       "model": "gpt-5.6-terra",
       "model_tier": "standard-tier",
-      "reasoning_effort": "max"
+      "reasoning_effort": "medium"
+    },
+    "checker_terra_high": {
+      "authority": "leaf",
+      "role": "adaptive-terra-checker-high",
+      "model": "gpt-5.6-terra",
+      "model_tier": "standard-tier",
+      "reasoning_effort": "high"
     },
     "main_takeover_sol_ultra": {
       "authority": "main",
@@ -180,6 +194,7 @@
       "luna_high",
       "luna_xhigh",
       "luna_max",
+      "terra_medium",
       "sol_medium",
       "main_takeover_sol_ultra"
     ],
@@ -187,6 +202,7 @@
       "luna_high",
       "luna_xhigh",
       "luna_max",
+      "terra_medium",
       "sol_medium",
       "sol_high",
       "main_takeover_sol_ultra"
@@ -194,6 +210,7 @@
     "bounded_complex_implementation_or_verification": [
       "luna_xhigh",
       "luna_max",
+      "terra_high",
       "sol_medium",
       "sol_high",
       "main_takeover_sol_ultra"
@@ -201,6 +218,7 @@
     "bounded_complex_with_strong_oracle": [
       "luna_xhigh",
       "luna_max",
+      "terra_high",
       "sol_medium",
       "sol_high",
       "main_takeover_sol_ultra"
@@ -209,19 +227,30 @@
       "main_takeover_sol_ultra"
     ]
   },
-  "routing_experiments": {
-    "terra_max_coding_ab": {
-      "status": "dormant",
-      "automatic_selection": false,
-      "maker_route_id": "terra_max",
-      "checker_route_id": "checker_terra_max",
-      "activation_requirement": "future-versioned-explicit-experiment-contract",
-      "decision_basis": "representative accepted-task quality, latency, weighted tokens, and Sol-equivalent cost proxy"
+  "routing_observations": {
+    "terra": {
+      "routing_enabled": true,
+      "passive_logging": true,
+      "use_modes": ["post_luna_failure", "direct_latency"],
+      "direct_latency_predicate": [
+        "latency_sensitive",
+        "scoped",
+        "strong_oracle",
+        "recoverable",
+        "non_ambiguous"
+      ],
+      "comparison_basis": "accepted-task quality, latency, weighted tokens, and Sol-equivalent cost proxy",
+      "paired_ab": false,
+      "selection_note": "Ordinary runs passively record Terra use_mode; later audits compare accepted-task outcomes."
     }
   },
   "failure_actions": {
     "none": ["stop", "retain_route", "human_review"],
+    "path_accepted": ["continue_lane"],
+    "lane_blocked": ["return_to_main"],
+    "all_lanes_exhausted": ["stop"],
     "reasoning_insufficiency": ["raise_effort", "raise_model", "main_takeover"],
+    "acceptance_quality_failure": ["raise_model", "main_takeover"],
     "context_ceiling": ["raise_effort", "raise_model", "main_takeover"],
     "scope_or_retrieval_overbreadth": ["narrow_scope"],
     "tool_or_environment": ["environment_retry"],
@@ -309,15 +338,25 @@
       "model": "gpt-5.6-sol",
       "reasoning_effort": "high"
     },
-    "adaptive-terra-maker-max": {
+    "adaptive-terra-maker-medium": {
       "model_tier": "standard-tier",
       "model": "gpt-5.6-terra",
-      "reasoning_effort": "max"
+      "reasoning_effort": "medium"
     },
-    "adaptive-terra-checker-max": {
+    "adaptive-terra-maker-high": {
       "model_tier": "standard-tier",
       "model": "gpt-5.6-terra",
-      "reasoning_effort": "max"
+      "reasoning_effort": "high"
+    },
+    "adaptive-terra-checker-medium": {
+      "model_tier": "standard-tier",
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "medium"
+    },
+    "adaptive-terra-checker-high": {
+      "model_tier": "standard-tier",
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "high"
     }
   }
 }

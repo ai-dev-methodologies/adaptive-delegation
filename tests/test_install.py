@@ -60,16 +60,13 @@ class InstallerTests(unittest.TestCase):
                     "luna_high",
                     "luna_xhigh",
                     "luna_max",
+                    "terra_medium",
                     "sol_medium",
                     "sol_high",
                     "main_takeover_sol_ultra",
                 ],
             )
-            self.assertFalse(
-                policy["routing_experiments"]["terra_max_coding_ab"][
-                    "automatic_selection"
-                ]
-            )
+            self.assertFalse(policy["routing_observations"]["terra"]["paired_ab"])
             self.assertTrue((installed / "SKILL.md").is_file())
             source_version = (
                 ROOT / "adaptive-delegation" / "VERSION"
@@ -112,13 +109,13 @@ class InstallerTests(unittest.TestCase):
                                 "model": "obsolete",
                                 "reasoning_effort": "low",
                             },
-                            "adaptive-terra-maker-xhigh": {
+                            "adaptive-terra-maker-max": {
                                 "model": "gpt-5.6-terra",
-                                "reasoning_effort": "xhigh",
+                                "reasoning_effort": "max",
                             },
-                            "adaptive-terra-checker-high": {
+                            "adaptive-terra-checker-max": {
                                 "model": "gpt-5.6-terra",
-                                "reasoning_effort": "high",
+                                "reasoning_effort": "max",
                             },
                             "adaptive-terra-checker-xhigh": {
                                 "model": "gpt-5.6-terra",
@@ -133,8 +130,8 @@ class InstallerTests(unittest.TestCase):
             unrelated = agents / "custom-role.toml"
             obsolete.write_text("obsolete\n", encoding="utf-8")
             removed_terra = [
-                agents / "adaptive-terra-maker-xhigh.toml",
-                agents / "adaptive-terra-checker-high.toml",
+                agents / "adaptive-terra-maker-max.toml",
+                agents / "adaptive-terra-checker-max.toml",
                 agents / "adaptive-terra-checker-xhigh.toml",
             ]
             for role in removed_terra:
@@ -146,8 +143,8 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(obsolete.exists())
             self.assertTrue(all(not role.exists() for role in removed_terra))
-            self.assertTrue((agents / "adaptive-terra-maker-max.toml").is_file())
-            self.assertTrue((agents / "adaptive-terra-checker-max.toml").is_file())
+            self.assertTrue((agents / "adaptive-terra-maker-medium.toml").is_file())
+            self.assertTrue((agents / "adaptive-terra-maker-high.toml").is_file())
             self.assertEqual(unrelated.read_text(encoding="utf-8"), "preserve\n")
 
     def test_existing_codex_home_permissions_are_preserved(self) -> None:

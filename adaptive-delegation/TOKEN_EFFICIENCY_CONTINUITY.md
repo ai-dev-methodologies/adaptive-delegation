@@ -44,7 +44,8 @@ token_budget is optional/advisory: its absence never makes Native V2 ineligible
 and never triggers another routing system. Only explicitly hard-cap-required
 objectives use the typed direct Codex path; Native V2 remains the default.
 
-For Native Luna or Sol leaf routing, record the selected fixed `agent_type`, its
+For Native Luna, Terra, or Sol leaf routing, record the selected fixed
+`agent_type`, its
 verified installed model/effort binding, the matching effort argument, and
 `fork_turns="none"`. Absence of the selected model from an optional
 model-override enum is not a rejection when that fixed role is available.

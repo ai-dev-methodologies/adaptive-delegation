@@ -18,7 +18,7 @@ ROUTING_AUDIT_FIELDS = (
     "surface_schema_fingerprint",
 )
 ROUTING_AUDIT_ROUTE_FIELDS = frozenset({"route_id", "role", "route_model", "route_model_tier", "route_reasoning_effort"})
-ROUTING_AUDIT_OPTIONAL_FIELDS = frozenset({"override_reason"})
+ROUTING_AUDIT_OPTIONAL_FIELDS = frozenset({"override_reason", "use_mode", "direct_latency_predicate"})
 MAX_ATTEMPT_INDEX = 1_000_000
 MAX_TEXT_LENGTH = 256
 MAX_ID_LENGTH = 128
@@ -30,7 +30,11 @@ TASK_CLASSES = frozenset({
 })
 ORACLE_STRENGTHS = frozenset({"strong", "weak", "ambiguous"})
 RISK_CLASSES = frozenset({"low", "medium", "high"})
-SELECTION_BASES = frozenset({"policy_default", "failure_action", "human_override"})
+SELECTION_BASES = frozenset({"policy_default", "failure_action", "human_override", "direct_latency"})
+USE_MODES = frozenset({"post_luna_failure", "direct_latency"})
+DIRECT_LATENCY_PREDICATE_FIELDS = frozenset({
+    "latency_sensitive", "scoped", "strong_oracle", "recoverable", "non_ambiguous",
+})
 _ENUMS = {"task_class": TASK_CLASSES, "oracle_strength": ORACLE_STRENGTHS,
           "risk_class": RISK_CLASSES, "selection_basis": SELECTION_BASES}
 _ID_FIELDS = frozenset({"task_id", "main_session_id", "surface_identity"})
@@ -132,16 +136,20 @@ def validate_policy_routes(policy: Mapping[str, Any]) -> dict[str, dict[str, str
             raise _route_error("LADDER_MAIN_JUMP_INVALID", f"ladder {ladder_name!r} reaches main before its final step")
         if ladder_name in defaults and ladder[0] != defaults[ladder_name]:
             raise _route_error("LADDER_DEFAULT_MISMATCH", f"ladder {ladder_name!r} does not start at its task default")
-    experiments = policy.get("routing_experiments")
-    if not isinstance(experiments, Mapping) or not experiments:
-        raise _route_error("EXPERIMENT_POLICY_INVALID", "routing_experiments must declare dormant optional routes")
+    observations = policy.get("routing_observations")
+    terra_observation = observations.get("terra") if isinstance(observations, Mapping) else None
+    if not isinstance(terra_observation, Mapping):
+        raise _route_error("OBSERVATION_POLICY_INVALID", "routing_observations.terra is required")
+    if terra_observation.get("routing_enabled") is not True or terra_observation.get("passive_logging") is not True or terra_observation.get("paired_ab") is not False:
+        raise _route_error("OBSERVATION_POLICY_INVALID", "Terra routing and passive telemetry must be explicit and non-paired")
+    if terra_observation.get("use_modes") != ["post_luna_failure", "direct_latency"]:
+        raise _route_error("OBSERVATION_POLICY_INVALID", "Terra use modes must distinguish post-Luna failure and direct latency")
+    predicate = terra_observation.get("direct_latency_predicate")
+    if not isinstance(predicate, list) or set(predicate) != DIRECT_LATENCY_PREDICATE_FIELDS:
+        raise _route_error("OBSERVATION_POLICY_INVALID", "direct latency predicate must cover all five pre-observable conditions")
     automatic_steps = {step for ladder in ladders.values() for step in ladder}
-    for name, experiment in experiments.items():
-        if not isinstance(name, str) or not isinstance(experiment, Mapping) or experiment.get("status") != "dormant" or experiment.get("automatic_selection") is not False:
-            raise _route_error("EXPERIMENT_POLICY_INVALID", f"experiment {name!r} must remain dormant and explicit")
-        maker, checker = experiment.get("maker_route_id"), experiment.get("checker_route_id")
-        if maker not in result or checker not in result or maker in automatic_steps or checker in automatic_steps:
-            raise _route_error("EXPERIMENT_ROUTE_INVALID", f"experiment {name!r} is missing or appears in an automatic ladder")
+    if "terra_max" in result or "checker_terra_max" in result:
+        raise _route_error("STALE_TERRA_BINDING", "Terra xhigh/max bindings are not retained by this policy")
     contract = policy.get("transition_contract")
     if not isinstance(contract, Mapping) or contract.get("max_same_route_retries_per_stage") != 1 or contract.get("require_contiguous_attempt_indices") is not True or contract.get("require_previous_attempt_evidence") is not True or contract.get("require_current_policy_fingerprint") is not True:
         raise _route_error("TRANSITION_CONTRACT_INVALID", "transition contract must be fail-closed and bounded")
@@ -167,17 +175,35 @@ def applicable_ladder(policy: Mapping[str, Any], task_class: str, oracle_strengt
     return tuple(ladder)
 
 
+def _validate_direct_latency_predicate(predicate: Mapping[str, Any] | None) -> None:
+    if not isinstance(predicate, Mapping) or not DIRECT_LATENCY_PREDICATE_FIELDS.issubset(predicate):
+        raise _route_error("DIRECT_LATENCY_PREDICATE_REQUIRED", "direct Terra requires all five pre-observable predicate fields")
+    if any(predicate[field] is not True for field in DIRECT_LATENCY_PREDICATE_FIELDS):
+        raise _route_error("DIRECT_LATENCY_PREDICATE_FALSE", "direct Terra requires a true latency-sensitive, scoped, strong-oracle, recoverable, non-ambiguous predicate")
+    budget = predicate.get("latency_budget_ms")
+    evidence = predicate.get("latency_evidence_ref")
+    if not (
+        isinstance(budget, int) and not isinstance(budget, bool) and 1 <= budget <= 86_400_000
+    ) and not (
+        isinstance(evidence, str) and 1 <= len(evidence) <= MAX_TEXT_LENGTH and _SAFE_ID.fullmatch(evidence)
+    ):
+        raise _route_error("DIRECT_LATENCY_EVIDENCE_REQUIRED", "direct Terra requires a bounded latency budget or evidence reference")
+
+
 def validate_route_selection(policy: Mapping[str, Any], *, route_id: str, task_class: str,
                              oracle_strength: str, selection_basis: str, role: str,
                              model: str, reasoning_effort: str, attempt_index: int = 1,
-                             override_reason: str | None = None) -> dict[str, str]:
+                             override_reason: str | None = None,
+                             direct_latency_predicate: Mapping[str, Any] | None = None,
+                             use_mode: str | None = None,
+                             risk_class: str | None = None) -> dict[str, str]:
     """Validate route identity, exact role/model/effort, and first-route policy."""
     route = route_for(policy, route_id)
     expected = policy.get("task_defaults", {}).get(task_class)
     ladder = applicable_ladder(policy, task_class, oracle_strength)
     if route_id not in ladder:
         raise _route_error("ROUTE_NOT_IN_LADDER", "route is outside the applicable ladder")
-    if attempt_index == 1 and selection_basis != "human_override":
+    if attempt_index == 1 and selection_basis not in {"human_override", "direct_latency"}:
         if selection_basis != "policy_default" or route_id != expected:
             raise _route_error("FIRST_ROUTE_INVALID", "first route must equal the task default")
     if selection_basis == "human_override":
@@ -185,6 +211,20 @@ def validate_route_selection(policy: Mapping[str, Any], *, route_id: str, task_c
             raise _route_error("HUMAN_OVERRIDE_UNBOUNDED", "human override requires a bounded reason")
     elif selection_basis not in SELECTION_BASES:
         raise _route_error("SELECTION_BASIS_INVALID", "selection basis is invalid")
+    if route["model"] == "gpt-5.6-terra":
+        expected_use_mode = "direct_latency" if selection_basis == "direct_latency" else "post_luna_failure"
+        if selection_basis == "direct_latency":
+            if attempt_index != 1:
+                raise _route_error("DIRECT_LATENCY_NOT_FIRST", "direct latency Terra selection is only a first route")
+            if oracle_strength != "strong" or risk_class == "high" or task_class == "weak_oracle_ambiguous_high_risk_or_long_contract":
+                raise _route_error("DIRECT_LATENCY_ORACLE_INVALID", "direct Terra requires a strong oracle and non-ambiguous task")
+            _validate_direct_latency_predicate(direct_latency_predicate)
+        elif selection_basis != "failure_action":
+            raise _route_error("TERRA_SELECTION_INVALID", "Terra must follow an observed Luna failure or a direct latency predicate")
+        if use_mode != expected_use_mode:
+            raise _route_error("TERRA_USE_MODE_MISMATCH", "Terra use_mode does not match the selection basis")
+    elif selection_basis == "direct_latency":
+        raise _route_error("DIRECT_LATENCY_ROUTE_INVALID", "direct latency is only valid for Terra routes")
     if (route["role"], route["model"], route["reasoning_effort"]) != (role, model, reasoning_effort):
         raise _route_error("ROUTE_ATTESTATION_MISMATCH", "route does not match its package binding")
     return route
@@ -199,6 +239,8 @@ def route_transition(policy: Mapping[str, Any], task_class: str, oracle_strength
         index = ladder.index(previous_route)
     except ValueError:
         raise _route_error("ROUTE_HISTORY_INVALID", "previous route is outside the ladder") from None
+    if failure_class == "tool_or_environment" and next_action in {"raise_effort", "raise_model", "main_takeover"}:
+        raise _route_error("TRANSITION_KIND_MISMATCH", "runtime or tool failures require environment recovery, not model escalation")
     if next_action in {"retain_route", "retry_same_route", "narrow_scope", "environment_retry"}:
         return previous_route
     if next_action == "main_takeover":
@@ -333,6 +375,10 @@ def validate_routing_audit(value: Mapping[str, Any]) -> dict[str, Any]:
     for field in ("route_model", "route_model_tier", "route_reasoning_effort"):
         if field in value and (not isinstance(value[field], str) or not value[field] or len(value[field]) > MAX_TEXT_LENGTH):
             raise PolicyContractError("ROUTING_AUDIT_ROUTE_VALUE_INVALID", f"routing_audit.{field} is invalid")
+    if "use_mode" in value and value["use_mode"] not in USE_MODES:
+        raise PolicyContractError("ROUTING_AUDIT_USE_MODE_INVALID", "routing_audit.use_mode is invalid")
+    if "direct_latency_predicate" in value:
+        _validate_direct_latency_predicate(value["direct_latency_predicate"])
     return result
 
 

@@ -44,14 +44,17 @@ Delegate bounded independent work aggressively when it materially improves
 speed, token efficiency, or verification quality, but only inside one
 canonical **OBJECTIVE LOCK**. No valid Objective Lock, no child launch.
 
-Before routing, construct a self-contained **IMPLEMENTATION ENVELOPE** from the
-current user request and repository evidence. It must declare objective,
-non-goals (`non_goals`), read/write/network authority, intended behavior, acceptance
-evidence, verification ceiling, known side effects, and stop condition. The
-skill must not depend on a user-global `AGENTS.md` or any machine-specific
-policy file to supply these fields.
+Before routing, construct a self-contained **OBJECTIVE LOCK** from the current
+user request and repository evidence. It must declare the terminal outcome,
+non-goals (`non_goals`), read/write/network authority, authorized lanes, a
+progression policy, and global terminal conditions. The current method, data
+source, stage, test plan, path-local verification, side effects, and path stop
+condition belong to a replaceable path/iteration envelope. Every packet must
+also declare `terminal_outcome`; no valid lock means no child launch. The skill
+must not depend on a user-global `AGENTS.md` or machine-specific policy file to
+supply these fields.
 
-The dispatcher serializes one route-independent canonical v2 JSON object and
+The dispatcher serializes one route-independent canonical v3 JSON object and
 carries its SHA-256 consistency digest through Native admission, typed
 execution, terminal/integration records, linked audit schema `0.3.0`, retry,
 escalation, Checker review, and main takeover. A stronger model, higher effort,
@@ -66,9 +69,19 @@ Delegating a narrow leaf never authorizes the main to perform broader discovery
 or extra review around it.
 
 Use the smallest verification path that proves the acceptance evidence. Stop
-as soon as that evidence passes and the stop condition applies. After
-sufficient evidence exists, do not perform additional reviews,
-repository-wide analysis, repeated validation, optional model consultations,
+as soon as that evidence passes and the stop condition applies. A blocked path
+returns to the main for an in-scope alternative and ends the current lane
+attempt chain; the main starts the next authorized lane with a new path
+envelope under the same lock. A truthful blocked-lane report uses a successful
+child process result with receipt outcome `path_blocked`; it is not terminal
+acceptance. Final BLOCKED is valid only when all authorized lanes are terminal.
+Continue iterative discovery or
+flywheel work until the terminal outcome passes or the user stop condition
+applies. The verification ceiling limits nonessential verification and never
+truncates core outcome work. Never fabricate evidence or substitute an
+unauthorized method. After sufficient evidence exists, do not perform
+additional reviews, repository-wide analysis, repeated validation, optional
+model consultations,
 unrelated cleanup, refactoring, architectural redesign, abstraction,
 documentation expansion, speculative robustness, or consistency polishing.
 Record adjacent improvements as concise backlog findings instead of
@@ -100,8 +113,9 @@ The policy source of truth is the package config at
 The repository and package sources are canonical; an installed copy is a
 deployment target and does not become a second policy source.
 
-The default strategy is Luna-first, effort-first within Luna, then bounded Sol
-leaf escalation before main takeover:
+The default strategy is Luna-first, effort-first within Luna, then an
+evidence-seeking Terra intermediate after an observable Luna acceptance or
+quality failure, followed by bounded Sol leaf escalation before main takeover:
 
 | Work shape | Default route |
 | --- | --- |
@@ -115,9 +129,9 @@ not inherit the main's authority or `ultra` effort. The main retains authority
 and may take over at `gpt-5.6-sol/ultra`. There is one same-model reasoning
 retry per stage, with reevaluation after every attempt. The fixed ladders are:
 
-- Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> sol/medium -> main-takeover sol/ultra`.
-- Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> sol/medium -> sol/high -> main-takeover sol/ultra`.
-- Bounded complex implementation or verification: `luna/xhigh -> luna/max -> sol/medium -> sol/high -> main-takeover sol/ultra`.
+- Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> terra/medium -> sol/medium -> main-takeover sol/ultra`.
+- Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> terra/medium -> sol/medium -> sol/high -> main-takeover sol/ultra`.
+- Bounded complex implementation, debugging, or review: `luna/xhigh -> luna/max -> terra/high -> sol/medium -> sol/high -> main-takeover sol/ultra`.
 - Bounded complex work with a strong oracle uses the same bounded-complex ladder and may not skip a configured step.
 - Weak-oracle, ambiguous/high-risk, or long-contract work stays main-authoritative at `sol/ultra`.
 
@@ -130,16 +144,21 @@ exact model and effort. `sol/ultra` is a main-authority route, never a child
 role. The runtime validator rejects unknown routes, skipped steps, mismatched
 counters, exhausted same-route retries, and model/effort substitutions.
 
-The config records the official 2026-08-02 API token prices and normalized
-Sol-equivalent factors: Luna `0.2`, Terra `0.5`, and Sol `1.0`. Effort changes
-token consumption, so per-token price alone never selects a route. Routing is
+The config records the official 2026-07-30 API token prices and normalized
+Sol-equivalent factors: Luna `0.04`, Terra `0.4`, and Sol `1.0`. Effort changes
+token consumption, so per-token price alone never selects a route; Codex quota
+or credit units are not provider-token equivalents. Routing is
 provisional and evidence-seeking; accepted-task quality, latency, weighted
 tokens, and total cost determine later revisions.
 
-Terra is absent from every automatic ladder. `terra/max` remains installed as
-a dormant future A/B experiment binding only. The current dispatcher cannot
-select it by default, failure action, or human override; activating it requires
-a future versioned experiment contract with representative acceptance oracles.
+Terra `medium` and `high` are evidence-seeking intermediate routes only:
+`medium` is for scoped implementation or transformation, while `high` is for
+bounded complex, debugging, or review work. Terra `xhigh` and `max` are not
+automatic routes and no dormant A/B binding is retained. Ordinary runs passively
+record Terra `use_mode=post_luna_failure` or `use_mode=direct_latency`; later
+audits compare accepted-task outcomes, with no perpetual or random paired A/B.
+The main may directly choose Terra only when it records a pre-observable,
+latency-sensitive, scoped, strong-oracle, recoverable, non-ambiguous predicate.
 
 ## Observable failure and review evidence
 
