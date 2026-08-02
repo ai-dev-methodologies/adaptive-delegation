@@ -174,6 +174,30 @@ paired experiments. The main may directly select Terra only with a
 pre-observable latency-sensitive, scoped, strong-oracle, recoverable,
 non-ambiguous predicate. Terra has no `ultra` route.
 
+## Maintainer promotion and local deployment order
+
+`main` is the only deployable branch. Never install a feature branch,
+uncommitted worktree, or unpublished commit into a user Codex home.
+
+For every installable change:
+
+1. Complete the change on a feature branch and update the relevant README or
+   installation documentation, `CHANGELOG.md`, and
+   `adaptive-delegation/VERSION` when package contents change.
+2. Run the targeted and package validation required by this repository.
+3. Commit and push the feature branch.
+4. Merge the verified feature branch into `main`, then push `main`.
+5. Fetch the remote and verify that the deployment checkout is clean and its
+   commit exactly matches `origin/main`.
+6. Only then run the isolated promotion gate and user-level installer from
+   that published `main` commit.
+7. Finish by requiring `version_status.py` to report `status=current` with
+   matching source and installed digests.
+
+This order applies to the maintainer's own computer and to prompt-driven
+installation on other computers. Release history belongs in `CHANGELOG.md`;
+README and installation documents describe the active behavior and procedure.
+
 ## Install from GitHub
 
 Python 3.11 or newer is required.

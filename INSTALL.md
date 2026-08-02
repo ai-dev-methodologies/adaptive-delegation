@@ -38,6 +38,20 @@ digests, changed relative paths, and a status such as `not_installed`,
 `installed_unversioned`. Read [`CHANGELOG.md`](CHANGELOG.md) for the
 human-readable changes between versions.
 
+## Published-main deployment rule
+
+User-level installation is permitted only from a committed revision already
+merged and pushed to `origin/main`. Do not install from a feature branch, a
+dirty worktree, an uncommitted change, or a local `main` commit that has not
+been pushed. Before the promotion gate or installer, fetch `origin`, switch to
+`main`, fast-forward it, and verify that the checkout is clean and `HEAD`
+matches `origin/main`.
+
+Package changes must update `adaptive-delegation/VERSION` and `CHANGELOG.md`;
+the applicable README and installation documentation must describe the active
+behavior or workflow. The maintainer follows the same published-main rule as
+every other developer.
+
 ## First installation
 
 Clone the repository, validate the package without writing, run the portable
@@ -139,7 +153,7 @@ preserve it as historical evidence and re-execute the bounded work with a new
 task ID, attempt index 1, dispatch ID, packet, and v2/`0.3.0` chain.
 
 Package 0.5.2 changes the policy fingerprint and adds a quota-first,
-latency-insensitive goal route: Luna max -> Terra xhigh -> Terra max -> Sol
+latency-insensitive long-horizon route: Luna max -> Terra xhigh -> Terra max -> Sol
 high. The existing latency-sensitive Terra medium/high route remains. Finalize pending older
 attempts before updating. If an attempt remains pending, preserve it as
 historical evidence and restart the bounded work with a new task ID, attempt

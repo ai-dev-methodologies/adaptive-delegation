@@ -255,6 +255,15 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Leaf `ultra` remains forbidden.", readme)
         self.assertIn("dispatch_attestation.jsonl", install)
         self.assertIn("Before updating, finalize every pending attempt", install)
+        self.assertIn("## Maintainer promotion and local deployment order", readme)
+        self.assertIn("`main` is the only deployable branch.", readme)
+        self.assertIn("## Published-main deployment rule", install)
+        self.assertIn("matches `origin/main`", install)
+        install_prompt = (ROOT / "CODEX-INSTALL-PROMPT.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("git fetch --force origin main", install_prompt)
+        self.assertIn("Never install a feature-branch commit.", install_prompt)
         self.assertIn(
             "new task ID, attempt index 1, dispatch ID, packet",
             normalized_install,

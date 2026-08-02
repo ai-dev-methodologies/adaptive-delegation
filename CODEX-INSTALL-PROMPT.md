@@ -5,9 +5,9 @@ it is not distributed through npm or another package registry.
 
 Send the prompt below to a fresh Codex CLI session on the target computer. The
 prompt explicitly authorizes installation into that developer's resolved Codex
-home only after the isolated promotion gate passes. Replace `SOURCE_REF` when
-an immutable tag or commit is required; `main` selects the current published
-repository state.
+home only after the isolated promotion gate passes. Installation always
+resolves the current published `origin/main`; feature branches, uncommitted
+worktrees, and unpublished commits are not deployment sources.
 
 ```text
 Install or update the Codex-only Adaptive Delegation skill from:
@@ -24,11 +24,12 @@ Execute this workflow to completion without asking about routine reversible
 steps:
 
 1. Clone the repository into a fresh temporary or dedicated checkout, or fetch
-   and cleanly switch an existing canonical checkout to SOURCE_REF. Do not
+   and cleanly switch an existing canonical checkout to `main`. Do not
    discard unrelated local changes; use a fresh checkout if the existing one is
-   dirty. From the clean checkout, run `git fetch --force origin "$SOURCE_REF"`
-   and `git checkout --detach FETCH_HEAD`. Record `git rev-parse HEAD` and use
-   that resolved commit for the remainder of this installation.
+   dirty. From the clean checkout, run `git fetch --force origin main` and
+   `git checkout --detach FETCH_HEAD`. Record `git rev-parse HEAD`, verify it
+   equals `git rev-parse origin/main`, and use that published main commit for
+   the remainder of this installation. Never install a feature-branch commit.
 2. Read README.md, INSTALL.md, CHANGELOG.md, and
    adaptive-delegation/VERSION before changing the Codex home.
 3. Resolve the target Codex home from CODEX_HOME when set, otherwise use

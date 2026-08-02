@@ -14,11 +14,13 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
-## [0.5.2] - 2026-08-02
+## [0.5.2] - 2026-08-03
 
 - Corrected the long-horizon classifier so Goal/Ultragoal membership is not a
   route input. The qualified path is available for any bounded slice whose
   latency, horizon, oracle, and risk evidence satisfies the main's decision.
+- Documented the main-only release order: validate on a feature branch, merge
+  and push `main`, then install locally from the clean published main commit.
 
 ## [0.5.1] - 2026-08-02
 
