@@ -1,5 +1,8 @@
 __pycache__/
 *.py[cod]
 .DS_Store
-.omx/
+.codex/auth.json
+.codex/sessions/
+.codex/state/
+.omc/
 .serena/

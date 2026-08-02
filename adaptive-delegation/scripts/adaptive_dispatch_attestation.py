@@ -10,6 +10,7 @@ import json
 import os
 import queue
 import re
+import secrets
 import shlex
 import shutil
 import signal
@@ -20,13 +21,20 @@ import threading
 import time
 import tomllib
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
-CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
+def _resolved_runtime_home() -> Path:
+    """Use only CODEX_HOME when configured, otherwise the user's Codex home."""
+    configured = os.environ.get("CODEX_HOME")
+    return Path(configured).expanduser() if configured else Path.home() / ".codex"
+
+
+CODEX_HOME = _resolved_runtime_home()
 DEFAULT_LEDGER = CODEX_HOME / "state" / "adaptive-delegation" / "dispatch_attestation.jsonl"
 AGENT_CONFIG_ROOT = CODEX_HOME / "agents"
 ADAPTIVE_SKILL_ROOT = CODEX_HOME / "skills" / "adaptive-delegation"
@@ -34,12 +42,8 @@ PACKAGE_ROLE_ROOT = ADAPTIVE_SKILL_ROOT / "roles"
 ROUTING_POLICY_CONFIG = (
     ADAPTIVE_SKILL_ROOT / "config" / "model-routing.defaults.json"
 )
-LOCAL_ROUTING_POLICY_CONFIG = (
-    CODEX_HOME / "state" / "model-routing" / "policy.local.json"
-)
 MODEL_ROUTING_LEDGER = CODEX_HOME / "state" / "model-routing" / "attempts.jsonl"
 MODEL_ROUTING_REVIEW_DIR = CODEX_HOME / "state" / "model-routing" / "reviews"
-LEGACY_CAPABILITY_CONFIG = CODEX_HOME / ".omx-config.json"
 SESSIONS_ROOT = CODEX_HOME / "sessions"
 LEAF_RUNTIME_HOME = CODEX_HOME / "leaf-runtime"
 MIN_TOKEN_BUDGET = 1_000
@@ -55,8 +59,28 @@ MAX_CHILD_STDOUT_BYTES = 16_000_000
 V2_PACKET_VERSION = 2
 V2_DELTA_SUMMARY_MAX_CHARS = 1_024
 V2_COMMAND_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-RECEIPT_VERSION = 1
+RECEIPT_VERSION = 2
 RECEIPT_MARKER_TYPE = "adaptive_dispatch_receipt"
+TERMINAL_EVENT_VERSION = 2
+INTEGRATION_CHECKER_AGENT_TYPE = "adaptive-sol-checker-medium"
+CHILD_ENV_ALLOWLIST = (
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "COLORTERM",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+)
 V2_ESTIMATE_FIELDS = (
     "tool_calls",
     "max_output_tokens_per_call",
@@ -77,10 +101,16 @@ EXIT_MODEL_ROUTING_AUDIT_FAILURE = 26
 REQUIRED_PACKET_FIELDS = (
     "dispatch_id",
     "objective",
+    "terminal_outcome",
     "agent_type",
     "model_tier",
     "reasoning_effort",
     "write_scope",
+    "read_scope",
+    "non_goals",
+    "intended_behavior",
+    "acceptance_evidence",
+    "verification_ceiling",
     "resource_cap",
     "evidence_path",
     "stop_condition",
@@ -101,16 +131,13 @@ SHELL_EXECUTABLES = {
     "tcsh",
     "zsh",
 }
-CAPABILITY_MODEL_KEYS = {
-    "frontier-tier": "OMX_DEFAULT_FRONTIER_MODEL",
-    "standard-tier": "OMX_DEFAULT_STANDARD_MODEL",
-    "spark-tier": "OMX_DEFAULT_SPARK_MODEL",
-}
 UUID_PATTERN = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 ROLLOUT_PATTERN = re.compile(
     rf"^rollout-(?P<date>\d{{4}}-\d{{2}}-\d{{2}})T\d{{2}}-\d{{2}}-\d{{2}}-(?P<session_id>{UUID_PATTERN})\.jsonl$"
 )
 SESSION_ID_OUTPUT_PATTERN = re.compile(rf"^session id:\s*(?P<session_id>{UUID_PATTERN})\s*$")
+TERMINAL_NONCE_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+OBJECTIVE_LOCK_VERSION = "3"
 
 
 @dataclass(frozen=True)
@@ -148,10 +175,18 @@ class RuntimeEvidence:
 
 @dataclass(frozen=True)
 class ReceiptEnvelope:
-    """A locally secure receipt file whose contents are still untrusted input."""
+    """A permission-checked local receipt whose contents remain untrusted."""
 
     value: dict[str, Any]
     path: Path
+
+
+@dataclass(frozen=True)
+class TerminalEvent:
+    """Dispatcher-captured completion facts used to finalize integration."""
+
+    value: dict[str, Any]
+    digest: str
 
 
 @dataclass
@@ -166,7 +201,10 @@ class AdaptiveAuditContext:
     review_dir: Path
     attestation_ledger: Path
     started: float
+    contract_module: Any
     audit_module: Any
+    objective_lock_version: str
+    objective_lock_digest: str
 
 
 NATIVE_REQUIRED_SCHEMA_FIELDS = (
@@ -209,6 +247,10 @@ def _canonical_digest(value: Any) -> str:
     ).hexdigest()
 
 
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
 def _role_config_digest(binding: RoleBinding) -> str | None:
     if not _secure_owned_file(binding.role_config, exact_mode=0o600):
         return None
@@ -230,6 +272,8 @@ def _native_structural_admission(
     binding: RoleBinding,
     *,
     dispatch_id: str,
+    objective_lock_version: str,
+    objective_lock_digest: str,
 ) -> dict[str, Any]:
     """Reject structurally impossible Native V2 calls before child creation.
 
@@ -254,9 +298,17 @@ def _native_structural_admission(
         "selected_fallback": fallback,
         "fallback_scope_fingerprint": None,
         "status": "rejected",
+        "objective_lock_version": objective_lock_version,
+        "objective_lock_digest": objective_lock_digest,
     }
     value, receipt_path = _receipt_value(value)
     if value is None or receipt_path is None:
+        return receipt
+    if (
+        value.get("objective_lock_version") != objective_lock_version
+        or value.get("objective_lock_digest") != objective_lock_digest
+    ):
+        receipt["rejection_reason"] = "admission_objective_lock_mismatch"
         return receipt
     surface = value.get("surface_identity")
     schema = value.get("original_callable_schema")
@@ -336,33 +388,39 @@ def _native_admission_provenance(
     session_id: str | None,
 ) -> dict[str, Any]:
     """Require a secure, rollout-bound envelope before protected execution."""
+    def reject(reason: str) -> dict[str, Any]:
+        receipt.update(
+            rejection_reason=reason,
+            status="rejected",
+            child_count=0,
+            child_tokens=0,
+            selected_fallback="typed_external_worker",
+        )
+        return receipt
+
     value, receipt_path = _receipt_value(value)
     if value is None or receipt_path is None:
-        receipt["rejection_reason"] = "invalid_admission_receipt"
-        receipt["status"] = "rejected"
-        return receipt
+        return reject("invalid_admission_receipt")
     if value.get("receipt_kind") != "native_admission" or value.get("receipt_version") != RECEIPT_VERSION:
-        receipt["rejection_reason"] = "receipt_kind_or_version_invalid"
-        receipt["status"] = "rejected"
-        return receipt
+        return reject("receipt_kind_or_version_invalid")
     if value.get("dispatch_id") != dispatch_id:
-        receipt["rejection_reason"] = "admission_dispatch_id_mismatch"
-        receipt["status"] = "rejected"
-        return receipt
+        return reject("admission_dispatch_id_mismatch")
+    expected_lock_version = receipt.get("objective_lock_version")
+    if expected_lock_version is not None and (
+        value.get("objective_lock_version") != expected_lock_version
+        or value.get("objective_lock_digest") != receipt.get("objective_lock_digest")
+    ):
+        return reject("admission_objective_lock_mismatch")
     issuer = value.get("issuer")
     if not isinstance(issuer, dict) or issuer.get("rollout_session_id") != session_id:
-        receipt["rejection_reason"] = "trusted_precreation_issuer_missing"
-        return receipt
+        return reject("trusted_precreation_issuer_missing")
     if issuer.get("role") != _binding_triple(binding) or issuer.get("role_config") != str(binding.role_config):
-        receipt["rejection_reason"] = "admission_issuer_binding_mismatch"
-        return receipt
+        return reject("admission_issuer_binding_mismatch")
     role_digest = _role_config_digest(binding)
     if role_digest is None or issuer.get("role_config_digest") != role_digest:
-        receipt["rejection_reason"] = "admission_role_config_digest_invalid"
-        return receipt
+        return reject("admission_role_config_digest_invalid")
     if not _rollout_has_receipt_marker(rollout, session_id, value):
-        receipt["rejection_reason"] = "trusted_precreation_marker_missing"
-        return receipt
+        return reject("trusted_precreation_marker_missing")
     receipt["gate_order"] = list(NATIVE_GATE_ORDER)
     receipt["rejection_reason"] = None
     receipt["child_count"] = None
@@ -372,40 +430,19 @@ def _native_admission_provenance(
     return receipt
 
 
-def _native_admission(
-    value: Any,
-    binding: RoleBinding,
-    *,
-    dispatch_id: str,
-    rollout: Path | None,
-    session_id: str | None,
-    require_provenance: bool = True,
-) -> dict[str, Any]:
-    """Compatibility wrapper for callers that need the complete gate."""
-    receipt = _native_structural_admission(value, binding, dispatch_id=dispatch_id)
-    if receipt["status"] != "structurally_eligible" or not require_provenance:
-        return receipt
-    return _native_admission_provenance(
-        value,
-        receipt,
-        binding,
-        dispatch_id=dispatch_id,
-        rollout=rollout,
-        session_id=session_id,
-    )
-
-
 def _integration_gate(
     value: Any,
     *,
+    packet: dict[str, Any],
     binding: RoleBinding,
     runtime: RuntimeEvidence | None,
     expected_session_id: str | None,
     selected_launch_path: str,
     parent_enforced: bool,
+    terminal_event: TerminalEvent | None,
     dispatch_id: str | None = None,
 ) -> dict[str, Any]:
-    """Return an allowlisted integration decision; missing proof never integrates."""
+    """Finalize only a receipt bound to a dispatcher-captured terminal event."""
     gate: dict[str, Any] = {
         "status": "blocked",
         "reason": "integration_receipt_missing",
@@ -417,18 +454,135 @@ def _integration_gate(
             "quantitative_caps_enforced": False,
         },
     }
+    if terminal_event is None:
+        gate["reason"] = "terminal_event_missing"
+        return gate
+    terminal_runtime = _trusted_terminal_runtime(terminal_event)
+    if terminal_runtime is None:
+        gate["reason"] = "trusted_terminal_event_invalid"
+        return gate
+    terminal = terminal_event.value
+    packet_digest = _canonical_digest(packet)
+    objective_lock_digest = _objective_lock_digest(packet)
+    triple = _binding_triple(binding)
+    child = terminal.get("child")
+    terminal_result = terminal.get("terminal_result")
+    terminal_nonce = terminal.get("terminal_nonce")
+    terminal_parent_enforced = terminal.get("parent_enforced")
+    main_session_id = terminal.get("main_session_id")
+    typed_launch_paths = {"typed_external_worker", "corrected_typed_worker"}
+    if (
+        terminal.get("version") != TERMINAL_EVENT_VERSION
+        or terminal.get("packet_digest") != packet_digest
+        or terminal.get("objective_lock_version") != OBJECTIVE_LOCK_VERSION
+        or terminal.get("objective_lock_digest") != objective_lock_digest
+        or terminal.get("dispatch_id") != dispatch_id
+        or terminal.get("selected_launch_path") != selected_launch_path
+        or selected_launch_path not in {"protected", *typed_launch_paths}
+        or terminal.get("actual") != triple
+        or not isinstance(child, dict)
+        or child.get("session_id") != terminal_runtime.session_id
+        or child.get("role") != triple
+        or terminal_runtime.model != binding.model
+        or terminal_runtime.effort != binding.effort
+        or not isinstance(terminal_result, dict)
+        or isinstance(terminal_result.get("returncode"), bool)
+        or terminal_result.get("returncode") != EXIT_SUCCESS
+        or terminal_result.get("succeeded") is not True
+        or not isinstance(terminal_nonce, str)
+        or TERMINAL_NONCE_PATTERN.fullmatch(terminal_nonce) is None
+        or not isinstance(main_session_id, str)
+        or not main_session_id
+        or terminal_parent_enforced is not parent_enforced
+        or (
+            selected_launch_path in typed_launch_paths
+            and terminal_parent_enforced is not True
+        )
+        or (
+            selected_launch_path == "protected"
+            and terminal_parent_enforced is not False
+        )
+    ):
+        gate["reason"] = "terminal_event_binding_invalid"
+        return gate
+    if (
+        runtime is None
+        or expected_session_id is None
+        or runtime != terminal_runtime
+        or expected_session_id != terminal_runtime.session_id
+    ):
+        gate["reason"] = "trusted_unique_rollout_identity_missing"
+        return gate
+    if _worktree_digest(packet) != terminal.get("worktree_digest"):
+        gate["reason"] = "terminal_worktree_stale_or_mutable"
+        return gate
     value, receipt_path = _receipt_value(value)
     if value is None or receipt_path is None:
         return gate
-    triple = _binding_triple(binding)
     if value.get("receipt_kind") != "integration" or value.get("receipt_version") != RECEIPT_VERSION:
         gate["reason"] = "receipt_kind_or_version_invalid"
+        return gate
+    outcome_state = value.get("outcome_state")
+    if outcome_state not in {
+        "path_accepted",
+        "path_blocked",
+        "terminal_outcome_accepted",
+        "all_lanes_exhausted",
+    }:
+        gate["reason"] = "outcome_state_invalid"
+        return gate
+    lane_id = value.get("lane_id")
+    authorized_lanes = packet.get("authorized_lanes", ["declared_write_scope"])
+    if not isinstance(lane_id, str) or lane_id not in authorized_lanes or lane_id != packet.get("lane_id", "declared_write_scope"):
+        gate["reason"] = "lane_id_invalid"
+        return gate
+    if outcome_state == "all_lanes_exhausted":
+        lane_results = value.get("lane_results")
+        if (
+            not isinstance(lane_results, dict)
+            or set(lane_results) != set(authorized_lanes)
+            or any(item != "path_blocked" for item in lane_results.values())
+        ):
+            gate["reason"] = "all_lanes_exhaustion_evidence_missing"
+            return gate
+    if outcome_state == "path_blocked" and value.get("blocked_reason") not in {
+        "data_unavailable", "authority_unavailable", "other"
+    }:
+        gate["reason"] = "blocked_reason_invalid"
+        return gate
+    if value.get("path_envelope_digest") != _path_iteration_envelope_digest(packet, lane_id):
+        gate["reason"] = "path_envelope_digest_mismatch"
         return gate
     if dispatch_id is None or value.get("dispatch_id") != dispatch_id:
         gate["reason"] = "integration_dispatch_id_mismatch"
         return gate
-    if runtime is None or expected_session_id is None or value.get("rollout_session_id") != expected_session_id:
+    if value.get("packet_digest") != packet_digest:
+        gate["reason"] = "integration_packet_digest_mismatch"
+        return gate
+    if (
+        value.get("objective_lock_version") != OBJECTIVE_LOCK_VERSION
+        or value.get("objective_lock_digest") != objective_lock_digest
+    ):
+        gate["reason"] = "integration_objective_lock_mismatch"
+        return gate
+    if (
+        value.get("rollout_session_id") != expected_session_id
+        or value.get("child_session_id") != terminal_runtime.session_id
+        or value.get("child_role") != triple
+    ):
         gate["reason"] = "trusted_unique_rollout_identity_missing"
+        return gate
+    if value.get("terminal_digest") != terminal_event.digest or value.get("terminal") != terminal:
+        gate["reason"] = "terminal_receipt_binding_mismatch"
+        return gate
+    if (
+        value.get("terminal_nonce") != terminal.get("terminal_nonce")
+        or value.get("terminal_result") != terminal.get("terminal_result")
+        or value.get("rollout_digest") != terminal.get("rollout", {}).get("sha256")
+        or value.get("output_digest") != terminal.get("output_digest")
+        or value.get("worktree_digest") != terminal.get("worktree_digest")
+    ):
+        gate["reason"] = "terminal_output_or_worktree_mismatch"
         return gate
     if any(value.get(field) != triple for field in ("desired", "explicit", "effective")):
         gate["reason"] = "desired_explicit_effective_mismatch"
@@ -447,31 +601,34 @@ def _integration_gate(
         gate["reason"] = "launch_bound_role_digest_invalid"
         return gate
     issuer = value.get("issuer")
-    verifier = _installed_verifier_binding()
-    if not isinstance(issuer, dict) or verifier is None:
-        gate["reason"] = "verifier_issuer_missing"
+    checker = _installed_integration_checker_binding()
+    if not isinstance(issuer, dict) or checker is None:
+        gate["reason"] = "integration_checker_issuer_missing"
         return gate
-    verifier_digest = _role_config_digest(verifier)
+    checker_digest = _role_config_digest(checker)
     issuer_session = _canonical_uuid(issuer.get("rollout_session_id"))
     issuer_rollout = issuer.get("rollout_path")
     if (
-        verifier_digest is None
-        or issuer.get("role") != _binding_triple(verifier)
-        or issuer.get("role_config") != str(verifier.role_config)
-        or issuer.get("role_config_digest") != verifier_digest
+        checker_digest is None
+        or issuer.get("role") != _binding_triple(checker)
+        or issuer.get("role_config") != str(checker.role_config)
+        or issuer.get("role_config_digest") != checker_digest
         or not isinstance(issuer_rollout, str)
         or issuer_session is None
     ):
-        gate["reason"] = "verifier_issuer_binding_invalid"
+        gate["reason"] = "integration_checker_issuer_binding_invalid"
         return gate
-    verifier_runtime = _trusted_rollout(Path(issuer_rollout), issuer_session)
+    if issuer_session in {terminal_runtime.session_id, main_session_id}:
+        gate["reason"] = "integration_checker_session_not_independent"
+        return gate
+    checker_runtime = _trusted_rollout(Path(issuer_rollout), issuer_session)
     if (
-        verifier_runtime is None
-        or verifier_runtime.model != verifier.model
-        or verifier_runtime.effort != verifier.effort
+        checker_runtime is None
+        or checker_runtime.model != checker.model
+        or checker_runtime.effort != checker.effort
         or not _rollout_has_receipt_marker(Path(issuer_rollout), issuer_session, value)
     ):
-        gate["reason"] = "trusted_verifier_marker_missing"
+        gate["reason"] = "trusted_integration_checker_marker_missing"
         return gate
     digest = value.get("evidence_digest")
     if (
@@ -482,21 +639,36 @@ def _integration_gate(
     ):
         gate["reason"] = "completion_checker_or_evidence_digest_invalid"
         return gate
+    checks = value.get("verification_checks")
+    if (
+        not isinstance(checks, list)
+        or not checks
+        or value.get("verification_checks_digest") != _canonical_digest(checks)
+        or any(
+            not isinstance(check, dict)
+            or not isinstance(check.get("name"), str)
+            or not check["name"].strip()
+            or check.get("passed") is not True
+            or check.get("evidence_digest") != digest
+            for check in checks
+        )
+    ):
+        gate["reason"] = "verification_checks_invalid"
+        return gate
     artifact = value.get("evidence_artifact")
     if (
         not isinstance(artifact, dict)
         or not isinstance(artifact.get("path"), str)
         or artifact.get("sha256") != digest
+        or artifact.get("terminal_digest") != terminal_event.digest
+        or artifact.get("verification_checks_digest") != _canonical_digest(checks)
+        or artifact.get("output_digest") != terminal.get("output_digest")
+        or artifact.get("worktree_digest") != terminal.get("worktree_digest")
         or not _secure_owned_file(Path(artifact["path"]), exact_mode=0o600)
     ):
         gate["reason"] = "evidence_artifact_invalid"
         return gate
-    try:
-        with Path(artifact["path"]).open("rb") as handle:
-            if hashlib.sha256(handle.read()).hexdigest() != digest:
-                gate["reason"] = "evidence_artifact_digest_mismatch"
-                return gate
-    except OSError:
+    if _secure_file_digest(Path(artifact["path"])) != digest:
         gate["reason"] = "evidence_artifact_invalid"
         return gate
     observation = value.get("token_observation")
@@ -537,9 +709,200 @@ def _integration_gate(
                 "parent_enforced": observed_parent,
                 "quantitative_caps_enforced": observed_caps,
             },
+            "outcome_state": outcome_state,
+            "lane_id": lane_id,
+            "blocked_reason": value.get("blocked_reason"),
+            "path_accepted": outcome_state == "path_accepted",
+            "terminal_outcome_accepted": outcome_state == "terminal_outcome_accepted",
+            "path_blocked": outcome_state == "path_blocked",
+            "all_lanes_exhausted": outcome_state == "all_lanes_exhausted",
         }
     )
     return gate
+
+
+def _secure_file_digest(path: Path) -> str | None:
+    """Hash one owner-only regular file without following a replacement symlink."""
+    if not _secure_owned_file(path, exact_mode=0o600):
+        return None
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(path, flags)
+        with os.fdopen(descriptor, "rb") as handle:
+            before = os.fstat(handle.fileno())
+            digest = hashlib.sha256()
+            while chunk := handle.read(64 * 1024):
+                digest.update(chunk)
+        after = path.lstat()
+    except OSError:
+        return None
+    if (
+        before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+    ):
+        return None
+    return digest.hexdigest()
+
+
+def _trusted_terminal_runtime(terminal_event: TerminalEvent) -> RuntimeEvidence | None:
+    """Recheck the terminal rollout so a stale or mutable terminal cannot finalize."""
+    value = terminal_event.value
+    if _canonical_digest(value) != terminal_event.digest:
+        return None
+    child = value.get("child")
+    rollout = value.get("rollout")
+    if (
+        not isinstance(child, dict)
+        or not isinstance(rollout, dict)
+        or not isinstance(rollout.get("path"), str)
+        or V2_COMMAND_DIGEST_PATTERN.fullmatch(rollout.get("sha256", "")) is None
+        or rollout.get("runtime_home") not in {"main", "leaf"}
+    ):
+        return None
+    session_id = _canonical_uuid(child.get("session_id"))
+    if session_id is None:
+        return None
+    runtime_home = LEAF_RUNTIME_HOME if rollout["runtime_home"] == "leaf" else CODEX_HOME
+    runtime = _trusted_rollout(
+        Path(rollout["path"]),
+        session_id,
+        codex_home=runtime_home,
+        sessions_root=runtime_home / "sessions",
+    )
+    if (
+        runtime is None
+        or _secure_file_digest(Path(rollout["path"])) != rollout["sha256"]
+    ):
+        return None
+    return runtime
+
+
+def _capture_terminal_event(
+    *,
+    packet: dict[str, Any],
+    binding: RoleBinding,
+    runtime: RuntimeEvidence | None,
+    rollout: Path | None,
+    rollout_runtime_home: str,
+    selected_launch_path: str,
+    child_returncode: int | None,
+    output_digest: str | None,
+    parent_enforced: bool,
+    weighted_tokens: int | None = None,
+    execution_elapsed_ms: int | None = None,
+) -> TerminalEvent | None:
+    """Capture actual completion data before any receipt can be considered."""
+    main_authority = packet.get("main_authority")
+    main_session_id = (
+        main_authority.get("session_id") if isinstance(main_authority, dict) else None
+    )
+    if (
+        runtime is None
+        or rollout is None
+        or runtime.model != binding.model
+        or runtime.effort != binding.effort
+        or rollout_runtime_home not in {"main", "leaf"}
+        or isinstance(child_returncode, bool)
+        or not isinstance(child_returncode, int)
+        or not isinstance(main_session_id, str)
+        or not main_session_id
+        or not isinstance(output_digest, str)
+        or V2_COMMAND_DIGEST_PATTERN.fullmatch(output_digest) is None
+        or (
+            weighted_tokens is not None
+            and (
+                isinstance(weighted_tokens, bool)
+                or not isinstance(weighted_tokens, int)
+                or weighted_tokens < 0
+            )
+        )
+        or (
+            execution_elapsed_ms is not None
+            and (
+                isinstance(execution_elapsed_ms, bool)
+                or not isinstance(execution_elapsed_ms, int)
+                or execution_elapsed_ms < 0
+            )
+        )
+    ):
+        return None
+    rollout_digest = _secure_file_digest(rollout)
+    worktree_digest = _worktree_digest(packet)
+    if (
+        rollout_digest is None
+        or (packet.get("write_scope") != ["read-only"] and worktree_digest is None)
+    ):
+        return None
+    value = {
+        "version": TERMINAL_EVENT_VERSION,
+        "dispatch_id": packet["dispatch_id"].strip(),
+        "packet_digest": _canonical_digest(packet),
+        "objective_lock_version": OBJECTIVE_LOCK_VERSION,
+        "objective_lock_digest": _objective_lock_digest(packet),
+        "selected_launch_path": selected_launch_path,
+        "actual": _binding_triple(binding),
+        "child": {
+            "session_id": runtime.session_id,
+            "role": _binding_triple(binding),
+        },
+        "terminal_result": {
+            "returncode": child_returncode,
+            "succeeded": child_returncode == EXIT_SUCCESS,
+        },
+        "rollout": {
+            "path": str(rollout),
+            "sha256": rollout_digest,
+            "runtime_home": rollout_runtime_home,
+        },
+        "output_digest": output_digest,
+        "worktree_digest": worktree_digest,
+        "parent_enforced": parent_enforced,
+        "weighted_tokens": weighted_tokens,
+        "execution_elapsed_ms": execution_elapsed_ms,
+        "main_session_id": main_session_id,
+        "terminal_nonce": secrets.token_hex(32),
+    }
+    return TerminalEvent(value, _canonical_digest(value))
+
+
+def _load_terminal_event(ledger: Path, packet: dict[str, Any]) -> TerminalEvent | None:
+    """Load the newest exact terminal event for this packet from a secure ledger."""
+    if not _secure_owned_file(ledger, exact_mode=0o600):
+        return None
+    expected_dispatch_id = packet["dispatch_id"].strip()
+    expected_packet_digest = _canonical_digest(packet)
+    latest: TerminalEvent | None = None
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(ledger, flags)
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                if len(raw_line) > ROLLOUT_LINE_MAX_BYTES or not raw_line.strip():
+                    return None
+                record = json.loads(raw_line)
+                if not isinstance(record, dict) or record.get("dispatch_id") != expected_dispatch_id:
+                    continue
+                raw_terminal = record.get("terminal_event")
+                if not isinstance(raw_terminal, dict):
+                    continue
+                value = raw_terminal.get("value")
+                digest = raw_terminal.get("digest")
+                if (
+                    not isinstance(value, dict)
+                    or not isinstance(digest, str)
+                    or V2_COMMAND_DIGEST_PATTERN.fullmatch(digest) is None
+                    or _canonical_digest(value) != digest
+                    or value.get("packet_digest") != expected_packet_digest
+                    or value.get("objective_lock_version") != OBJECTIVE_LOCK_VERSION
+                    or value.get("objective_lock_digest") != _objective_lock_digest(packet)
+                ):
+                    return None
+                latest = TerminalEvent(value, digest)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return latest
 
 
 @dataclass(frozen=True)
@@ -1437,14 +1800,125 @@ def _validate_packet(packet: Any, source_path: Path | None) -> str | None:
     if not isinstance(packet, dict):
         return "packet_not_object"
     for field in REQUIRED_PACKET_FIELDS:
+        if field == "terminal_outcome":
+            continue
         if field not in packet or not _nonempty(packet[field]):
             return f"packet_field_missing_or_empty:{field}"
+    if "terminal_outcome" not in packet:
+        return "packet_field_missing_or_empty:terminal_outcome"
     if not isinstance(packet["dispatch_id"], str) or not DISPATCH_ID_PATTERN.fullmatch(
         packet["dispatch_id"].strip()
     ):
         return "dispatch_id_invalid"
     if any(not isinstance(packet[field], str) for field in TRIPLE_FIELDS):
         return "routing_triple_invalid"
+    intended_behavior = packet.get("intended_behavior")
+    if (
+        not isinstance(intended_behavior, str)
+        or not intended_behavior.strip()
+        or len(intended_behavior) > PROJECT_DOC_MAX_BYTES
+    ):
+        return "intended_behavior_invalid"
+    terminal_outcome = packet.get("terminal_outcome")
+    if (
+        terminal_outcome is None
+        or
+        not isinstance(terminal_outcome, str)
+        or not terminal_outcome.strip()
+        or len(terminal_outcome) > PROJECT_DOC_MAX_BYTES
+    ):
+        return "terminal_outcome_invalid"
+    for field in ("objective_kind", "progression_mode"):
+        value = packet.get(field)
+        if value is not None and (
+            not isinstance(value, str) or not value.strip() or len(value) > 128
+        ):
+            return f"{field}_invalid"
+    if packet.get("objective_kind", "terminal_outcome") != "terminal_outcome":
+        return "objective_kind_invalid"
+    progression_mode = packet.get(
+        "progression_mode", "iterative_until_outcome_or_user_stop"
+    )
+    if progression_mode not in {"single_path", "iterative_until_outcome_or_user_stop"}:
+        return "progression_mode_invalid"
+    authorized_lanes = packet.get("authorized_lanes")
+    if authorized_lanes is not None:
+        if (
+            not isinstance(authorized_lanes, list)
+            or not authorized_lanes
+            or len(authorized_lanes) > 32
+            or any(not isinstance(item, str) or not item.strip() for item in authorized_lanes)
+        ):
+            return "authorized_lanes_invalid"
+        if len(set(authorized_lanes)) != len(authorized_lanes) or any(
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", item) is None
+            for item in authorized_lanes
+        ):
+            return "authorized_lanes_invalid"
+    lane_names = authorized_lanes or ["declared_write_scope"]
+    if "lane_id" not in packet:
+        return "lane_id_invalid"
+    lane_id = packet.get("lane_id")
+    if not isinstance(lane_id, str) or lane_id not in lane_names:
+        return "lane_id_invalid"
+    if progression_mode == "single_path" and len(lane_names) != 1:
+        return "progression_mode_lane_mismatch"
+    for field in ("method_id", "data_source_id", "stage_id"):
+        value = packet.get(field)
+        if value is not None and (
+            not isinstance(value, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value)
+        ):
+            return f"{field}_invalid"
+    non_goals = packet.get("non_goals", [])
+    for lane in lane_names:
+        if any(
+            isinstance(item, str)
+            and re.search(r"\b(?:do\s+not|never|exclude|out\s+of\s+scope|only)\b", item, re.I)
+            and lane.casefold() in item.casefold()
+            for item in non_goals
+        ):
+            return "objective_non_goal_conflict"
+    read_scope = packet.get("read_scope")
+    if (
+        not isinstance(read_scope, list)
+        or not read_scope
+        or any(not isinstance(item, str) or not item.strip() for item in read_scope)
+    ):
+        return "read_scope_invalid"
+    non_goals = packet.get("non_goals")
+    if (
+        not isinstance(non_goals, list)
+        or not non_goals
+        or any(
+            not isinstance(item, str)
+            or not item.strip()
+            or len(item) > PROJECT_DOC_MAX_BYTES
+            for item in non_goals
+        )
+    ):
+        return "non_goals_invalid"
+    known_side_effects = packet.get("known_side_effects")
+    if "known_side_effects" not in packet or not isinstance(known_side_effects, list) or any(
+        not isinstance(item, str) or not item.strip() for item in known_side_effects
+    ):
+        return "known_side_effects_invalid"
+    if "network_access" not in packet or not isinstance(packet["network_access"], bool):
+        return "network_access_invalid"
+    if not isinstance(packet["verification_ceiling"], str) or not packet[
+        "verification_ceiling"
+    ].strip():
+        return "verification_ceiling_invalid"
+    acceptance_evidence = packet.get("acceptance_evidence")
+    if (
+        not isinstance(acceptance_evidence, list)
+        or not acceptance_evidence
+        or any(
+            not isinstance(item, str) or not item.strip()
+            for item in acceptance_evidence
+        )
+    ):
+        return "acceptance_evidence_invalid"
     token_budget = packet.get("token_budget")
     if (
         isinstance(token_budget, bool)
@@ -1489,19 +1963,8 @@ def _role_config_path(agent_type: str) -> Path | None:
     return next((path for path in candidates if _secure_owned_file(path)), None)
 
 
-def _deep_merge_json(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    for key, value in override.items():
-        current = merged.get(key)
-        if isinstance(current, dict) and isinstance(value, dict):
-            merged[key] = _deep_merge_json(current, value)
-        else:
-            merged[key] = value
-    return merged
-
-
 def _load_routing_policy() -> tuple[bool, dict[str, Any] | None]:
-    """Load package defaults plus an optional owner-controlled local override."""
+    """Load the installed package policy without external overrides."""
     if not os.path.lexists(ROUTING_POLICY_CONFIG):
         return False, None
     if not _secure_owned_file(ROUTING_POLICY_CONFIG):
@@ -1512,16 +1975,6 @@ def _load_routing_policy() -> tuple[bool, dict[str, Any] | None]:
         return True, None
     if not isinstance(policy, dict):
         return True, None
-    if os.path.lexists(LOCAL_ROUTING_POLICY_CONFIG):
-        if not _secure_owned_file(LOCAL_ROUTING_POLICY_CONFIG):
-            return True, None
-        try:
-            override = _load_json(LOCAL_ROUTING_POLICY_CONFIG)
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
-            return True, None
-        if not isinstance(override, dict):
-            return True, None
-        policy = _deep_merge_json(policy, override)
     return True, policy
 
 
@@ -1621,6 +2074,8 @@ def _linked_fields(context: AdaptiveAuditContext) -> dict[str, Any]:
         "surface_schema_fingerprint": context.routing[
             "surface_schema_fingerprint"
         ],
+        "objective_lock_version": context.objective_lock_version,
+        "objective_lock_digest": context.objective_lock_digest,
     }
 
 
@@ -1630,6 +2085,7 @@ def _start_adaptive_audit(
     ledger: Path,
     review_dir: Path,
     attestation_ledger: Path,
+    require_existing_pre: bool = False,
 ) -> tuple[AdaptiveAuditContext | None, str | None]:
     package = _adaptive_package_binding(packet)
     if package is None:
@@ -1640,7 +2096,71 @@ def _start_adaptive_audit(
         routing = contract.validate_routing_audit(packet.get("routing_audit"))
     except contract.PolicyContractError as exc:
         raise RuntimeError(f"invalid routing_audit: {exc.code}") from exc
-    routing = {**routing, "dispatch_id": packet["dispatch_id"].strip()}
+    try:
+        selected_route_fields = set(routing) & contract.ROUTING_AUDIT_ROUTE_FIELDS
+        if selected_route_fields:
+            route_id = routing["route_id"]
+            selected_role = routing["role"]
+            selected_model = routing["route_model"]
+            selected_model_tier = routing["route_model_tier"]
+            selected_effort = routing["route_reasoning_effort"]
+        else:
+            if (
+                routing["attempt_index"] != 1
+                or routing["selection_basis"] != "policy_default"
+            ):
+                raise contract.PolicyContractError(
+                    "ROUTE_SELECTION_MISSING",
+                    "non-default attempts require an explicit route selection",
+                )
+            route_id = policy["task_defaults"][routing["task_class"]]
+            selected_role = binding["agent_type"]
+            selected_model = binding["model"]
+            selected_model_tier = binding["model_tier"]
+            selected_effort = binding["reasoning_effort"]
+        route = contract.validate_route_selection(
+            policy,
+            route_id=route_id,
+            task_class=routing["task_class"],
+            oracle_strength=routing["oracle_strength"],
+            selection_basis=routing["selection_basis"],
+            role=selected_role,
+            model=selected_model,
+            reasoning_effort=selected_effort,
+            attempt_index=routing["attempt_index"],
+            override_reason=routing.get("override_reason"),
+            direct_latency_predicate=routing.get("direct_latency_predicate"),
+            use_mode=routing.get("use_mode"),
+            risk_class=routing.get("risk_class"),
+        )
+        if selected_model_tier != route["model_tier"]:
+            raise contract.PolicyContractError(
+                "ROUTE_TIER_MISMATCH",
+                "selected route tier does not match the package route",
+            )
+        if (
+            route["role"],
+            route["model"],
+            route["model_tier"],
+            route["reasoning_effort"],
+        ) != (
+            binding["agent_type"],
+            binding["model"],
+            binding["model_tier"],
+            binding["reasoning_effort"],
+        ):
+            raise contract.PolicyContractError(
+                "ROUTE_BINDING_MISMATCH",
+                "selected route does not match the installed package binding",
+            )
+    except (KeyError, TypeError, contract.PolicyContractError) as exc:
+        raise RuntimeError("routing policy cannot attest the selected route") from exc
+    routing = {
+        **routing,
+        "dispatch_id": packet["dispatch_id"].strip(),
+        "route_id": route_id,
+        "role": route["role"],
+    }
     authority = packet.get("main_authority")
     observed_model = (
         authority.get("model") if isinstance(authority, dict) else "unknown"
@@ -1674,7 +2194,10 @@ def _start_adaptive_audit(
         review_dir=review_dir,
         attestation_ledger=attestation_ledger,
         started=time.monotonic(),
+        contract_module=contract,
         audit_module=audit,
+        objective_lock_version=OBJECTIVE_LOCK_VERSION,
+        objective_lock_digest=_objective_lock_digest(packet),
     )
     gate_warning: str | None = None
     try:
@@ -1695,6 +2218,8 @@ def _start_adaptive_audit(
         "model": binding["model"],
         "model_tier": binding["model_tier"],
         "reasoning_effort": binding["reasoning_effort"],
+        "route_id": routing["route_id"],
+        "role": routing["role"],
         "rationale": {
             "task_class": routing["task_class"],
             "oracle_strength": routing["oracle_strength"],
@@ -1707,6 +2232,18 @@ def _start_adaptive_audit(
         "planned_model_escalations": routing["model_escalations"],
         **_linked_fields(context),
     }
+    if routing.get("use_mode") is not None:
+        pre_event["rationale"]["use_mode"] = routing["use_mode"]
+    if routing.get("direct_latency_predicate") is not None:
+        pre_event["rationale"]["direct_latency_predicate"] = routing["direct_latency_predicate"]
+    if routing.get("override_reason") is not None:
+        pre_event["override_reason"] = routing["override_reason"]
+    if require_existing_pre and not audit.exact_unpaired_pre_exists(
+        pre_event, ledger
+    ):
+        raise RuntimeError(
+            "integration finalization requires an exact unpaired pre_decision"
+        )
     try:
         audit.record_event(
             pre_event,
@@ -1720,6 +2257,28 @@ def _start_adaptive_audit(
     return context, gate_warning
 
 
+def _configured_escalation_action(context: AdaptiveAuditContext) -> str:
+    contract = context.contract_module
+    ladder = contract.applicable_ladder(
+        context.policy,
+        context.routing["task_class"],
+        context.routing["oracle_strength"],
+    )
+    try:
+        current_index = ladder.index(context.routing["route_id"])
+    except ValueError as exc:
+        raise RuntimeError("current route is outside its configured ladder") from exc
+    if current_index + 1 >= len(ladder):
+        return "stop"
+    current = contract.route_for(context.policy, ladder[current_index])
+    following = contract.route_for(context.policy, ladder[current_index + 1])
+    if following["authority"] == "main":
+        return "main_takeover"
+    if following["model"] == current["model"]:
+        return "raise_effort"
+    return "raise_model"
+
+
 def _finish_adaptive_audit(
     context: AdaptiveAuditContext,
     status: dict[str, Any],
@@ -1728,57 +2287,125 @@ def _finish_adaptive_audit(
     failure_override: str | None = None,
 ) -> None:
     execution_completed = bool(status.get("execution_completed"))
-    child_succeeded = bool(status.get("child_succeeded")) and result_code == 0
-    integration_accepted = bool(status.get("integration_accepted")) and child_succeeded
-    if failure_override is not None:
+    child_succeeded = bool(status.get("child_succeeded"))
+    path_accepted = bool(status.get("path_accepted"))
+    terminal_outcome_accepted = bool(status.get("terminal_outcome_accepted"))
+    outcome_state = status.get("outcome_state")
+    integration_accepted = (
+        bool(status.get("integration_accepted"))
+        and child_succeeded
+        and result_code == 0
+    )
+    all_lanes_exhausted = bool(status.get("all_lanes_exhausted"))
+    if outcome_state in {"path_accepted", "path_blocked", "all_lanes_exhausted"}:
+        integration_accepted = False
+    if all_lanes_exhausted:
+        integration_accepted = False
+    elif path_accepted and not terminal_outcome_accepted:
+        # A completed path/iteration is not the terminal user outcome. Keep
+        # the audit chain open so the main can continue an authorized lane.
+        integration_accepted = False
+    if all_lanes_exhausted:
+        failure_class = "all_lanes_exhausted"
+    elif path_accepted and not terminal_outcome_accepted:
+        failure_class = "path_accepted"
+    elif status.get("path_blocked"):
+        failure_class = "lane_blocked"
+    elif integration_accepted:
+        failure_class = "none"
+    elif failure_override is not None:
         failure_class = failure_override
     elif isinstance(status.get("failure_class"), str):
         failure_class = status["failure_class"]
     elif child_succeeded:
-        failure_class = "none"
+        # A clean child exit without a separate receipt is deliberately not an
+        # accepted outcome and therefore is not a no-failure acceptance claim.
+        failure_class = "other"
     elif status.get("validate_only"):
         failure_class = "other"
     else:
         failure_class = "tool_or_environment"
-    if failure_override == "policy_gate":
-        oracle_verdict = "not_run"
-        signals = ["constraints_missed"]
+    if all_lanes_exhausted:
+        oracle_verdict = "fail"
+        signals = ["all_lanes_exhausted"]
         route_assessment = "inconclusive"
-        next_action = "main_takeover"
+        next_action = "stop"
+    elif path_accepted and not terminal_outcome_accepted:
+        oracle_verdict = "pass"
+        signals = ["path_accepted", "output_complete"]
+        route_assessment = "correct"
+        next_action = "continue_lane"
+    elif status.get("path_blocked"):
+        oracle_verdict = "inconclusive"
+        signals = ["path_blocked", "evidence_inconclusive"]
+        route_assessment = "inconclusive"
+        next_action = "return_to_main"
     elif integration_accepted:
         oracle_verdict = "pass"
         signals = ["accepted_by_oracle", "constraints_met", "output_complete"]
         route_assessment = "correct"
         next_action = "stop"
+    elif failure_override == "policy_gate":
+        oracle_verdict = "not_run"
+        signals = ["constraints_missed", "evidence_inconclusive"]
+        route_assessment = "inconclusive"
+        next_action = "stop"
+    elif failure_class in {
+        "reasoning_insufficiency",
+        "context_ceiling",
+        "capability_ceiling",
+    }:
+        oracle_verdict = "fail"
+        signals = {
+            "reasoning_insufficiency": ["tests_failed", "evidence_inconclusive"],
+            "context_ceiling": ["budget_exhausted", "output_incomplete"],
+            "capability_ceiling": ["constraints_missed", "output_incomplete"],
+        }[failure_class]
+        route_assessment = "inconclusive"
+        next_action = _configured_escalation_action(context)
+    elif failure_class == "acceptance_quality_failure":
+        oracle_verdict = "fail"
+        signals = ["acceptance_failed", "rejected_by_oracle"]
+        route_assessment = "inconclusive"
+        next_action = _configured_escalation_action(context)
+    elif failure_class == "scope_or_retrieval_overbreadth":
+        oracle_verdict = "fail"
+        signals = ["constraints_missed", "output_incomplete"]
+        route_assessment = "inconclusive"
+        next_action = "narrow_scope"
+    elif failure_class == "tool_or_environment":
+        oracle_verdict = "fail"
+        signals = ["tool_failure", "output_incomplete"]
+        route_assessment = "inconclusive"
+        next_action = "environment_retry"
+    elif failure_class == "weak_oracle":
+        oracle_verdict = "inconclusive"
+        signals = ["evidence_inconclusive", "human_review_required"]
+        route_assessment = "inconclusive"
+        next_action = "main_takeover"
     elif child_succeeded:
         oracle_verdict = "inconclusive"
         signals = ["output_complete", "evidence_inconclusive", "human_review_required"]
         route_assessment = "inconclusive"
         next_action = "human_review"
-    elif status.get("failure_signal") == "budget_exhausted":
-        oracle_verdict = "fail"
-        signals = ["budget_exhausted", "output_incomplete", "escalation_required"]
-        route_assessment = "inconclusive"
-        next_action = "retry_same_route"
-    elif execution_completed:
-        oracle_verdict = "fail"
-        signals = ["tool_failure", "output_incomplete"]
-        route_assessment = "inconclusive"
-        next_action = "environment_retry"
     else:
         oracle_verdict = "not_run"
         signals = ["evidence_inconclusive"]
         route_assessment = "inconclusive"
-        next_action = "stop" if status.get("validate_only") else "environment_retry"
+        next_action = "stop" if status.get("validate_only") else "human_review"
     weighted_tokens = status.get("weighted_tokens")
     if not isinstance(weighted_tokens, int) or isinstance(weighted_tokens, bool):
         weighted_tokens = 0
     price = context.policy.get("price_evidence", {})
-    fraction = 1.0
-    if context.binding["model"] == "gpt-5.6-luna":
-        fraction = float(price.get("luna_previous_price_fraction", 1.0))
-    elif context.binding["model"] == "gpt-5.6-terra":
-        fraction = float(price.get("terra_previous_price_fraction", 1.0))
+    fractions = price.get("sol_equivalent_price_fraction", {})
+    fraction = float(fractions.get(context.binding["model"], 1.0))
+    elapsed_ms = status.get("execution_elapsed_ms")
+    if (
+        isinstance(elapsed_ms, bool)
+        or not isinstance(elapsed_ms, int)
+        or elapsed_ms < 0
+    ):
+        elapsed_ms = max(0, int((time.monotonic() - context.started) * 1000))
     event = {
         "schema_version": context.audit_module.LINKED_SCHEMA_VERSION,
         "event_type": "post_result",
@@ -1793,7 +2420,9 @@ def _finish_adaptive_audit(
         "final_model": context.binding["model"],
         "final_model_tier": context.binding["model_tier"],
         "final_reasoning_effort": context.binding["reasoning_effort"],
-        "elapsed_ms": max(0, int((time.monotonic() - context.started) * 1000)),
+        "final_route_id": context.routing["route_id"],
+        "final_role": context.routing["role"],
+        "elapsed_ms": elapsed_ms,
         "weighted_tokens": weighted_tokens,
         "cost_proxy": round(weighted_tokens * fraction, 6),
         "post_result_detail": {
@@ -1803,6 +2432,12 @@ def _finish_adaptive_audit(
             "next_action": next_action,
             "token_observation": "exact" if weighted_tokens else "unavailable",
             "elapsed_observation": "exact",
+            **(
+                {"blocked_reason": status.get("blocked_reason")}
+                if status.get("path_blocked")
+                and isinstance(status.get("blocked_reason"), str)
+                else {}
+            ),
         },
         "execution_completed": execution_completed,
         "oracle_verdict": oracle_verdict,
@@ -1819,36 +2454,6 @@ def _finish_adaptive_audit(
         )
     except context.audit_module.AuditError as exc:
         raise RuntimeError("model-routing post_result record failed") from exc
-
-
-def _legacy_capability_binding(
-    *,
-    agent_type: str,
-    model_tier: str,
-    model: str,
-    effort: str,
-) -> bool:
-    if not _secure_owned_file(LEGACY_CAPABILITY_CONFIG):
-        return False
-    try:
-        capability = _load_json(LEGACY_CAPABILITY_CONFIG)
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return False
-    if not isinstance(capability, dict):
-        return False
-    model_key = CAPABILITY_MODEL_KEYS.get(model_tier)
-    environment = capability.get("env")
-    agent_models = capability.get("agentModels")
-    agent_reasoning = capability.get("agentReasoning")
-    return bool(
-        model_key is not None
-        and isinstance(environment, dict)
-        and isinstance(agent_models, dict)
-        and isinstance(agent_reasoning, dict)
-        and environment.get(model_key) == model
-        and (agent_type not in agent_models or agent_models.get(agent_type) == model)
-        and agent_reasoning.get(agent_type) == effort
-    )
 
 
 def _load_receipt(path: Path | None) -> ReceiptEnvelope | None:
@@ -1897,13 +2502,16 @@ def _append_attestation(
     observed_tool_output_bytes: int = 0,
     observed_child_stdout_bytes: int = 0,
     native_admission: dict[str, Any] | None = None,
-    integration_receipt: Any = None,
+    terminal_event: TerminalEvent | None = None,
+    integration_gate: dict[str, Any] | None = None,
 ) -> None:
     # Construct the persisted record from an explicit allowlist. Packet text,
     # argv, credentials, environment values, and arbitrary evidence fields never
     # enter this object.
     record = {
         "dispatch_id": packet["dispatch_id"].strip(),
+        "objective_lock_version": OBJECTIVE_LOCK_VERSION,
+        "objective_lock_digest": _objective_lock_digest(packet),
         "timestamp": _timestamp(),
         "configured_role": {
             "agent_type": binding.agent_type,
@@ -1936,16 +2544,13 @@ def _append_attestation(
     }
     if native_admission is not None:
         record["native_admission"] = native_admission
-    if integration_receipt is not None:
-        record["integration_gate"] = _integration_gate(
-            integration_receipt,
-            binding=binding,
-            runtime=runtime,
-            expected_session_id=expected_session_id,
-            selected_launch_path=selected_launch_path,
-            parent_enforced=parent_enforced,
-            dispatch_id=packet["dispatch_id"].strip(),
-        )
+    if terminal_event is not None:
+        record["terminal_event"] = {
+            "value": terminal_event.value,
+            "digest": terminal_event.digest,
+        }
+    if integration_gate is not None:
+        record["integration_gate"] = integration_gate
     execution_policy = _execution_policy(packet)
     if execution_policy is not None:
         record["execution_policy_expected"] = execution_policy.public_limits()
@@ -2029,6 +2634,50 @@ def _append_attestation(
         os.close(descriptor)
 
 
+def _isolated_child_environment(runtime_home: Path) -> dict[str, str]:
+    """Build the only environment a bounded child is permitted to inherit."""
+    environment = {
+        key: value
+        for key in CHILD_ENV_ALLOWLIST
+        if isinstance((value := os.environ.get(key)), str) and value
+    }
+    environment["CODEX_HOME"] = str(runtime_home)
+    environment["HOME"] = str(runtime_home)
+    return environment
+
+
+def _run_argv_with_output_digest(
+    argv: list[str], environment: dict[str, str]
+) -> tuple[int | None, str | None]:
+    """Run one protected command while preserving its output and terminal digest."""
+    digest = hashlib.sha256()
+    try:
+        process = subprocess.Popen(
+            argv,
+            shell=False,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    except OSError:
+        return None, None
+    assert process.stdout is not None
+    try:
+        while chunk := process.stdout.read(64 * 1024):
+            digest.update(chunk)
+            stream = getattr(sys.stdout, "buffer", None)
+            if stream is not None:
+                stream.write(chunk)
+                stream.flush()
+            else:
+                sys.stdout.write(chunk.decode("utf-8", errors="replace"))
+                sys.stdout.flush()
+    finally:
+        process.stdout.close()
+    return process.wait(), digest.hexdigest()
+
+
 def _attest_native(
     *,
     packet: Any,
@@ -2041,7 +2690,6 @@ def _attest_native(
     unavailable_path: str,
     validate_only: bool,
     native_admission: Any = None,
-    integration_receipt: Any = None,
     execution_status: dict[str, Any] | None = None,
 ) -> Outcome:
     validation_error = _validate_packet(packet, rollout)
@@ -2062,6 +2710,8 @@ def _attest_native(
         native_admission,
         binding,
         dispatch_id=packet["dispatch_id"].strip(),
+        objective_lock_version=OBJECTIVE_LOCK_VERSION,
+        objective_lock_digest=_objective_lock_digest(packet),
     )
     if admission["status"] != "structurally_eligible":
         _append_attestation(
@@ -2075,7 +2725,6 @@ def _attest_native(
             reason=admission["rejection_reason"],
             selected_launch_path=unavailable_path,
             native_admission=admission,
-            integration_receipt=integration_receipt,
         )
         return Outcome("unavailable")
     runtime = None
@@ -2095,7 +2744,6 @@ def _attest_native(
             reason="trusted_rollout_unavailable",
             selected_launch_path=unavailable_path,
             native_admission=admission,
-            integration_receipt=integration_receipt,
         )
         return Outcome("unavailable")
 
@@ -2111,12 +2759,11 @@ def _attest_native(
             reason="runtime_model_or_effort_mismatch",
             selected_launch_path=mismatch_path,
             native_admission=admission,
-            integration_receipt=integration_receipt,
         )
         return Outcome("mismatch")
 
     protected_argv = _canonical_resume_binding(
-        argv, binding, expected_session_id, packet["objective"]
+        argv, binding, expected_session_id, _objective_lock_text(packet)
     )
     if protected_argv is None:
         _append_attestation(
@@ -2130,7 +2777,6 @@ def _attest_native(
             reason="protected_resume_binding_mismatch",
             selected_launch_path="none",
             native_admission=admission,
-            integration_receipt=integration_receipt,
         )
         return Outcome("unsafe")
 
@@ -2154,32 +2800,6 @@ def _attest_native(
             reason=admission["rejection_reason"],
             selected_launch_path=unavailable_path,
             native_admission=admission,
-            integration_receipt=integration_receipt,
-        )
-        return Outcome("unavailable")
-
-    integration = _integration_gate(
-        integration_receipt,
-        binding=binding,
-        runtime=runtime,
-        expected_session_id=expected_session_id,
-        selected_launch_path=match_path,
-        parent_enforced=False,
-        dispatch_id=packet["dispatch_id"].strip(),
-    )
-    if integration_receipt is not None and integration["status"] != "passed":
-        _append_attestation(
-            ledger,
-            packet=packet,
-            binding=binding,
-            expected_session_id=expected_session_id,
-            runtime=runtime,
-            source=source,
-            verdict="integration_blocked",
-            reason=integration["reason"],
-            selected_launch_path=unavailable_path,
-            native_admission=admission,
-            integration_receipt=integration_receipt,
         )
         return Outcome("unavailable")
 
@@ -2194,26 +2814,37 @@ def _attest_native(
         reason="trusted_rollout_and_resume_binding_matched",
         selected_launch_path=match_path,
         native_admission=admission,
-        integration_receipt=integration_receipt,
     )
     if validate_only:
         return Outcome("success", EXIT_SUCCESS)
     if execution_status is not None:
         execution_status["process_started"] = True
-    try:
-        child_returncode = subprocess.run(
-            protected_argv, check=False, shell=False
-        ).returncode
-    except OSError:
-        child_returncode = None
+    execution_started = time.monotonic()
+    child_returncode, output_digest = _run_argv_with_output_digest(
+        protected_argv, _isolated_child_environment(CODEX_HOME)
+    )
+    execution_elapsed_ms = max(
+        0, int((time.monotonic() - execution_started) * 1000)
+    )
     protected_succeeded = child_returncode == EXIT_SUCCESS
+    terminal_event = _capture_terminal_event(
+        packet=packet,
+        binding=binding,
+        runtime=runtime,
+        rollout=rollout,
+        rollout_runtime_home="main",
+        selected_launch_path=match_path,
+        child_returncode=child_returncode,
+        output_digest=output_digest,
+        parent_enforced=False,
+        execution_elapsed_ms=execution_elapsed_ms,
+    )
     if execution_status is not None:
         execution_status.update(
             execution_completed=child_returncode is not None,
             child_succeeded=protected_succeeded,
-            integration_accepted=(
-                protected_succeeded and integration["status"] == "passed"
-            ),
+            integration_accepted=False,
+            execution_elapsed_ms=execution_elapsed_ms,
         )
     _append_attestation(
         ledger,
@@ -2230,7 +2861,7 @@ def _attest_native(
         ),
         selected_launch_path=match_path,
         native_admission=admission,
-        integration_receipt=integration_receipt,
+        terminal_event=terminal_event,
     )
     if not protected_succeeded:
         return Outcome("command_failed", child_returncode)
@@ -2475,32 +3106,25 @@ def _role_binding(packet: dict[str, Any]) -> RoleBinding | None:
     if not all(isinstance(value, str) and value for value in (role_name, model, effort, instructions)):
         return None
     model_tier = packet["model_tier"].strip()
-    declared, package_valid = _package_policy_binding(
+    _declared, package_valid = _package_policy_binding(
         agent_type=agent_type,
         model_tier=model_tier,
         model=model,
         effort=effort,
     )
-    legacy_valid = (
-        not declared
-        and _legacy_capability_binding(
-            agent_type=agent_type,
-            model_tier=model_tier,
-            model=model,
-            effort=effort,
-        )
-    )
     if (
         role_name != agent_type
         or packet["reasoning_effort"].strip() != effort
-        or not (package_valid or legacy_valid)
+        or not package_valid
     ):
         return None
     return RoleBinding(agent_type, model_tier, model, effort, instructions, role_config)
 
 
-def _installed_verifier_binding() -> RoleBinding | None:
-    role_config = _role_config_path("verifier")
+def _installed_integration_checker_binding() -> RoleBinding | None:
+    """Return only the package-declared independent integration checker."""
+    agent_type = INTEGRATION_CHECKER_AGENT_TYPE
+    role_config = _role_config_path(agent_type)
     if role_config is None or not _secure_owned_file(role_config, exact_mode=0o600):
         return None
     try:
@@ -2512,40 +3136,33 @@ def _installed_verifier_binding() -> RoleBinding | None:
     effort = role.get("model_reasoning_effort")
     instructions = role.get("developer_instructions")
     if (
-        role.get("name") != "verifier"
+        role.get("name") != agent_type
         or not all(isinstance(value, str) and value for value in (model, effort, instructions))
     ):
         return None
-    declared, package_valid = _package_policy_binding(
-        agent_type="verifier",
+    _declared, package_valid = _package_policy_binding(
+        agent_type=agent_type,
         model_tier=None,
         model=model,
         effort=effort,
     )
-    if declared:
-        if not package_valid:
-            return None
-        _policy_declared, policy = _load_routing_policy()
-        if policy is None:
-            return None
-        model_tier = policy["role_bindings"]["verifier"]["model_tier"]
-    else:
-        model_tier = next(
-            (
-                tier
-                for tier in CAPABILITY_MODEL_KEYS
-                if _legacy_capability_binding(
-                    agent_type="verifier",
-                    model_tier=tier,
-                    model=model,
-                    effort=effort,
-                )
-            ),
-            None,
-        )
+    if not package_valid:
+        return None
+    _policy_declared, policy = _load_routing_policy()
+    if policy is None:
+        return None
+    role_bindings = policy.get("role_bindings")
+    checker_policy = (
+        role_bindings.get(agent_type) if isinstance(role_bindings, dict) else None
+    )
+    model_tier = (
+        checker_policy.get("model_tier")
+        if isinstance(checker_policy, dict)
+        else None
+    )
     if not isinstance(model_tier, str):
         return None
-    return RoleBinding("verifier", model_tier, model, effort, instructions, role_config)
+    return RoleBinding(agent_type, model_tier, model, effort, instructions, role_config)
 
 
 def _secure_leaf_runtime_home(path: Path) -> bool:
@@ -2609,6 +3226,80 @@ def _writable_roots(packet: dict[str, Any]) -> list[str]:
     return roots
 
 
+def _worktree_digest(packet: dict[str, Any]) -> str | None:
+    """Digest the declared mutable scope after the child has stopped."""
+    if packet.get("write_scope") == ["read-only"]:
+        return None
+    values = packet.get("write_scope")
+    if not isinstance(values, list) or not values:
+        return None
+    digest = hashlib.sha256()
+
+    def add(kind: str, relative: str, mode: int, content: str | None = None) -> None:
+        digest.update(
+            json.dumps(
+                [kind, relative, mode, content],
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        digest.update(b"\n")
+
+    def visit(path: Path, relative: str) -> bool:
+        try:
+            metadata = path.lstat()
+        except OSError:
+            return False
+        mode = stat.S_IMODE(metadata.st_mode)
+        if stat.S_ISLNK(metadata.st_mode):
+            try:
+                add("symlink", relative, mode, os.readlink(path))
+            except OSError:
+                return False
+            return True
+        if stat.S_ISDIR(metadata.st_mode):
+            add("directory", relative, mode)
+            try:
+                children = sorted(path.iterdir(), key=lambda child: child.name)
+            except OSError:
+                return False
+            return all(
+                visit(child, f"{relative}/{child.name}") for child in children
+            )
+        if not stat.S_ISREG(metadata.st_mode):
+            return False
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        try:
+            descriptor = os.open(path, flags)
+            with os.fdopen(descriptor, "rb") as handle:
+                opened = os.fstat(handle.fileno())
+                if (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino):
+                    return False
+                contents = hashlib.sha256()
+                while chunk := handle.read(64 * 1024):
+                    contents.update(chunk)
+            current = path.lstat()
+        except OSError:
+            return False
+        if (
+            (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns)
+            != (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
+        ):
+            return False
+        add("file", relative, mode, contents.hexdigest())
+        return True
+
+    for index, value in enumerate(values):
+        if not isinstance(value, str) or not value.strip():
+            return None
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        if not visit(path, f"scope-{index}"):
+            return None
+    return digest.hexdigest()
+
+
 def _budget_configs(packet: dict[str, Any]) -> tuple[str, str]:
     target = int(packet["token_budget"])
     reminder = max(250, min(2_000, target // 5))
@@ -2636,15 +3327,21 @@ def _budget_configs(packet: dict[str, Any]) -> tuple[str, str]:
 
 
 def _typed_objective(packet: dict[str, Any]) -> str:
+    objective_lock = _objective_lock(packet)
     contract = {
         "agent_type": packet["agent_type"],
         "model_tier": packet["model_tier"],
         "reasoning_effort": packet["reasoning_effort"],
         "network_access": packet.get("network_access", False),
         "write_scope": packet["write_scope"],
+        "non_goals": packet["non_goals"],
+        "acceptance_evidence": packet["acceptance_evidence"],
+        "verification_ceiling": packet["verification_ceiling"],
         "resource_cap": packet["resource_cap"],
         "stop_condition": packet["stop_condition"],
         "token_budget": packet["token_budget"],
+        "path_iteration_envelope": _path_iteration_envelope(packet),
+        "path_iteration_envelope_digest": _path_iteration_envelope_digest(packet),
     }
     for field in (
         "packet_version",
@@ -2659,10 +3356,104 @@ def _typed_objective(packet: dict[str, Any]) -> str:
         if field in packet:
             contract[field] = packet[field]
     return (
-        packet["objective"].rstrip()
+        "TERMINAL_OUTCOME (binding): "
+        + packet["terminal_outcome"].rstrip()
+        + "\nCURRENT_PATH_OBJECTIVE (replaceable): "
+        + packet["objective"].rstrip()
+        + "\n\nOBJECTIVE_LOCK (canonical):\n"
+        + _canonical_json(objective_lock)
+        + "\n\nOBJECTIVE_LOCK (binding):\n"
+        + "- Work only inside the stated objective and write_scope.\n"
+        + "- Model or reasoning escalation changes capability, not authority or scope.\n"
+        + "- Path acceptance evidence or its stop_condition closes only the current lane/iteration; the global terminal_outcome and user stop condition take precedence for the whole task.\n"
+        + "- A blocked path returns to the main for an in-scope alternative; final BLOCKED is valid only when all authorized lanes are terminal.\n"
+        + "- Continue iterative discovery or flywheel work until the terminal outcome passes or the user stop condition applies.\n"
+        + "- The verification ceiling limits nonessential verification and never truncates core outcome work.\n"
+        + "- Never fabricate evidence or substitute an unauthorized method.\n"
+        + "- Do not perform additional reviews, repository-wide analysis, repeated validation, or optional model consultations after sufficient evidence exists.\n"
+        + "- Do not add unrelated cleanup, refactoring, architectural redesign, abstraction, documentation expansion, speculative robustness, or polishing.\n"
+        + "- Report adjacent improvements as backlog findings. A broader objective requires a new explicitly authorized packet."
         + "\n\nADAPTIVE_DISPATCH_CONTRACT (binding):\n"
         + json.dumps(contract, sort_keys=True, separators=(",", ":"))
     )
+
+
+def _objective_lock(packet: dict[str, Any]) -> dict[str, Any]:
+    """Canonical, route-independent terminal outcome and authority boundary.
+
+    Current methods, data sources, preregistration, stages, test plans, and
+    path-local verification belong to the replaceable path envelope below. The
+    lock therefore remains stable while the main returns a blocked path for an
+    in-scope alternative.
+    """
+    terminal_outcome = packet.get("terminal_outcome", packet.get("objective"))
+    if not isinstance(terminal_outcome, str) or not terminal_outcome.strip():
+        raise ValueError("terminal_outcome must be a non-empty string")
+    terminal_outcome = terminal_outcome.rstrip()
+    objective_kind = packet.get("objective_kind", "terminal_outcome")
+    progression_mode = packet.get("progression_mode", "iterative_until_outcome_or_user_stop")
+    authorized_lanes = packet.get("authorized_lanes", ["declared_write_scope"])
+    if not isinstance(authorized_lanes, list) or any(
+        not isinstance(item, str) or not item.strip() for item in authorized_lanes
+    ):
+        raise ValueError("authorized_lanes must be a bounded list of stable lane IDs")
+    return {
+        "objective_lock_version": OBJECTIVE_LOCK_VERSION,
+        "objective": terminal_outcome,
+        "terminal_outcome": terminal_outcome,
+        "non_goals": packet["non_goals"],
+        "authorized_lanes": authorized_lanes,
+        "progression_policy": {
+            "objective_kind": objective_kind,
+            "progression_mode": progression_mode,
+            "path_blocked": "return_to_main_for_in_scope_alternative",
+            "final_blocked_requires": "all_authorized_lanes_terminal",
+            "continue_until": "terminal_outcome_or_user_stop",
+        },
+        "objective_kind": objective_kind,
+        "progression_mode": progression_mode,
+        "authority": {
+            "read_scope": packet.get("read_scope", []),
+            "write_scope": packet["write_scope"],
+            "network_access": packet.get("network_access", False),
+        },
+        "global_terminal_conditions": {
+            "blocked_path": "return_to_main_for_in_scope_alternative",
+            "final_blocked": "all_authorized_lanes_terminal",
+            "iteration": "continue_until_terminal_outcome_or_user_stop",
+            "verification": "ceiling_limits_nonessential_verification_only",
+            "truthfulness": "fabrication_and_unauthorized_substitution_forbidden",
+        },
+    }
+
+
+def _path_iteration_envelope(packet: dict[str, Any], lane_id: str | None = None) -> dict[str, Any]:
+    """Replaceable method/data-source/stage/test-plan contract for one path."""
+    return {
+        "path_iteration_envelope_version": "1",
+        "lane_id": lane_id or packet.get("lane_id", "declared_write_scope"),
+        "current_path_objective": packet["objective"],
+        "method_id": packet.get("method_id"),
+        "data_source_id": packet.get("data_source_id"),
+        "stage_id": packet.get("stage_id"),
+        "intended_behavior": packet.get("intended_behavior"),
+        "acceptance_evidence": packet["acceptance_evidence"],
+        "verification_ceiling": packet["verification_ceiling"],
+        "known_side_effects": packet.get("known_side_effects", []),
+        "stop_condition": packet["stop_condition"],
+    }
+
+
+def _path_iteration_envelope_digest(packet: dict[str, Any], lane_id: str | None = None) -> str:
+    return _canonical_digest(_path_iteration_envelope(packet, lane_id))
+
+
+def _objective_lock_text(packet: dict[str, Any]) -> str:
+    return _canonical_json(_objective_lock(packet))
+
+
+def _objective_lock_digest(packet: dict[str, Any]) -> str:
+    return _canonical_digest(_objective_lock(packet))
 
 
 def _typed_exec_tail(
@@ -2721,10 +3512,22 @@ def _canonical_resume_binding(
 ) -> list[str] | None:
     argv = _safe_argv(value)
     codex = shutil.which("codex")
-    if argv is None or codex is None or _resolved_executable(argv[0]) != _resolved_executable(codex):
+    resolved_codex = _resolved_executable(codex) if codex is not None else None
+    if (
+        argv is None
+        or resolved_codex is None
+        or _resolved_executable(argv[0]) != resolved_codex
+    ):
         return None
     expected_tail = [
         "exec",
+        "--ignore-user-config",
+        "--disable",
+        "apps",
+        "--disable",
+        "plugins",
+        "--disable",
+        "multi_agent",
         "resume",
         "--model",
         binding.model,
@@ -2736,7 +3539,7 @@ def _canonical_resume_binding(
         session_id,
         objective,
     ]
-    return argv if argv[1:] == expected_tail else None
+    return [str(resolved_codex), *expected_tail] if argv[1:] == expected_tail else None
 
 
 def _resolved_executable(value: str) -> Path | None:
@@ -2750,7 +3553,7 @@ def _resolved_executable(value: str) -> Path | None:
 
 
 def _typed_launch_binding(
-    payload: dict[str, Any], expected_type: str
+    payload: dict[str, Any], expected_type: str, dispatched_packet: dict[str, Any]
 ) -> RecoveryLaunch | None:
     if payload.get("launch_type") != expected_type:
         return None
@@ -2782,6 +3585,13 @@ def _typed_launch_binding(
         return None
     if _validate_packet(packet, role_config) is not None:
         return None
+    if (
+        _validate_packet(dispatched_packet, None) is not None
+        or _canonical_digest(packet) != _canonical_digest(dispatched_packet)
+        or packet["dispatch_id"].strip() != dispatched_packet["dispatch_id"].strip()
+        or _intended_triple(packet) != _intended_triple(dispatched_packet)
+    ):
+        return None
     if packet["agent_type"].strip() != agent_type:
         return None
 
@@ -2808,14 +3618,16 @@ def _typed_launch_binding(
     return RecoveryLaunch(expected_type, packet, argv, binding, source, runtime_home)
 
 
-def _load_recovery(path: Path, expected_type: str) -> RecoveryLaunch | None:
+def _load_recovery(
+    path: Path, expected_type: str, dispatched_packet: dict[str, Any]
+) -> RecoveryLaunch | None:
     try:
         payload = _load_json(path)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return None
     if not isinstance(payload, dict):
         return None
-    return _typed_launch_binding(payload, expected_type)
+    return _typed_launch_binding(payload, expected_type, dispatched_packet)
 
 
 def _direct_typed_launch(packet: dict[str, Any]) -> RecoveryLaunch | None:
@@ -2854,7 +3666,6 @@ def _run_recovery(
     ledger: Path,
     failure_code: int,
     validate_only: bool,
-    integration_receipt: Any = None,
     execution_status: dict[str, Any] | None = None,
 ) -> int:
     execution_policy = _execution_policy(launch.packet)
@@ -2870,23 +3681,10 @@ def _run_recovery(
         verdict="launch_config_match",
         reason="installed_role_config_and_argv_matched",
         selected_launch_path=launch.launch_type,
-        integration_receipt=integration_receipt,
     )
     if validate_only:
         return EXIT_SUCCESS
-    child_environment = os.environ.copy()
-    # A typed leaf must not inherit the parent Codex thread/team envelope. Those
-    # variables re-inject the leader's collaboration tools and can let a bounded
-    # Terra worker fan out into un-attested Ultra children despite --disable
-    # multi_agent. Authentication remains available through the isolated home.
-    for inherited_context_key in (
-        "CODEX_REMOTE_PAYLOAD",
-        "CODEX_THREAD_ID",
-        "OMX_MOUSE",
-        "OMX_TEAM_MOUSE",
-    ):
-        child_environment.pop(inherited_context_key, None)
-    child_environment["CODEX_HOME"] = str(launch.runtime_home)
+    child_environment = _isolated_child_environment(launch.runtime_home)
     session_id: str | None = None
     session_id_conflict = False
     rollout: Path | None = None
@@ -2896,6 +3694,8 @@ def _run_recovery(
     forbidden_leaf_tool_call: str | None = None
     execution_policy_violation: str | None = None
     observed_child_stdout_bytes = 0
+    child_output_digest = hashlib.sha256()
+    execution_started = time.monotonic()
     try:
         process = subprocess.Popen(
             launch.argv,
@@ -2934,9 +3734,9 @@ def _run_recovery(
         if received_output and line is None:
             output_closed = True
         elif line is not None:
-            observed_child_stdout_bytes += len(
-                line.encode("utf-8", errors="replace")
-            )
+            encoded_line = line.encode("utf-8", errors="replace")
+            observed_child_stdout_bytes += len(encoded_line)
+            child_output_digest.update(encoded_line)
             sys.stdout.write(line)
             sys.stdout.flush()
             match = SESSION_ID_OUTPUT_PATTERN.fullmatch(line.rstrip("\r\n"))
@@ -2993,10 +3793,14 @@ def _run_recovery(
                 forbidden_leaf_tool_call = budget_monitor.forbidden_leaf_tool_call
                 _terminate_child_group(process)
     child_returncode = process.wait()
+    execution_elapsed_ms = max(
+        0, int((time.monotonic() - execution_started) * 1000)
+    )
     if execution_status is not None:
         execution_status.update(
             execution_completed=True,
             child_succeeded=child_returncode == EXIT_SUCCESS,
+            execution_elapsed_ms=execution_elapsed_ms,
         )
     output_thread.join(timeout=CHILD_GROUP_TERM_GRACE_SECONDS)
 
@@ -3043,9 +3847,27 @@ def _run_recovery(
     }
     if execution_status is not None:
         execution_status["weighted_tokens"] = observed_weighted_tokens
+        execution_status["integration_accepted"] = False
+    terminal_event = _capture_terminal_event(
+        packet=launch.packet,
+        binding=launch.binding,
+        runtime=runtime,
+        rollout=rollout,
+        rollout_runtime_home="leaf",
+        selected_launch_path=launch.launch_type,
+        child_returncode=child_returncode,
+        output_digest=child_output_digest.hexdigest(),
+        parent_enforced=True,
+        weighted_tokens=observed_weighted_tokens,
+        execution_elapsed_ms=execution_elapsed_ms,
+    )
     if execution_policy_violation is not None:
         if execution_status is not None:
-            execution_status["failure_class"] = "scope_or_retrieval_overbreadth"
+            execution_status["failure_class"] = (
+                "context_ceiling"
+                if execution_policy_violation == "token_budget_exceeded"
+                else "scope_or_retrieval_overbreadth"
+            )
             execution_status["failure_signal"] = (
                 "budget_exhausted"
                 if execution_policy_violation == "token_budget_exceeded"
@@ -3073,7 +3895,7 @@ def _run_recovery(
                 else 0
             ),
             observed_child_stdout_bytes=observed_child_stdout_bytes,
-            integration_receipt=integration_receipt,
+            terminal_event=terminal_event,
         )
         return failure_code
     if (
@@ -3095,7 +3917,7 @@ def _run_recovery(
             selected_launch_path=launch.launch_type,
             parent_enforced=True,
             forbidden_leaf_tool_call=forbidden_leaf_tool_call,
-            integration_receipt=integration_receipt,
+            terminal_event=terminal_event,
         )
         return failure_code
     if runtime is None:
@@ -3109,7 +3931,6 @@ def _run_recovery(
             verdict="runtime_unavailable",
             reason="typed_runtime_evidence_unavailable",
             selected_launch_path=launch.launch_type,
-            integration_receipt=integration_receipt,
         )
         return failure_code
     if runtime.model != launch.binding.model or runtime.effort != launch.binding.effort:
@@ -3123,7 +3944,6 @@ def _run_recovery(
             verdict="runtime_mismatch",
             reason="typed_runtime_model_or_effort_mismatch",
             selected_launch_path=launch.launch_type,
-            integration_receipt=integration_receipt,
         )
         return failure_code
 
@@ -3149,24 +3969,111 @@ def _run_recovery(
             budget_monitor.observed_tool_output_bytes if budget_monitor is not None else 0
         ),
         observed_child_stdout_bytes=observed_child_stdout_bytes,
-        integration_receipt=integration_receipt,
+        terminal_event=terminal_event,
     )
-    integration = _integration_gate(
-        integration_receipt,
-        binding=launch.binding,
+    return EXIT_SUCCESS if child_succeeded else failure_code
+
+
+def _finalize_integration(
+    *,
+    packet: Any,
+    ledger: Path,
+    receipt_path: Path | None,
+    execution_status: dict[str, Any] | None = None,
+) -> int:
+    """Phase two: evaluate one receipt after a trusted terminal event exists."""
+    def precondition_failure(code: int) -> int:
+        if execution_status is not None:
+            execution_status["finalize_precondition_failed"] = True
+        return code
+
+    if _validate_packet(packet, None) is not None or not isinstance(packet, dict):
+        return precondition_failure(EXIT_INVALID_PACKET)
+    binding = _role_binding(packet)
+    if binding is None:
+        return precondition_failure(EXIT_UNSAFE_LAUNCH_PATH)
+    terminal_event = _load_terminal_event(ledger, packet)
+    if terminal_event is None:
+        return precondition_failure(EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE)
+    runtime = _trusted_terminal_runtime(terminal_event)
+    if runtime is None:
+        return precondition_failure(EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE)
+    terminal = terminal_event.value
+    selected_launch_path = terminal.get("selected_launch_path")
+    parent_enforced = terminal.get("parent_enforced")
+    rollout = terminal.get("rollout")
+    if (
+        not isinstance(selected_launch_path, str)
+        or not isinstance(parent_enforced, bool)
+        or not isinstance(rollout, dict)
+        or not isinstance(rollout.get("path"), str)
+    ):
+        return precondition_failure(EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE)
+
+    # This is intentionally the first receipt read in the entire acceptance path.
+    receipt = _load_receipt(receipt_path)
+    gate = _integration_gate(
+        receipt,
+        packet=packet,
+        binding=binding,
         runtime=runtime,
-        expected_session_id=session_id,
-        selected_launch_path=launch.launch_type,
-        parent_enforced=True,
-        dispatch_id=launch.packet["dispatch_id"].strip(),
+        expected_session_id=runtime.session_id,
+        selected_launch_path=selected_launch_path,
+        parent_enforced=parent_enforced,
+        terminal_event=terminal_event,
+        dispatch_id=packet["dispatch_id"].strip(),
     )
     if execution_status is not None:
-        execution_status["integration_accepted"] = bool(
-            child_succeeded and integration["status"] == "passed"
+        child_returncode = terminal.get("terminal_result", {}).get("returncode")
+        execution_status.update(
+            execution_completed=isinstance(child_returncode, int)
+            and not isinstance(child_returncode, bool),
+            child_succeeded=child_returncode == EXIT_SUCCESS,
+            integration_accepted=(
+                gate["status"] == "passed"
+                and gate.get("outcome_state") == "terminal_outcome_accepted"
+            ),
+            path_accepted=gate.get("path_accepted", False),
+            terminal_outcome_accepted=gate.get("terminal_outcome_accepted", gate["status"] == "passed"),
+            path_blocked=gate.get("path_blocked", False),
+            all_lanes_exhausted=gate.get("outcome_state") == "all_lanes_exhausted",
+            blocked_reason=gate.get("blocked_reason"),
+            weighted_tokens=terminal.get("weighted_tokens"),
+            execution_elapsed_ms=terminal.get("execution_elapsed_ms"),
         )
-    if integration_receipt is not None and integration["status"] != "passed":
-        return failure_code
-    return EXIT_SUCCESS if child_succeeded else failure_code
+    _append_attestation(
+        ledger,
+        packet=packet,
+        binding=binding,
+        expected_session_id=runtime.session_id,
+        runtime=runtime,
+        source={
+            "kind": "codex_rollout",
+            "path": rollout["path"],
+            "status": "trusted",
+        },
+        verdict=(
+            "integration_accepted"
+            if gate["status"] == "passed" and gate.get("outcome_state") == "terminal_outcome_accepted"
+            else "path_accepted"
+            if gate["status"] == "passed" and gate.get("outcome_state") == "path_accepted"
+            else "all_lanes_exhausted"
+            if gate["status"] == "passed" and gate.get("outcome_state") == "all_lanes_exhausted"
+            else "path_blocked"
+            if gate["status"] == "passed"
+            else "integration_blocked"
+        ),
+        reason="receipt_finalized" if gate["status"] == "passed" else gate["reason"],
+        selected_launch_path=selected_launch_path,
+        parent_enforced=parent_enforced,
+        terminal_event=terminal_event,
+        integration_gate=gate,
+    )
+    return (
+        EXIT_SUCCESS
+        if gate["status"] == "passed"
+        else EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -3191,7 +4098,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--integration-receipt",
         type=Path,
-        help="allowlisted completion integration receipt JSON",
+        help="post-execution receipt JSON; used only with --finalize-integration",
+    )
+    parser.add_argument(
+        "--finalize-integration",
+        action="store_true",
+        help="evaluate a receipt against a previously captured terminal event without launching a child",
     )
     parser.add_argument(
         "--protected-argv-json", help="protected command as a JSON argv list"
@@ -3232,20 +4144,91 @@ def _print_error(message: str) -> None:
     print(f"adaptive-dispatch-attestation: {message}", file=sys.stderr)
 
 
+@contextmanager
+def _finalization_lock(ledger: Path, dispatch_id: str):
+    """Serialize pending-check, receipt acceptance, and terminal audit append."""
+    parent = ledger.parent
+    try:
+        parent_metadata = parent.lstat()
+    except OSError as exc:
+        raise RuntimeError("model-routing ledger directory is unavailable") from exc
+    if (
+        parent.is_symlink()
+        or not stat.S_ISDIR(parent_metadata.st_mode)
+        or parent_metadata.st_uid != os.getuid()
+        or parent_metadata.st_mode & 0o077
+    ):
+        raise RuntimeError("model-routing ledger directory is not owner-only")
+    lock_id = hashlib.sha256(dispatch_id.encode("utf-8")).hexdigest()
+    lock_path = parent / f".finalize-{lock_id}.lock"
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise RuntimeError("could not open the finalization lock") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_mode & 0o077
+        ):
+            raise RuntimeError("finalization lock is not an owner-only file")
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
 def _dispatch_main(
     argv: list[str] | None = None,
     execution_status: dict[str, Any] | None = None,
+    *,
+    parsed_args: argparse.Namespace | None = None,
+    packet: Any = None,
+    packet_loaded: bool = False,
 ) -> int:
-    args = _parser().parse_args(argv)
+    args = parsed_args if parsed_args is not None else _parser().parse_args(argv)
     if execution_status is not None:
         execution_status["validate_only"] = args.validate_only
-    try:
-        packet = _load_json(args.packet)
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        _print_error("invalid packet")
-        return EXIT_INVALID_PACKET
+    if not packet_loaded:
+        try:
+            packet = _load_json(args.packet)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            _print_error("invalid packet")
+            return EXIT_INVALID_PACKET
+    if args.finalize_integration:
+        if any(
+            value is not None
+            for value in (
+                args.rollout,
+                args.session_id,
+                args.protected_argv_json,
+                args.corrected_launch,
+                args.fallback_launch,
+                args.native_admission_receipt,
+            )
+        ) or args.direct_typed or args.validate_only:
+            if execution_status is not None:
+                execution_status["finalize_precondition_failed"] = True
+            _print_error("unsafe finalization path")
+            return EXIT_UNSAFE_LAUNCH_PATH
+        return _finalize_integration(
+            packet=packet,
+            ledger=args.ledger,
+            receipt_path=args.integration_receipt,
+            execution_status=execution_status,
+        )
     native_admission = _load_receipt(args.native_admission_receipt)
-    integration_receipt = _load_receipt(args.integration_receipt)
 
     if args.direct_typed:
         if any(
@@ -3272,7 +4255,6 @@ def _dispatch_main(
                 args.ledger,
                 EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE,
                 args.validate_only,
-                integration_receipt,
                 execution_status,
             )
         except OSError:
@@ -3299,7 +4281,6 @@ def _dispatch_main(
             unavailable_path="typed_external_worker" if args.fallback_launch else "none",
             validate_only=args.validate_only,
             native_admission=native_admission,
-            integration_receipt=integration_receipt,
             execution_status=execution_status,
         )
     except OSError:
@@ -3322,7 +4303,9 @@ def _dispatch_main(
         if args.corrected_launch is None:
             _print_error("safe corrected launch missing")
             return EXIT_UNSAFE_LAUNCH_PATH
-        launch = _load_recovery(args.corrected_launch, "corrected_typed_worker")
+        launch = _load_recovery(
+            args.corrected_launch, "corrected_typed_worker", packet
+        )
         if launch is None:
             _print_error("unsafe corrected launch")
             return EXIT_UNSAFE_LAUNCH_PATH
@@ -3332,7 +4315,6 @@ def _dispatch_main(
                 args.ledger,
                 EXIT_ROUTING_MISMATCH_RECOVERY_FAILURE,
                 args.validate_only,
-                integration_receipt,
                 execution_status,
             )
         except OSError:
@@ -3341,7 +4323,7 @@ def _dispatch_main(
     if args.fallback_launch is None:
         _print_error("safe fallback launch missing")
         return EXIT_UNSAFE_LAUNCH_PATH
-    launch = _load_recovery(args.fallback_launch, "typed_external_worker")
+    launch = _load_recovery(args.fallback_launch, "typed_external_worker", packet)
     if launch is None:
         _print_error("unsafe fallback launch")
         return EXIT_UNSAFE_LAUNCH_PATH
@@ -3351,20 +4333,13 @@ def _dispatch_main(
             args.ledger,
             EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE,
             args.validate_only,
-            integration_receipt,
             execution_status,
         )
     except OSError:
         return EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    try:
-        packet = _load_json(args.packet)
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return _dispatch_main(argv)
-
+def _audited_dispatch(args: argparse.Namespace, packet: Any) -> int:
     status: dict[str, Any] = {"validate_only": args.validate_only}
     try:
         context, gate_warning = _start_adaptive_audit(
@@ -3372,6 +4347,7 @@ def main(argv: list[str] | None = None) -> int:
             ledger=args.model_routing_ledger,
             review_dir=args.model_routing_review_dir,
             attestation_ledger=args.ledger,
+            require_existing_pre=args.finalize_integration,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         print(
@@ -3394,14 +4370,53 @@ def main(argv: list[str] | None = None) -> int:
         print(gate_warning, file=sys.stderr)
         return EXIT_POLICY_GATE
 
-    result = _dispatch_main(argv, status)
+    result = _dispatch_main(
+        execution_status=status,
+        parsed_args=args,
+        packet=packet,
+        packet_loaded=True,
+    )
     if context is not None:
+        awaiting_integration = (
+            bool(status.get("execution_completed"))
+            and bool(status.get("child_succeeded"))
+            and not bool(status.get("integration_accepted"))
+        ) or bool(status.get("finalize_precondition_failed"))
+        if awaiting_integration:
+            return result
         try:
             _finish_adaptive_audit(context, status, result)
         except (OSError, RuntimeError, ValueError) as exc:
             _print_error(f"model-routing audit failure: {exc}")
             return EXIT_MODEL_ROUTING_AUDIT_FAILURE
     return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        packet = _load_json(args.packet)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        _print_error("invalid packet")
+        return EXIT_INVALID_PACKET
+
+    if args.finalize_integration:
+        dispatch_id = packet.get("dispatch_id") if isinstance(packet, dict) else None
+        if (
+            not isinstance(dispatch_id, str)
+            or DISPATCH_ID_PATTERN.fullmatch(dispatch_id.strip()) is None
+        ):
+            _print_error("invalid packet")
+            return EXIT_INVALID_PACKET
+        try:
+            with _finalization_lock(
+                args.model_routing_ledger, dispatch_id.strip()
+            ):
+                return _audited_dispatch(args, packet)
+        except (OSError, RuntimeError, ValueError) as exc:
+            _print_error(f"model-routing finalization lock failure: {exc}")
+            return EXIT_MODEL_ROUTING_AUDIT_FAILURE
+    return _audited_dispatch(args, packet)
 
 
 if __name__ == "__main__":

@@ -134,6 +134,40 @@ class DispatchPolicyTests(unittest.TestCase):
                 with self.assertRaises(contract.PolicyContractError):
                     contract.validate_routing_audit(value)
 
+    def test_routing_audit_requires_complete_routes_and_bounded_overrides(self):
+        selected = routing_audit()
+        selected.update(
+            {
+                "route_id": "luna_max",
+                "role": "adaptive-luna-maker-max",
+                "route_model": "gpt-5.6-luna",
+                "route_model_tier": "spark-tier",
+                "route_reasoning_effort": "max",
+            }
+        )
+        self.assertEqual(contract.validate_routing_audit(selected), selected)
+
+        incomplete = copy.deepcopy(selected)
+        incomplete.pop("route_model")
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.validate_routing_audit(incomplete)
+        self.assertEqual(caught.exception.code, "ROUTING_AUDIT_ROUTE_FIELDS_INVALID")
+
+        override = copy.deepcopy(selected)
+        override["selection_basis"] = "human_override"
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.validate_routing_audit(override)
+        self.assertEqual(caught.exception.code, "ROUTING_AUDIT_OVERRIDE_REASON_INVALID")
+
+        override["override_reason"] = "Explicit operator decision within the ladder."
+        self.assertEqual(contract.validate_routing_audit(override), override)
+
+        unexpected = copy.deepcopy(selected)
+        unexpected["override_reason"] = "Not allowed for policy selection."
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.validate_routing_audit(unexpected)
+        self.assertEqual(caught.exception.code, "ROUTING_AUDIT_OVERRIDE_REASON_UNEXPECTED")
+
     def test_fingerprint_is_stable(self):
         left = {"b": 2, "a": {"z": 1, "y": ["x"]}}
         right = {"a": {"y": ["x"], "z": 1}, "b": 2}
@@ -143,9 +177,227 @@ class DispatchPolicyTests(unittest.TestCase):
         )
         self.assertEqual(len(contract.canonical_policy_fingerprint(left)), 64)
 
+    def test_every_default_and_ladder_step_is_an_exact_package_route(self):
+        policy = load_policy()
+        routes = contract.validate_policy_routes(policy)
+        for task, route_id in policy["task_defaults"].items():
+            with self.subTest(task=task):
+                self.assertIn(route_id, routes)
+                self.assertEqual(policy["escalation_ladders"][task][0], route_id)
+        for ladder_name, ladder in policy["escalation_ladders"].items():
+            for route_id in ladder:
+                with self.subTest(ladder=ladder_name, route=route_id):
+                    route = routes[route_id]
+                    self.assertEqual(
+                        (route["authority"], route["model"], route["reasoning_effort"])
+                        if route["authority"] == "main"
+                        else (route["role"], route["model"], route["reasoning_effort"]),
+                        ("main", "gpt-5.6-sol", "ultra")
+                        if route["authority"] == "main"
+                        else (
+                            route["role"],
+                            policy["role_bindings"][route["role"]]["model"],
+                            policy["role_bindings"][route["role"]]["reasoning_effort"],
+                        ),
+                    )
+                    if route["authority"] == "leaf":
+                        self.assertNotEqual(route["reasoning_effort"], "ultra")
+            for previous, following in zip(ladder, ladder[1:]):
+                previous_route = routes[previous]
+                following_route = routes[following]
+                action = (
+                    "main_takeover"
+                    if following_route["authority"] == "main"
+                    else "raise_model"
+                    if previous_route["model"] != following_route["model"]
+                    else "raise_effort"
+                )
+                with self.subTest(ladder=ladder_name, transition=(previous, following)):
+                    self.assertEqual(
+                        contract.route_transition(
+                            policy,
+                            task_class=ladder_name
+                            if ladder_name in policy["task_defaults"]
+                            else "bounded_complex_implementation_or_verification",
+                            oracle_strength="weak"
+                            if ladder_name == "bounded_complex_implementation_or_verification"
+                            else "strong",
+                            previous_route=previous,
+                            next_action=action,
+                        ),
+                        following,
+                    )
+
+    def test_main_sol_classifies_each_slice_and_goal_labels_do_not_select_routes(self):
+        policy = load_policy()
+        decision = policy["decision_contract"]
+        self.assertEqual(decision["owner"], "main_session")
+        self.assertEqual(policy["required_model"], "gpt-5.6-sol")
+        self.assertEqual(policy["minimum_reasoning_effort"], "high")
+        self.assertTrue(decision["classify_before_child_launch"])
+        self.assertTrue(decision["classify_each_bounded_slice"])
+        self.assertTrue(decision["workflow_labels_are_not_route_inputs"])
+        self.assertEqual(
+            decision["long_horizon_route_requires_all"],
+            [
+                "latency_insensitive",
+                "long_horizon",
+                "strong_oracle",
+                "risk_low_or_medium",
+            ],
+        )
+
+        invalid = copy.deepcopy(policy)
+        invalid["decision_contract"]["owner"] = "child_session"
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.validate_policy_routes(invalid)
+        self.assertEqual(caught.exception.code, "DECISION_CONTRACT_INVALID")
+
+        label_selected = copy.deepcopy(policy)
+        label_selected["decision_contract"]["workflow_labels_are_not_route_inputs"] = False
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.validate_policy_routes(label_selected)
+        self.assertEqual(caught.exception.code, "DECISION_CONTRACT_INVALID")
+
+    def test_route_transition_contract_rejects_jumps_and_illegal_overrides(self):
+        policy = load_policy()
+        self.assertEqual(
+            contract.route_transition(
+                policy,
+                task_class="clear_implementation_or_transformation",
+                oracle_strength="strong",
+                previous_route="luna_high",
+                next_action="raise_effort",
+            ),
+            "luna_xhigh",
+        )
+        self.assertEqual(
+            contract.route_transition(
+                policy,
+                task_class="bounded_complex_implementation_or_verification",
+                oracle_strength="weak",
+                previous_route="luna_xhigh",
+                next_action="main_takeover",
+                failure_class="weak_oracle",
+            ),
+            "main_takeover_sol_ultra",
+        )
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.route_transition(
+                policy,
+                task_class="clear_implementation_or_transformation",
+                oracle_strength="strong",
+                previous_route="luna_high",
+                next_action="main_takeover",
+                failure_class="capability_ceiling",
+            )
+        self.assertEqual(caught.exception.code, "TRANSITION_KIND_MISMATCH")
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.route_transition(
+                policy,
+                task_class="bounded_complex_implementation_or_verification",
+                oracle_strength="weak",
+                previous_route="sol_high",
+                next_action="raise_model",
+            )
+        self.assertEqual(caught.exception.code, "TRANSITION_KIND_MISMATCH")
+        self.assertEqual(
+            policy["escalation_ladders"][
+                "latency_insensitive_long_horizon_with_strong_oracle"
+            ],
+            [
+                "luna_max",
+                "terra_xhigh",
+                "terra_max",
+                "sol_high",
+                "main_takeover_sol_ultra",
+            ],
+        )
+        self.assertIn("terra_max", policy["route_bindings"])
+        self.assertIn("checker_terra_max", policy["route_bindings"])
+        self.assertFalse(policy["routing_observations"]["terra"]["paired_ab"])
+        self.assertEqual(
+            contract.route_for(policy, "sol_medium")["role"],
+            "adaptive-sol-maker-medium",
+        )
+        invalid_observation = copy.deepcopy(policy)
+        invalid_observation["routing_observations"]["terra"]["paired_ab"] = True
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.validate_policy_routes(invalid_observation)
+        self.assertEqual(caught.exception.code, "OBSERVATION_POLICY_INVALID")
+        leaked_quota_route = copy.deepcopy(policy)
+        leaked_quota_route["escalation_ladders"][
+            "clear_implementation_or_transformation"
+        ].insert(-1, "terra_max")
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.validate_policy_routes(leaked_quota_route)
+        self.assertEqual(caught.exception.code, "QUOTA_LADDER_LEAK")
+        with self.assertRaises(contract.PolicyContractError):
+            contract.validate_route_selection(
+                policy,
+                route_id="luna_xhigh",
+                task_class="clear_implementation_or_transformation",
+                oracle_strength="strong",
+                selection_basis="human_override",
+                role="adaptive-luna-maker-xhigh",
+                model="gpt-5.6-luna",
+                reasoning_effort="xhigh",
+            )
+
+    def test_terra_routes_require_observed_failure_or_direct_latency_predicate(self):
+        policy = load_policy()
+        predicate = {field: True for field in contract.DIRECT_LATENCY_PREDICATE_FIELDS}
+        predicate["latency_budget_ms"] = 5000
+        selected = contract.validate_route_selection(
+            policy,
+            route_id="terra_medium",
+            task_class="clear_implementation_or_transformation",
+            oracle_strength="strong",
+            selection_basis="direct_latency",
+            role="adaptive-terra-maker-medium",
+            model="gpt-5.6-terra",
+            reasoning_effort="medium",
+            direct_latency_predicate=predicate,
+            use_mode="direct_latency",
+        )
+        self.assertEqual(selected["model"], "gpt-5.6-terra")
+        quota_route = contract.validate_route_selection(
+            policy,
+            route_id="terra_xhigh",
+            task_class="latency_insensitive_long_horizon_with_strong_oracle",
+            oracle_strength="strong",
+            selection_basis="failure_action",
+            role="adaptive-terra-maker-xhigh",
+            model="gpt-5.6-terra",
+            reasoning_effort="xhigh",
+            attempt_index=2,
+            use_mode="post_luna_failure",
+        )
+        self.assertEqual(quota_route["reasoning_effort"], "xhigh")
+        with self.assertRaisesRegex(contract.PolicyContractError, "direct Terra"):
+            contract.validate_route_selection(
+                policy,
+                route_id="terra_medium",
+                task_class="clear_implementation_or_transformation",
+                oracle_strength="strong",
+                selection_basis="direct_latency",
+                role="adaptive-terra-maker-medium",
+                model="gpt-5.6-terra",
+                reasoning_effort="medium",
+            )
+        with self.assertRaisesRegex(contract.PolicyContractError, "runtime or tool"):
+            contract.route_transition(
+                policy,
+                "clear_implementation_or_transformation",
+                "strong",
+                "luna_max",
+                "raise_model",
+                failure_class="tool_or_environment",
+            )
+
     def test_module_has_no_content_or_event_builder_surface(self):
         source = (PACKAGE_ROOT / "scripts" / "dispatch_policy.py").read_text()
-        self.assertLessEqual(len(source.splitlines()), 300)
+        self.assertLessEqual(len(source.splitlines()), 435)
         for name in (
             "build_pre_decision_event",
             "build_post_result_event",

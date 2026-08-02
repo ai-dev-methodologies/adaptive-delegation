@@ -3,7 +3,7 @@
 This file documents intended activation boundaries for the
 `adaptive-delegation` skill. Explicit invocation is the deterministic choice;
 implicit activation is permitted when the request clearly matches a positive
-example.
+example. The skill is Codex-only and routes Codex native subagents.
 
 ## Positive explicit examples
 
@@ -16,7 +16,7 @@ example.
 
 - "Use cost-efficient subagents for this bounded transformation and preserve evidence."
 - "Can you perform a model routing audit and reduce Sol usage where the oracle is strong?"
-- "Choose evidence-attested delegation and take over in the main if the leaf fails."
+- "Choose evidence-checked delegation and take over in the main if the leaf fails."
 - "I need token efficiency and a Luna-first route for this multi-step task."
 - "Use token effective routing, including the token-effective retry ladder."
 - "Please use adaptive delegation for this bounded verification task."

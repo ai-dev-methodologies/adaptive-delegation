@@ -7,17 +7,29 @@ import argparse
 import json
 import os
 import py_compile
+import re
 import shutil
 import stat
 import tempfile
-import tomllib
 import uuid
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError as exc:  # pragma: no cover - requires Python <= 3.10
+    raise SystemExit("adaptive-delegation requires Python 3.11 or newer") from exc
 
 
 PACKAGE_NAME = "adaptive-delegation"
 DISPATCHER_NAME = "adaptive_dispatch_attestation.py"
+CONTINUITY_READER_NAME = "read_continuity.py"
 SKIP_NAMES = {".DS_Store", "__pycache__"}
+MANAGED_ROLE_NAME = re.compile(r"^adaptive-[a-z0-9-]+$")
+SEMVER_PATTERN = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 
 
 class InstallError(RuntimeError):
@@ -65,12 +77,32 @@ def _load_policy(package: Path) -> dict:
     return value
 
 
+def _load_package_version(package: Path) -> str:
+    version_path = package / "VERSION"
+    try:
+        value = version_path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise InstallError(f"invalid package version: {exc}") from exc
+    match = SEMVER_PATTERN.fullmatch(value)
+    if match is None:
+        raise InstallError("package VERSION must contain one Semantic Version")
+    prerelease = match.group(4)
+    if prerelease and any(
+        identifier.isdigit() and len(identifier) > 1 and identifier[0] == "0"
+        for identifier in prerelease.split(".")
+    ):
+        raise InstallError("package VERSION has an invalid numeric prerelease")
+    return value
+
+
 def _validate_package(package: Path) -> list[Path]:
     required = [
+        package / "VERSION",
         package / "SKILL.md",
         package / "agents" / "openai.yaml",
         package / "config" / "model-routing.defaults.json",
         package / "scripts" / DISPATCHER_NAME,
+        package / "scripts" / CONTINUITY_READER_NAME,
         package / "scripts" / "dispatch_policy.py",
         package / "scripts" / "model_routing_audit.py",
     ]
@@ -80,6 +112,7 @@ def _validate_package(package: Path) -> list[Path]:
             "package is incomplete: " + ", ".join(str(path) for path in missing)
         )
 
+    _load_package_version(package)
     policy = _load_policy(package)
     bindings = policy.get("role_bindings")
     if not isinstance(bindings, dict) or not bindings:
@@ -106,6 +139,7 @@ def _validate_package(package: Path) -> list[Path]:
     with tempfile.TemporaryDirectory(prefix="adaptive-delegation-compile-") as temp:
         for name in (
             DISPATCHER_NAME,
+            CONTINUITY_READER_NAME,
             "dispatch_policy.py",
             "model_routing_audit.py",
         ):
@@ -122,10 +156,43 @@ def _validate_package(package: Path) -> list[Path]:
 
 def _ensure_directory(path: Path, mode: int = 0o700) -> None:
     _reject_symlink(path, "installation directory")
+    existed = path.exists()
     path.mkdir(parents=True, exist_ok=True)
     if not path.is_dir():
         raise InstallError(f"installation path is not a directory: {path}")
-    path.chmod(mode)
+    if not existed:
+        path.chmod(mode)
+
+
+def _previous_managed_role_names(installed_package: Path) -> set[str]:
+    """Return only safely named roles declared by the previous package."""
+    config_path = installed_package / "config" / "model-routing.defaults.json"
+    if not config_path.is_file() or config_path.is_symlink():
+        return set()
+    try:
+        value = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return set()
+    bindings = value.get("role_bindings") if isinstance(value, dict) else None
+    if not isinstance(bindings, dict):
+        return set()
+    return {
+        name
+        for name in bindings
+        if isinstance(name, str) and MANAGED_ROLE_NAME.fullmatch(name)
+    }
+
+
+def _remove_obsolete_role(path: Path) -> None:
+    _reject_symlink(path, "obsolete managed role")
+    if not path.exists():
+        return
+    if not path.is_file():
+        raise InstallError(f"obsolete managed role is not a file: {path}")
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise InstallError(f"could not remove obsolete managed role: {path}") from exc
 
 
 def _atomic_file(source: Path, target: Path, mode: int) -> None:
@@ -173,12 +240,20 @@ def _atomic_package(source: Path, target: Path) -> None:
 def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool) -> None:
     source = repo_root / PACKAGE_NAME
     role_paths = _validate_package(source)
+    package_version = _load_package_version(source)
     target_skill = skills_root / PACKAGE_NAME
     dispatcher_target = codex_home / "scripts" / DISPATCHER_NAME
     managed_roles = [role for role in role_paths if role.stem.startswith("adaptive-")]
     agent_targets = [codex_home / "agents" / role.name for role in managed_roles]
+    previous_roles = _previous_managed_role_names(target_skill)
+    current_roles = {role.stem for role in managed_roles}
+    obsolete_role_targets = [
+        codex_home / "agents" / f"{name}.toml"
+        for name in sorted(previous_roles - current_roles)
+    ]
 
     print(f"skill: {target_skill}")
+    print(f"package version: {package_version}")
     print(f"dispatcher: {dispatcher_target}")
     print(f"role bindings: {len(agent_targets)} under {codex_home / 'agents'}")
     if dry_run:
@@ -198,10 +273,15 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
     )
     for source_role, target_role in zip(managed_roles, agent_targets, strict=True):
         _atomic_file(target_skill / "roles" / source_role.name, target_role, 0o600)
+    for obsolete_role in obsolete_role_targets:
+        _remove_obsolete_role(obsolete_role)
 
     if stat.S_IMODE(dispatcher_target.stat().st_mode) != 0o700:
         raise InstallError("dispatcher permission verification failed")
-    print("installed: package, dispatcher, and policy-matched role bindings")
+    print(
+        "installed: package version "
+        f"{package_version}, dispatcher, and policy-matched role bindings"
+    )
     print("Codex detects skill changes automatically; restart only if this update is not visible.")
 
 
