@@ -98,7 +98,7 @@ linked audit schema `0.3.0` rejects a changed digest or mixed `0.2.0`/`0.3.0`
 task history. This detects local contract drift on dispatcher-owned paths; it
 does not prove semantic correctness or create a security principal.
 
-Package 0.5.1 requires an explicit `terminal_outcome` and `lane_id` in every packet and
+Package 0.5.2 requires an explicit `terminal_outcome` and `lane_id` in every packet and
 separates the stable terminal-outcome lock from the replaceable path/iteration
 envelope. Re-execute unfinished older packets as fresh 0.5 tasks.
 
@@ -137,13 +137,13 @@ After activation, the workflow is identical for explicit and implicit entry:
 2. Construct one portable Objective Lock before any child launch.
 3. The main classifies every bounded slice before launch. It records task
    shape, oracle strength, risk and ambiguity, latency sensitivity, execution
-   horizon, and recoverability, then selects the matching fixed path. `Goal`
-   or `Ultragoal` labels alone never select a path.
+   horizon, and recoverability, then selects the matching fixed path. Workflow
+   labels such as `Goal` or `Ultragoal` are not route inputs.
 4. Route simple work to Luna `medium`, clear implementation to Luna `high`, and
    bounded complex work to Luna `xhigh`. The quota-first long-horizon path
-   starts at Luna `max` only when active goal/Ultragoal membership,
-   long-horizon execution, latency insensitivity, a strong oracle, and
-   `low`/`medium` risk are all established for that slice.
+   starts at Luna `max` whenever long-horizon execution, latency insensitivity,
+   a strong oracle, and `low`/`medium` risk are all established for that slice,
+   regardless of whether Goal or Ultragoal is active.
 5. Escalate only from observable failure evidence, preserving the exact lock.
    Luna effort may rise through `max`; ordinary work may use Terra
    `medium/high`, while latency-insensitive long-horizon work may use Terra
@@ -163,7 +163,7 @@ order. Different bounded slices in the same goal may use different rows.
 | Simple lookup or extraction | `Luna medium -> high -> xhigh -> max -> Terra medium -> Sol medium -> main Sol ultra` |
 | Clear implementation or transformation | `Luna high -> xhigh -> max -> Terra medium -> Sol medium -> Sol high -> main Sol ultra` |
 | Bounded complex implementation, debugging, or review | `Luna xhigh -> max -> Terra high -> Sol medium -> Sol high -> main Sol ultra` |
-| Active goal/Ultragoal slice where long-horizon, latency-insensitive, strong-oracle, and low/medium-risk predicates all pass | `Luna max -> Terra xhigh -> Terra max -> Sol high -> main Sol ultra` |
+| Any bounded slice where long-horizon, latency-insensitive, strong-oracle, and low/medium-risk predicates all pass | `Luna max -> Terra xhigh -> Terra max -> Sol high -> main Sol ultra` |
 | Weak oracle, ambiguous/high-risk, or long contract | `main Sol ultra` |
 
 Terra `xhigh` and `max` are restricted to the quota-first long-horizon path and

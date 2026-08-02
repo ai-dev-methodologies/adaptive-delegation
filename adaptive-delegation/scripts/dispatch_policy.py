@@ -98,9 +98,9 @@ def validate_policy_routes(policy: Mapping[str, Any]) -> dict[str, dict[str, str
     """Validate every named route against an exact package role binding."""
     expected_decision = {
         "owner": "main_session", "classify_before_child_launch": True,
-        "classify_each_bounded_slice": True, "labels_do_not_select_routes": ["goal", "ultragoal"],
+        "classify_each_bounded_slice": True, "workflow_labels_are_not_route_inputs": True,
         "required_dimensions": ["task_shape", "oracle_strength", "risk_class", "ambiguity", "latency_sensitivity", "execution_horizon", "recoverability"],
-        "long_horizon_route_requires_all": ["active_goal_or_ultragoal", "latency_insensitive", "long_horizon", "strong_oracle", "risk_low_or_medium"],
+        "long_horizon_route_requires_all": ["latency_insensitive", "long_horizon", "strong_oracle", "risk_low_or_medium"],
         "route_selection": "task_class_then_exact_ladder", "child_rerouting": "forbidden",
         "escalation_requires": "observable_failure",
     }

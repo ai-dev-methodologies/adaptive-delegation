@@ -46,10 +46,9 @@ execution horizon, and recoverability, then selects the matching package
 default and exact ladder. A child may not select, reinterpret, or change its
 route.
 
-Workflow names are context, not routing evidence. The presence of a Codex goal
-or Ultragoal label never selects the quota-first long-horizon route by itself.
-That route is eligible only when the main determines that all of these are
-true for the bounded slice: it belongs to active goal/Ultragoal work, it is
+Workflow names are not route inputs. A Codex goal or Ultragoal label is neither
+required nor sufficient for the quota-first long-horizon route. That route is
+eligible whenever the main determines that the bounded slice itself is
 long-horizon, latency-insensitive, risk `low`/`medium`, and protected by a
 strong acceptance oracle. If any predicate is false or unproven, the main
 chooses the ordinary task-shape route or keeps the work main-authoritative.
@@ -152,7 +151,7 @@ that start on different routes.
 | Simple lookup or extraction | `gpt-5.6-luna/medium` |
 | Clear implementation or transformation | `gpt-5.6-luna/high` |
 | Bounded complex implementation or verification | `gpt-5.6-luna/xhigh` |
-| Active goal/Ultragoal story that is latency-insensitive, long-horizon, and has a strong oracle | `gpt-5.6-luna/max` |
+| Any bounded slice that is latency-insensitive, long-horizon, low/medium risk, and has a strong oracle | `gpt-5.6-luna/max` |
 | Weak oracle, ambiguous/high-risk, or long contract | Main-authoritative `gpt-5.6-sol/ultra` |
 
 Leaf `ultra` is forbidden. Sol `medium` and `high` are fixed leaf roles; they do
@@ -164,8 +163,8 @@ retry per stage, with reevaluation after every attempt. The fixed ladders are:
 - Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> terra/medium -> sol/medium -> sol/high -> main-takeover sol/ultra`.
 - Bounded complex implementation, debugging, or review: `luna/xhigh -> luna/max -> terra/high -> sol/medium -> sol/high -> main-takeover sol/ultra`.
 - Bounded complex work with a strong oracle uses the same bounded-complex ladder and may not skip a configured step.
-- An active Codex goal or Ultragoal story that is long-horizon,
-  latency-insensitive, risk `low`/`medium`, and has a strong acceptance oracle:
+- Any bounded slice that is long-horizon, latency-insensitive, risk
+  `low`/`medium`, and has a strong acceptance oracle:
   `luna/max -> terra/xhigh -> terra/max -> sol/high -> main-takeover sol/ultra`.
 - Weak-oracle, ambiguous/high-risk, or long-contract work stays main-authoritative at `sol/ultra`.
 

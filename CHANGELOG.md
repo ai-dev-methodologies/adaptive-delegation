@@ -14,11 +14,17 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.5.2] - 2026-08-02
+
+- Corrected the long-horizon classifier so Goal/Ultragoal membership is not a
+  route input. The qualified path is available for any bounded slice whose
+  latency, horizon, oracle, and risk evidence satisfies the main's decision.
+
 ## [0.5.1] - 2026-08-02
 
 - Made route classification explicitly main-authoritative: the Sol/high-or-
-  above main classifies every bounded slice from task evidence, and goal or
-  Ultragoal labels alone cannot select the long-horizon route.
+  above main classifies every bounded slice from task evidence, and workflow
+  labels alone cannot select the long-horizon route.
 - Added a fail-closed package decision contract for the classification owner,
   required dimensions, long-horizon predicates, child rerouting prohibition,
   and observable-failure escalation rule.

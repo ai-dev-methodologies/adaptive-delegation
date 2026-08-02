@@ -24,7 +24,7 @@
     "owner": "main_session",
     "classify_before_child_launch": true,
     "classify_each_bounded_slice": true,
-    "labels_do_not_select_routes": ["goal", "ultragoal"],
+    "workflow_labels_are_not_route_inputs": true,
     "required_dimensions": [
       "task_shape",
       "oracle_strength",
@@ -35,7 +35,6 @@
       "recoverability"
     ],
     "long_horizon_route_requires_all": [
-      "active_goal_or_ultragoal",
       "latency_insensitive",
       "long_horizon",
       "strong_oracle",

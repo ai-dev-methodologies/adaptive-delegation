@@ -236,11 +236,10 @@ class DispatchPolicyTests(unittest.TestCase):
         self.assertEqual(policy["minimum_reasoning_effort"], "high")
         self.assertTrue(decision["classify_before_child_launch"])
         self.assertTrue(decision["classify_each_bounded_slice"])
-        self.assertEqual(decision["labels_do_not_select_routes"], ["goal", "ultragoal"])
+        self.assertTrue(decision["workflow_labels_are_not_route_inputs"])
         self.assertEqual(
             decision["long_horizon_route_requires_all"],
             [
-                "active_goal_or_ultragoal",
                 "latency_insensitive",
                 "long_horizon",
                 "strong_oracle",
@@ -255,7 +254,7 @@ class DispatchPolicyTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "DECISION_CONTRACT_INVALID")
 
         label_selected = copy.deepcopy(policy)
-        label_selected["decision_contract"]["labels_do_not_select_routes"] = []
+        label_selected["decision_contract"]["workflow_labels_are_not_route_inputs"] = False
         with self.assertRaises(contract.PolicyContractError) as caught:
             contract.validate_policy_routes(label_selected)
         self.assertEqual(caught.exception.code, "DECISION_CONTRACT_INVALID")

@@ -54,8 +54,9 @@ the skill is not visible.
 The current policy is Luna-first and effort-first. After observable Luna
 acceptance/quality failure, scoped implementation/transformation uses Terra
 medium and bounded complex/debug/review uses Terra high before Sol leaf routes.
-Active goal/Ultragoal work that is latency-insensitive, long-horizon, and has a
-strong oracle uses Luna max, then Terra xhigh/max, before Sol high.
+Any bounded slice that is latency-insensitive, long-horizon, low/medium risk,
+and has a strong oracle uses Luna max, then Terra xhigh/max, before Sol high.
+Goal/Ultragoal labels are not route inputs.
 Every leaf route resolves to an installed fixed Codex role, leaf `ultra` is
 forbidden, and unresolved or weak-oracle work returns to the main
 `gpt-5.6-sol/ultra` authority. The main gate uses declared session context and
@@ -64,7 +65,7 @@ cannot mutate the parent model.
 Automatic escalation is Luna `medium/high/xhigh/max` as applicable, then Terra
 `medium` or `high` by task shape, then Sol `medium` and (for implementation or
 complex work) Sol `high`, followed by main Sol `ultra` takeover. The separate
-quota-first goal path uses Terra `xhigh`/`max` only after Luna max failure.
+quota-first long-horizon path uses Terra `xhigh`/`max` only after Luna max failure.
 Ordinary runs passively record `use_mode=post_luna_failure` or `direct_latency`
 for accepted-task outcome audits; no paired A/B is run.
 
