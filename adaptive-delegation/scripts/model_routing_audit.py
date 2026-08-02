@@ -72,6 +72,14 @@ TASK_CLASSES = (
 # 0.1 ledgers can still be read after policy vocabulary changes.  These values
 # are accepted only for legacy records and are never emitted in current output.
 LEGACY_TASK_CLASS_PREFIX = "former" + "_"
+LEGACY_LINKED_TASK_CLASSES = frozenset(
+    {
+        "bounded_implementation_with_strong_oracle",
+        "bounded_verification_with_strong_oracle",
+        "former_sol_bounded_with_strong_oracle",
+        "former_terra_bounded",
+    }
+)
 FAILURE_CLASSES = (
     "none",
     "path_accepted",
@@ -108,6 +116,9 @@ TASK_SHAPE_SIGNALS = (
     "multi_file",
     "api_contract",
     "schema_contract",
+    "documentation",
+    "audit",
+    "adversarial_testing",
     "strict_output",
     "ambiguous_requirements",
     "long_context",
@@ -121,6 +132,8 @@ EXPECTED_ORACLE_TYPES = (
     "compile_check",
     "lint_check",
     "deterministic_diff",
+    "document_contract",
+    "session_metadata",
     "runtime_smoke_test",
     "human_review",
     "benchmark",
@@ -678,9 +691,17 @@ def validate_event(event: Any) -> dict[str, Any]:
             )
         task_class = rationale["task_class"]
         if task_class not in TASK_CLASSES and not (
-            event["schema_version"] == SCHEMA_VERSION
-            and isinstance(task_class, str)
-            and task_class.startswith(LEGACY_TASK_CLASS_PREFIX)
+            isinstance(task_class, str)
+            and (
+                (
+                    event["schema_version"] == SCHEMA_VERSION
+                    and task_class.startswith(LEGACY_TASK_CLASS_PREFIX)
+                )
+                or (
+                    event["schema_version"] == LEGACY_LINKED_SCHEMA_VERSION
+                    and task_class in LEGACY_LINKED_TASK_CLASSES
+                )
+            )
         ):
             raise AuditError("rationale.task_class is outside the current policy vocabulary")
         _check_enum(

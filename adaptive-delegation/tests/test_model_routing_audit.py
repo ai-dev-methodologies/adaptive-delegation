@@ -672,6 +672,16 @@ class ModelRoutingAuditTests(unittest.TestCase):
                 ):
                     audit.validate_event(event)
 
+    def test_legacy_0_2_0_task_classes_remain_readable(self):
+        for task_class in audit.LEGACY_LINKED_TASK_CLASSES:
+            with self.subTest(task_class=task_class):
+                event = self.linked_pre(
+                    f"legacy-task-{task_class}",
+                    f"legacy-task-{task_class}",
+                )
+                event["rationale"]["task_class"] = task_class
+                audit.validate_event(event)
+
     def test_unavailable_measurements_are_excluded_from_metric_coverage(self):
         pre = self.pre("unmeasured", "unmeasured-task")
         post = self.post(
