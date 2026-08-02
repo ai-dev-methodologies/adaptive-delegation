@@ -30,8 +30,12 @@ Current installable package version: `0.6.0`.
 External research, benchmark snapshots, practitioner reports, confidence
 limits, and the current routing decision are preserved in
 [`docs/research/MODEL_ROUTING_EVIDENCE.md`](docs/research/MODEL_ROUTING_EVIDENCE.md).
-Maintainers must read it together with the latest local accepted-task review
-before changing model routing; local outcomes remain the primary evidence.
+Its cost-latency-capability matrix distinguishes Terra `medium/high` latency
+use from the slower quota-first `xhigh/max` hypothesis. Maintainers must read
+that matrix together with the latest local accepted-task review before
+evaluating or changing model routing; local outcomes remain the primary
+evidence. Runtime invocations do not load this non-deployed dossier
+automatically, which preserves the skill's token-efficient runtime context.
 
 For prompt-driven installation or updates on another developer's computer,
 send Codex the copy-paste workflow in
@@ -347,6 +351,9 @@ See [`REPORTING.md`](REPORTING.md) for the state contract and manual commands.
   — copy-paste Codex prompt for one privacy-safe, deduplicated feedback issue.
 - [`docs/DELEGATION-FLOW.md`](docs/DELEGATION-FLOW.md) — maintained Maker,
   Checker, main-authority, escalation, integration, and issue-feedback diagram.
+- [`docs/research/MODEL_ROUTING_EVIDENCE.md`](docs/research/MODEL_ROUTING_EVIDENCE.md)
+  — non-deployed cost, latency, benchmark, community, and local-review evidence
+  used before model-routing policy changes.
 - [`INSTALL.md`](INSTALL.md) — installation and cross-PC operations.
 - [`CODEX-INSTALL-PROMPT.md`](CODEX-INSTALL-PROMPT.md) — copy-paste Codex CLI
   installation and update prompts.
