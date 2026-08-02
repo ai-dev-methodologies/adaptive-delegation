@@ -96,6 +96,19 @@ def _route_error(code: str, message: str, **details: Any) -> PolicyContractError
 
 def validate_policy_routes(policy: Mapping[str, Any]) -> dict[str, dict[str, str]]:
     """Validate every named route against an exact package role binding."""
+    expected_decision = {
+        "owner": "main_session", "classify_before_child_launch": True,
+        "classify_each_bounded_slice": True, "labels_do_not_select_routes": ["goal", "ultragoal"],
+        "required_dimensions": ["task_shape", "oracle_strength", "risk_class", "ambiguity", "latency_sensitivity", "execution_horizon", "recoverability"],
+        "long_horizon_route_requires_all": ["active_goal_or_ultragoal", "latency_insensitive", "long_horizon", "strong_oracle", "risk_low_or_medium"],
+        "route_selection": "task_class_then_exact_ladder", "child_rerouting": "forbidden",
+        "escalation_requires": "observable_failure",
+    }
+    if policy.get("decision_contract") != expected_decision:
+        raise _route_error(
+            "DECISION_CONTRACT_INVALID",
+            "main Sol/high-or-above must classify each bounded slice before launch; labels alone cannot select a route",
+        )
     roles = policy.get("role_bindings")
     routes = policy.get("route_bindings")
     if not isinstance(roles, Mapping) or not isinstance(routes, Mapping) or not routes:

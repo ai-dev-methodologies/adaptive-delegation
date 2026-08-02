@@ -20,6 +20,31 @@
     "same_model_reasoning_retries_per_stage": 1,
     "reevaluate_after_every_attempt": true
   },
+  "decision_contract": {
+    "owner": "main_session",
+    "classify_before_child_launch": true,
+    "classify_each_bounded_slice": true,
+    "labels_do_not_select_routes": ["goal", "ultragoal"],
+    "required_dimensions": [
+      "task_shape",
+      "oracle_strength",
+      "risk_class",
+      "ambiguity",
+      "latency_sensitivity",
+      "execution_horizon",
+      "recoverability"
+    ],
+    "long_horizon_route_requires_all": [
+      "active_goal_or_ultragoal",
+      "latency_insensitive",
+      "long_horizon",
+      "strong_oracle",
+      "risk_low_or_medium"
+    ],
+    "route_selection": "task_class_then_exact_ladder",
+    "child_rerouting": "forbidden",
+    "escalation_requires": "observable_failure"
+  },
   "native_routing": {
     "preferred": true,
     "primary_selection_mode": "verified-fixed-agent-type",

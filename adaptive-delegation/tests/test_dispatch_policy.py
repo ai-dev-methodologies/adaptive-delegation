@@ -228,6 +228,38 @@ class DispatchPolicyTests(unittest.TestCase):
                         following,
                     )
 
+    def test_main_sol_classifies_each_slice_and_goal_labels_do_not_select_routes(self):
+        policy = load_policy()
+        decision = policy["decision_contract"]
+        self.assertEqual(decision["owner"], "main_session")
+        self.assertEqual(policy["required_model"], "gpt-5.6-sol")
+        self.assertEqual(policy["minimum_reasoning_effort"], "high")
+        self.assertTrue(decision["classify_before_child_launch"])
+        self.assertTrue(decision["classify_each_bounded_slice"])
+        self.assertEqual(decision["labels_do_not_select_routes"], ["goal", "ultragoal"])
+        self.assertEqual(
+            decision["long_horizon_route_requires_all"],
+            [
+                "active_goal_or_ultragoal",
+                "latency_insensitive",
+                "long_horizon",
+                "strong_oracle",
+                "risk_low_or_medium",
+            ],
+        )
+
+        invalid = copy.deepcopy(policy)
+        invalid["decision_contract"]["owner"] = "child_session"
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.validate_policy_routes(invalid)
+        self.assertEqual(caught.exception.code, "DECISION_CONTRACT_INVALID")
+
+        label_selected = copy.deepcopy(policy)
+        label_selected["decision_contract"]["labels_do_not_select_routes"] = []
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.validate_policy_routes(label_selected)
+        self.assertEqual(caught.exception.code, "DECISION_CONTRACT_INVALID")
+
     def test_route_transition_contract_rejects_jumps_and_illegal_overrides(self):
         policy = load_policy()
         self.assertEqual(
@@ -366,7 +398,7 @@ class DispatchPolicyTests(unittest.TestCase):
 
     def test_module_has_no_content_or_event_builder_surface(self):
         source = (PACKAGE_ROOT / "scripts" / "dispatch_policy.py").read_text()
-        self.assertLessEqual(len(source.splitlines()), 420)
+        self.assertLessEqual(len(source.splitlines()), 435)
         for name in (
             "build_pre_decision_event",
             "build_post_result_event",

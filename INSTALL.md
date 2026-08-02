@@ -138,12 +138,12 @@ finalize or backfill pending v1/`0.2.0` chains. If one remains after updating,
 preserve it as historical evidence and re-execute the bounded work with a new
 task ID, attempt index 1, dispatch ID, packet, and v2/`0.3.0` chain.
 
-Package 0.5.0 changes the policy fingerprint and adds a quota-first,
+Package 0.5.1 changes the policy fingerprint and adds a quota-first,
 latency-insensitive goal route: Luna max -> Terra xhigh -> Terra max -> Sol
 high. The existing latency-sensitive Terra medium/high route remains. Finalize pending older
 attempts before updating. If an attempt remains pending, preserve it as
 historical evidence and restart the bounded work with a new task ID, attempt
-index 1, dispatch ID, and packet after installing 0.5.0. Packets now require
+index 1, dispatch ID, and packet after installing 0.5.1. Packets now require
 an explicit `terminal_outcome` and `lane_id`; Objective Lock v3 carries the stable terminal
 outcome/authority layer while method/data source/stage/test plan move to a
 replaceable path/iteration envelope. Cross-policy continuation still fails

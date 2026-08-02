@@ -11,6 +11,13 @@ outcomes, permits only declared role/model/effort transitions, and returns
 unresolved work to the main Codex session when the leaf ladder is exhausted or
 the acceptance oracle is weak.
 
+Route choice belongs exclusively to the main Codex session. This is why the
+skill requires the main to be `gpt-5.6-sol` at `high` or above: before launching
+each child, the main classifies that bounded slice by task shape, oracle
+strength, risk and ambiguity, latency sensitivity, execution horizon, and
+recoverability. It then selects the matching fixed path. A workflow name never
+selects a path by itself, and children cannot reroute themselves.
+
 Its primary invariant is: delegate bounded independent work aggressively, but
 only inside one portable Objective Lock. No valid lock means no child launch;
 no external `AGENTS.md` is required to construct or enforce the packaged lock.
@@ -91,7 +98,7 @@ linked audit schema `0.3.0` rejects a changed digest or mixed `0.2.0`/`0.3.0`
 task history. This detects local contract drift on dispatcher-owned paths; it
 does not prove semantic correctness or create a security principal.
 
-Package 0.5.0 requires an explicit `terminal_outcome` and `lane_id` in every packet and
+Package 0.5.1 requires an explicit `terminal_outcome` and `lane_id` in every packet and
 separates the stable terminal-outcome lock from the replaceable path/iteration
 envelope. Re-execute unfinished older packets as fresh 0.5 tasks.
 
@@ -128,26 +135,35 @@ After activation, the workflow is identical for explicit and implicit entry:
 1. Validate that the current main is `gpt-5.6-sol` at `high` or above. The
    skill cannot mutate a failing parent configuration.
 2. Construct one portable Objective Lock before any child launch.
-3. Route simple work to Luna `medium`, clear implementation to Luna `high`, and
-   bounded complex work to Luna `xhigh`. Active goal/Ultragoal work with a
-   strong oracle and no latency constraint starts at Luna `max`.
-4. Escalate only from observable failure evidence, preserving the exact lock.
+3. The main classifies every bounded slice before launch. It records task
+   shape, oracle strength, risk and ambiguity, latency sensitivity, execution
+   horizon, and recoverability, then selects the matching fixed path. `Goal`
+   or `Ultragoal` labels alone never select a path.
+4. Route simple work to Luna `medium`, clear implementation to Luna `high`, and
+   bounded complex work to Luna `xhigh`. The quota-first long-horizon path
+   starts at Luna `max` only when active goal/Ultragoal membership,
+   long-horizon execution, latency insensitivity, a strong oracle, and
+   `low`/`medium` risk are all established for that slice.
+5. Escalate only from observable failure evidence, preserving the exact lock.
    Luna effort may rise through `max`; ordinary work may use Terra
    `medium/high`, while latency-insensitive long-horizon work may use Terra
    `xhigh/max` before Sol. Leaf `ultra` is never allowed.
-5. Keep weak-oracle, ambiguous, high-risk, or long-contract work with the main
+6. Keep weak-oracle, ambiguous, high-risk, or long-contract work with the main
    at `gpt-5.6-sol/ultra`, or return exhausted leaf work to that main takeover.
-6. Stop as soon as the locked acceptance evidence passes. Do not add another
+7. Stop as soon as the locked acceptance evidence passes. Do not add another
    review or broader verification merely because the main has `ultra` effort.
 
 The fixed automatic paths are:
+
+The table is a main-selected classification map, not a global preference
+order. Different bounded slices in the same goal may use different rows.
 
 | Work shape | Fixed path |
 | --- | --- |
 | Simple lookup or extraction | `Luna medium -> high -> xhigh -> max -> Terra medium -> Sol medium -> main Sol ultra` |
 | Clear implementation or transformation | `Luna high -> xhigh -> max -> Terra medium -> Sol medium -> Sol high -> main Sol ultra` |
 | Bounded complex implementation, debugging, or review | `Luna xhigh -> max -> Terra high -> Sol medium -> Sol high -> main Sol ultra` |
-| Active goal/Ultragoal, strong oracle, latency-insensitive | `Luna max -> Terra xhigh -> Terra max -> Sol high -> main Sol ultra` |
+| Active goal/Ultragoal slice where long-horizon, latency-insensitive, strong-oracle, and low/medium-risk predicates all pass | `Luna max -> Terra xhigh -> Terra max -> Sol high -> main Sol ultra` |
 | Weak oracle, ambiguous/high-risk, or long contract | `main Sol ultra` |
 
 Terra `xhigh` and `max` are restricted to the quota-first long-horizon path and

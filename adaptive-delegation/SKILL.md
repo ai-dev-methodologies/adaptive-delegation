@@ -38,6 +38,24 @@ When the gate passes, before tools print exactly:
 `Routing: main=<decision>; ready=<n>; parallel=<n>; serial=<reason|none>.`
 
 The main owns intent, planning, integration, acceptance, and final claims.
+It also exclusively owns route classification and selection. The Sol/high-or-
+above activation gate exists because this classification is a main-authority
+decision: before every child launch, the main classifies each bounded slice
+from its task shape, oracle strength, risk and ambiguity, latency sensitivity,
+execution horizon, and recoverability, then selects the matching package
+default and exact ladder. A child may not select, reinterpret, or change its
+route.
+
+Workflow names are context, not routing evidence. The presence of a Codex goal
+or Ultragoal label never selects the quota-first long-horizon route by itself.
+That route is eligible only when the main determines that all of these are
+true for the bounded slice: it belongs to active goal/Ultragoal work, it is
+long-horizon, latency-insensitive, risk `low`/`medium`, and protected by a
+strong acceptance oracle. If any predicate is false or unproven, the main
+chooses the ordinary task-shape route or keeps the work main-authoritative.
+After the initial selection, only observable failure may advance the exact
+ladder.
+
 Start implementation in a bounded leaf. When the evidence-classified ladder is
 exhausted, the main is the final escalator and may take over the unresolved
 slice without widening it. Model or reasoning escalation changes capability,
@@ -123,6 +141,11 @@ deployment target and does not become a second policy source.
 The default strategy is Luna-first, effort-first within Luna, then an
 evidence-seeking Terra intermediate after an observable Luna acceptance or
 quality failure, followed by bounded Sol leaf escalation before main takeover:
+
+These are candidate defaults selected by the main after classification, not
+global modes selected from a workflow name. The main repeats classification
+for each bounded slice; one long-running goal may legitimately contain slices
+that start on different routes.
 
 | Work shape | Default route |
 | --- | --- |
