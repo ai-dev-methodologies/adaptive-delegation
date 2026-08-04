@@ -317,6 +317,13 @@ Routing attempts are stored locally in
 `~/.codex/state/model-routing/attempts.jsonl`). Raw ledgers contain local
 identifiers and must never be uploaded.
 
+For the complete distinction between project files, routing attempts, reviews,
+dispatcher evidence, optional continuity, Codex rollout history, and ephemeral
+polling monitors, see
+[`docs/LOCAL-LOGGING-AND-MONITORING.md`](docs/LOCAL-LOGGING-AND-MONITORING.md).
+It includes the record lifecycle diagram, pending/failed/accepted meanings,
+the inspection order, and exactly what remains after monitoring stops.
+
 Generate an allowlisted Markdown summary instead:
 
 ```sh
@@ -351,6 +358,9 @@ See [`REPORTING.md`](REPORTING.md) for the state contract and manual commands.
   — copy-paste Codex prompt for one privacy-safe, deduplicated feedback issue.
 - [`docs/DELEGATION-FLOW.md`](docs/DELEGATION-FLOW.md) — maintained Maker,
   Checker, main-authority, escalation, integration, and issue-feedback diagram.
+- [`docs/LOCAL-LOGGING-AND-MONITORING.md`](docs/LOCAL-LOGGING-AND-MONITORING.md)
+  — local artifact ownership, audit-event lifecycle, privacy boundaries, and
+  ephemeral monitoring diagram and procedure.
 - [`docs/research/MODEL_ROUTING_EVIDENCE.md`](docs/research/MODEL_ROUTING_EVIDENCE.md)
   — non-deployed cost, latency, benchmark, community, and local-review evidence
   used before model-routing policy changes.
