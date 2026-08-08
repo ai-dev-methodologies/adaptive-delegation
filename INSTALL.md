@@ -112,8 +112,8 @@ separate, later approval step.
 
 For a Codex home represented by `$CODEX_HOME`, installation manages:
 
-- `$CODEX_HOME/skills/adaptive-delegation/` — the complete skill package and
-  package policy;
+- `$CODEX_HOME/skills/adaptive-delegation/` — the allowlisted runtime skill
+  package and package policy;
 - `$CODEX_HOME/scripts/adaptive_dispatch_attestation.py` — the package
   dispatcher; and
 - `$CODEX_HOME/agents/adaptive-*.toml` — exact package-declared Codex roles.
@@ -121,6 +121,15 @@ For a Codex home represented by `$CODEX_HOME`, installation manages:
 The policy source of truth is
 `$CODEX_HOME/skills/adaptive-delegation/config/model-routing.defaults.json`.
 Do not add a local routing-policy override.
+
+The installed skill directory contains only `VERSION`, `SKILL.md`, runtime
+metadata, the routing config, policy-declared role templates, executable Python
+modules, and the continuity and issue-report references explicitly used by the
+skill. Repository tests, cross-PC deployment documentation, research or
+maintainer references, bytecode, and caches remain in the checkout and are not
+installed into the Codex home. The exact allowlist is enforced by
+`scripts/package_manifest.py`; unexpected installed files are reported as
+drift by `scripts/version_status.py`.
 
 Each managed file or directory is replaced atomically. The complete install is
 not a single cross-directory transaction. If the process is interrupted, rerun

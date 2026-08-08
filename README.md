@@ -25,7 +25,7 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.6.0`.
+Current installable package version: `0.6.1`.
 
 External research, benchmark snapshots, practitioner reports, confidence
 limits, and the current routing decision are preserved in
@@ -273,7 +273,9 @@ installed package.
 
 The installer never copies authentication, audit logs, issue-report state,
 continuity records, or rollout/session data. Those remain local to the machine
-that created them.
+that created them. It also excludes repository tests, deployment-only
+documentation, maintainer references, bytecode, and caches from the installed
+skill; `scripts/package_manifest.py` defines the exact runtime allowlist.
 The isolated promotion gate is mandatory before user-level installation; it is
 a same-user quality guard, not a security boundary. See [`INSTALL.md`](INSTALL.md)
 for its temporary-auth-symlink workflow and the explicit later approval step.
@@ -369,6 +371,8 @@ See [`REPORTING.md`](REPORTING.md) for the state contract and manual commands.
   installation and update prompts.
 - [`scripts/release_preflight.py`](scripts/release_preflight.py) — mandatory
   README/config/Git gate before feature merge and published-main deployment.
+- [`scripts/package_manifest.py`](scripts/package_manifest.py) — exact
+  allowlist for files installed into the runtime skill package.
 - [`CHANGELOG.md`](CHANGELOG.md) and
   [`adaptive-delegation/VERSION`](adaptive-delegation/VERSION) — release
   history and installed package version.

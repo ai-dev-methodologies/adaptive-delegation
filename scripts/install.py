@@ -15,6 +15,14 @@ import uuid
 from pathlib import Path
 
 try:
+    from package_manifest import PackageManifestError, runtime_relative_paths
+except ModuleNotFoundError:  # pragma: no cover - importlib-based test loading
+    from scripts.package_manifest import (
+        PackageManifestError,
+        runtime_relative_paths,
+    )
+
+try:
     import tomllib
 except ModuleNotFoundError as exc:  # pragma: no cover - requires Python <= 3.10
     raise SystemExit("adaptive-delegation requires Python 3.11 or newer") from exc
@@ -23,7 +31,6 @@ except ModuleNotFoundError as exc:  # pragma: no cover - requires Python <= 3.10
 PACKAGE_NAME = "adaptive-delegation"
 DISPATCHER_NAME = "adaptive_dispatch_attestation.py"
 CONTINUITY_READER_NAME = "read_continuity.py"
-SKIP_NAMES = {".DS_Store", "__pycache__"}
 MANAGED_ROLE_NAME = re.compile(r"^adaptive-[a-z0-9-]+$")
 SEMVER_PATTERN = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
@@ -55,15 +62,6 @@ def _parser() -> argparse.ArgumentParser:
 def _reject_symlink(path: Path, label: str) -> None:
     if os.path.lexists(path) and path.is_symlink():
         raise InstallError(f"{label} must not be a symlink: {path}")
-
-
-def _copy_allowed(source: str, names: list[str]) -> set[str]:
-    del source
-    return {
-        name
-        for name in names
-        if name in SKIP_NAMES or name.endswith((".pyc", ".pyo"))
-    }
 
 
 def _load_policy(package: Path) -> dict:
@@ -211,7 +209,9 @@ def _atomic_file(source: Path, target: Path, mode: int) -> None:
             temporary.unlink()
 
 
-def _atomic_package(source: Path, target: Path) -> None:
+def _atomic_package(
+    source: Path, target: Path, runtime_paths: tuple[str, ...]
+) -> None:
     _reject_symlink(target, "installed skill")
     staging = Path(
         tempfile.mkdtemp(prefix=f".{PACKAGE_NAME}.staging-", dir=target.parent)
@@ -220,7 +220,11 @@ def _atomic_package(source: Path, target: Path) -> None:
     moved_existing = False
     try:
         shutil.rmtree(staging)
-        shutil.copytree(source, staging, ignore=_copy_allowed)
+        staging.mkdir()
+        for relative in runtime_paths:
+            destination = staging / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source / relative, destination)
         _validate_package(staging)
         if target.exists():
             os.replace(target, backup)
@@ -240,6 +244,10 @@ def _atomic_package(source: Path, target: Path) -> None:
 def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool) -> None:
     source = repo_root / PACKAGE_NAME
     role_paths = _validate_package(source)
+    try:
+        runtime_paths = runtime_relative_paths(source)
+    except PackageManifestError as exc:
+        raise InstallError(str(exc)) from exc
     package_version = _load_package_version(source)
     target_skill = skills_root / PACKAGE_NAME
     dispatcher_target = codex_home / "scripts" / DISPATCHER_NAME
@@ -265,7 +273,7 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
     _ensure_directory(codex_home / "scripts")
     _ensure_directory(codex_home / "agents")
 
-    _atomic_package(source, target_skill)
+    _atomic_package(source, target_skill, runtime_paths)
     _atomic_file(
         target_skill / "scripts" / DISPATCHER_NAME,
         dispatcher_target,

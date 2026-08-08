@@ -103,6 +103,21 @@ class VersionStatusTests(unittest.TestCase):
         self.assertEqual(payload["status"], "same_version_drift")
         self.assertEqual(payload["changes"]["modified"], ["SKILL.md"])
 
+    def test_unexpected_installed_file_is_reported_as_drift(self) -> None:
+        self.install()
+        installed_skill = self.codex_home / "skills" / "adaptive-delegation"
+        unexpected = installed_skill / "tests" / "test_unexpected.py"
+        unexpected.parent.mkdir()
+        unexpected.write_text("not runtime\n", encoding="utf-8")
+
+        payload = self.payload()
+
+        self.assertEqual(payload["status"], "same_version_drift")
+        self.assertEqual(
+            payload["changes"]["installed_only"],
+            ["tests/test_unexpected.py"],
+        )
+
     def test_older_and_unversioned_installations_are_distinguished(self) -> None:
         self.install()
         version_path = (

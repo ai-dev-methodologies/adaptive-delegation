@@ -17,11 +17,12 @@ python3 scripts/install.py
 Use `--codex-home /path/to/.codex` only when the target computer uses a
 non-default Codex home. Never reuse the source computer's absolute home path.
 
-The installer deploys the complete package to
+The installer deploys only the runtime allowlist to
 `$CODEX_HOME/skills/adaptive-delegation/`, the dispatcher to
 `$CODEX_HOME/scripts/`, and exact package-declared roles to
 `$CODEX_HOME/agents/`. The package config remains the only routing-policy source
-of truth.
+of truth. Repository tests, deployment-only documentation, maintainer
+references, bytecode, and caches stay in the checkout.
 
 When intentionally installing an older revision, compare its declared
 `role_bindings` with `$CODEX_HOME/agents/adaptive-*.toml` and remove only

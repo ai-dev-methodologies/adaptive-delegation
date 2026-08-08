@@ -13,6 +13,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+try:
+    from package_manifest import PackageManifestError, runtime_relative_paths
+except ModuleNotFoundError:  # pragma: no cover - importlib-based test loading
+    from scripts.package_manifest import (
+        PackageManifestError,
+        runtime_relative_paths,
+    )
+
 
 PACKAGE_NAME = "adaptive-delegation"
 VERSION_NAME = "VERSION"
@@ -90,7 +98,9 @@ def _read_version(package: Path, *, required: bool) -> str | None:
     return value
 
 
-def _file_hashes(package: Path) -> dict[str, str]:
+def _file_hashes(
+    package: Path, relative_paths: tuple[str, ...] | None = None
+) -> dict[str, str]:
     if package.is_symlink() or not package.is_dir():
         raise VersionStatusError(f"package must be a regular directory: {package}")
     hashes: dict[str, str] = {}
@@ -102,6 +112,8 @@ def _file_hashes(package: Path) -> dict[str, str]:
             if name in SKIP_NAMES or path.suffix in SKIP_SUFFIXES:
                 continue
             relative = path.relative_to(package).as_posix()
+            if relative_paths is not None and relative not in relative_paths:
+                continue
             metadata = path.lstat()
             digest = hashlib.sha256()
             if stat.S_ISLNK(metadata.st_mode):
@@ -131,7 +143,11 @@ def compare(repo_root: Path, codex_home: Path) -> dict[str, Any]:
     installed = codex_home / "skills" / PACKAGE_NAME
     source_version = _read_version(source, required=True)
     assert source_version is not None
-    source_hashes = _file_hashes(source)
+    try:
+        runtime_paths = runtime_relative_paths(source)
+    except PackageManifestError as exc:
+        raise VersionStatusError(str(exc)) from exc
+    source_hashes = _file_hashes(source, runtime_paths)
     source_digest = _package_digest(source_hashes)
 
     if not installed.exists():

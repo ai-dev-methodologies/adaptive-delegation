@@ -14,6 +14,15 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.6.1] - 2026-08-08
+
+- Changed installation to copy an explicit runtime allowlist instead of the
+  complete source package. Repository tests, deployment documentation, and
+  maintainer-only routing references now remain in the checkout and are not
+  installed into the user Codex home.
+- Made version comparison hash the same runtime allowlist while still
+  reporting unexpected files in an installed package as drift.
+
 ## [0.6.0] - 2026-08-03
 
 - Added privacy-safe, duplicate-aware feedback reporting. Prepared reports keep

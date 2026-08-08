@@ -104,6 +104,12 @@ class InstallerTests(unittest.TestCase):
             self.assertFalse((codex_home / "auth.json").exists())
             self.assertFalse(any(installed.rglob("__pycache__")))
             self.assertFalse(any(installed.rglob("*.pyc")))
+            self.assertFalse((installed / "tests").exists())
+            self.assertFalse((installed / "CROSS_PC_TRANSFER.md").exists())
+            self.assertFalse(
+                (installed / "references" / "MODEL_ROUTING_POLICY.md").exists()
+            )
+            self.assertFalse((installed / "references" / "TRIGGERS.md").exists())
 
             second = self.run_installer(codex_home)
             self.assertEqual(second.returncode, 0, second.stderr)

@@ -383,9 +383,9 @@ as cryptographic proof.
 
 The standalone repository is the portable source for Codex deployment.
 Deployment fetches the repository and runs `python3 scripts/install.py`; see
-[CROSS_PC_TRANSFER.md](CROSS_PC_TRANSFER.md). The installer copies the
-package, installs its package dispatcher, and regenerates only
-package-declared role bindings.
+the canonical [installation documentation](https://github.com/ai-dev-methodologies/adaptive-delegation/blob/main/INSTALL.md).
+The installer copies only the allowlisted runtime package files, installs its
+package dispatcher, and regenerates only package-declared role bindings.
 Codex normally detects the skill change automatically; restart only when the
 update does not appear.
 
