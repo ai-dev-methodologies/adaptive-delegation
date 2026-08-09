@@ -46,6 +46,38 @@ class ModelRoutingAuditTests(unittest.TestCase):
         os.chmod(path, mode)
         return path
 
+    def write_jsonl(self, path, values):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "".join(json.dumps(value, sort_keys=True) + "\n" for value in values),
+            encoding="utf-8",
+        )
+        os.chmod(path.parent, 0o700)
+        os.chmod(path, 0o600)
+        return path
+
+    @staticmethod
+    def health_review(generated_at):
+        return {
+            "schema_version": "0.1.0",
+            "generated_at": generated_at,
+            "attempts": {
+                "paired": 2,
+                "analysis_basis": "current_0.3",
+                "analysis_basis_paired": 1,
+                "current_policy_paired": 1,
+                "incomplete_pre_decisions": 0,
+            },
+            "linked_audit": {
+                "paired": 1,
+                "legacy_paired": 1,
+                "incomplete_pre_decisions_excluded": 0,
+            },
+            "tasks": {"total": 1, "accepted": 1, "first_pass_accepted": 1},
+            "metric_counts": {"model_transition_count": 0},
+            "terra_observations": {},
+        }
+
     @staticmethod
     def pre(attempt_id, task_id, index=1, model="gpt-5.6-luna", task_class="clear_implementation_or_transformation"):
         return {
@@ -254,6 +286,370 @@ class ModelRoutingAuditTests(unittest.TestCase):
         version_mismatch_post["objective_lock_version"] = "1"
         with self.assertRaisesRegex(audit.AuditError, "objective_lock_version"):
             audit._check_pair(version_mismatch_pre, version_mismatch_post)
+
+    def test_health_missing_required_attempts_is_sanitized_and_read_only(self):
+        review_dir = self.root / "health-reviews"
+        continuity = self.root / "health-continuity.jsonl"
+        dispatch = self.root / "health-dispatch.jsonl"
+        before = {path: path.exists() for path in (self.ledger, review_dir, continuity, dispatch)}
+        result = self.run_cli(
+            "health", "--ledger", self.ledger, "--review-dir", review_dir,
+            "--continuity-ledger", continuity, "--dispatch-ledger", dispatch,
+        )
+        self.assertEqual(result.returncode, 2)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["schema_version"], "0.1.0")
+        self.assertEqual(payload["overall_status"], "degraded")
+        self.assertEqual(payload["sources"]["attempts"]["status"], "unavailable")
+        self.assertNotIn("prompt", result.stdout.lower())
+        self.assertEqual(before, {path: path.exists() for path in before})
+
+    def test_health_continuity_uses_fixed_aggregate_categories(self):
+        continuity = self.root / "health-continuity.jsonl"
+        continuity.parent.mkdir(parents=True, exist_ok=True)
+        accepted = {
+            "schema_version": 1, "record_id": "r1", "recorded_at": "2026-01-01T00:00:00Z",
+            "status": "accepted", "workspace": "/w", "objective_key": "k",
+            "source_fingerprint": "f", "implementation_envelope": {}, "decisions": [],
+            "changes": [], "routing": {}, "verification": {}, "evidence_paths": [],
+            "side_effects": [], "carry_forward": {}, "next_action": "stop",
+            "stop_condition": "done", "supersedes": None,
+        }
+        continuity.write_text(json.dumps(accepted) + "\n" + json.dumps({"status": "foreign"}) + "\n", encoding="utf-8")
+        os.chmod(continuity, 0o600)
+        payload, code = audit.health_report(
+            self.ledger, self.review_dir, continuity, self.root / "missing-dispatch.jsonl"
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(payload["continuity"]["categories"], {
+            "accepted": 1, "nonaccepted": 0, "attestation": 0, "unknown": 1,
+        })
+
+    def test_health_current_policy_sufficiency_excludes_historical_acceptance(self):
+        legacy = (
+            self.linked_pre("legacy-health", "legacy-health-task"),
+            self.linked_post("legacy-health", "legacy-health-task"),
+        )
+        prior = (
+            self.current_pre(
+                "prior-health", "prior-health-task",
+                policy_id="adaptive-delegation-prior-policy",
+                policy_fingerprint="d" * 64,
+            ),
+            self.current_post(
+                "prior-health", "prior-health-task",
+                policy_id="adaptive-delegation-prior-policy",
+                policy_fingerprint="d" * 64,
+                accepted=True,
+                failure_class="none",
+                oracle_verdict="pass",
+                integration_accepted=True,
+            ),
+        )
+        prior[1]["post_result_detail"] = {
+            "observable_result_signals": ["tests_passed"],
+            "evidence_references": ["prior-health-receipt"],
+            "route_assessment": "correct",
+            "next_action": "retain_route",
+        }
+        current_pre = self.current_pre("current-health", "current-health-task")
+        self.write_jsonl(self.ledger, [*legacy, *prior, current_pre])
+
+        payload, code = audit.health_report(
+            self.ledger,
+            self.root / "missing-reviews",
+            self.root / "missing-continuity.jsonl",
+            self.root / "missing-dispatch.jsonl",
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["overall_status"], "partial")
+        self.assertEqual(payload["attempts"]["by_schema"]["0.3.0"]["pending"], 1)
+        self.assertEqual(payload["attempts"]["totals"]["current_policy_paired"], 0)
+        self.assertEqual(payload["evidence_sufficiency"]["accepted"], 0)
+        self.assertEqual(payload["evidence_sufficiency"]["integrated"], 0)
+        self.assertEqual(
+            payload["evidence_sufficiency"]["status"],
+            "insufficient_current_policy_evidence",
+        )
+
+    def test_health_current_pair_requires_pair_context_and_counts_acceptance(self):
+        pre = self.current_pre("accepted-health", "accepted-health-task")
+        post = self.current_post(
+            "accepted-health",
+            "accepted-health-task",
+            accepted=True,
+            failure_class="none",
+            oracle_verdict="pass",
+            integration_accepted=True,
+        )
+        post["post_result_detail"] = {
+            "observable_result_signals": ["tests_passed"],
+            "evidence_references": ["accepted-health-receipt"],
+            "route_assessment": "correct",
+            "next_action": "retain_route",
+        }
+        mismatched = dict(post)
+        mismatched["dispatch_id"] = "mismatched-health"
+        self.write_jsonl(self.ledger, [pre, post, mismatched])
+
+        payload, code = audit.health_report(
+            self.ledger,
+            self.root / "missing-reviews",
+            self.root / "missing-continuity.jsonl",
+            self.root / "missing-dispatch.jsonl",
+        )
+
+        self.assertEqual(code, 2)
+        self.assertEqual(payload["attempts"]["totals"]["current_policy_paired"], 1)
+        self.assertEqual(payload["evidence_sufficiency"]["accepted"], 1)
+        self.assertEqual(payload["evidence_sufficiency"]["integrated"], 1)
+        self.assertEqual(payload["attempts"]["anomalies"]["orphan_post"], 1)
+        self.assertEqual(
+            payload["evidence_sufficiency"]["status"],
+            "sufficient_current_policy_evidence",
+        )
+
+    def test_health_reviews_use_latest_timestamp_and_never_emit_payload_fields(self):
+        self.review_dir.mkdir(mode=0o700)
+        review = self.health_review("2026-01-01T00:00:00Z")
+        review["attempts"]["prompt"] = "must-not-leak"
+        for name in ("a.json", "b.json"):
+            path = self.review_dir / name
+            path.write_text(json.dumps(review), encoding="utf-8")
+            os.chmod(path, 0o600)
+
+        result, status = audit._health_reviews(self.review_dir)
+
+        self.assertEqual(status, "degraded")
+        self.assertEqual(result["file_count"], 2)
+        self.assertEqual(result["valid_review_count"], 2)
+        self.assertEqual(result["ambiguous_latest"], 2)
+        self.assertNotIn("must-not-leak", json.dumps(result))
+        self.assertNotIn("prompt", json.dumps(result))
+
+    def test_health_review_rejects_timezone_less_timestamp_without_crashing(self):
+        self.review_dir.mkdir(mode=0o700)
+        for name, generated_at in (
+            ("naive.json", "2026-01-02T00:00:00"),
+            ("aware.json", "2026-01-01T00:00:00Z"),
+        ):
+            path = self.review_dir / name
+            path.write_text(json.dumps(self.health_review(generated_at)), encoding="utf-8")
+            os.chmod(path, 0o600)
+
+        result, status = audit._health_reviews(self.review_dir)
+
+        self.assertEqual(status, "degraded")
+        self.assertEqual(result["valid_review_count"], 1)
+        self.assertEqual(result["anomalies"]["invalid_records"], 1)
+        self.assertEqual(result["latest"]["generated_at"], "2026-01-01T00:00:00Z")
+
+    def test_health_review_scan_degrades_at_cumulative_byte_limit(self):
+        self.review_dir.mkdir(mode=0o700)
+        path = self.review_dir / "bounded.json"
+        path.write_text(
+            json.dumps(self.health_review("2026-01-01T00:00:00Z")),
+            encoding="utf-8",
+        )
+        os.chmod(path, 0o600)
+        previous = audit.HEALTH_MAX_REVIEW_BYTES
+        audit.HEALTH_MAX_REVIEW_BYTES = 16
+        try:
+            result, status = audit._health_reviews(self.review_dir)
+        finally:
+            audit.HEALTH_MAX_REVIEW_BYTES = previous
+
+        self.assertEqual(status, "degraded")
+        self.assertEqual(result["file_count"], 1)
+        self.assertEqual(result["valid_review_count"], 0)
+        self.assertEqual(result["anomalies"]["invalid_records"], 1)
+
+    def test_health_dispatch_uses_append_ordinal_and_fixed_violation_classes(self):
+        dispatch = self.root / "dispatch.jsonl"
+        rows = [
+            {
+                "dispatch_id": "dispatch-1",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "verdict": "typed_failed",
+                "execution_policy_enforcement": {"violation": "tool_calls_exceeded"},
+            },
+            {
+                "dispatch_id": "dispatch-1",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "verdict": "typed_completed",
+                "execution_policy_enforcement": {"violation": "token_budget_exceeded"},
+            },
+            {
+                "dispatch_id": "dispatch-invalid",
+                "timestamp": "2026-01-02T00:00:00Z",
+                "verdict": "typed_completed",
+                "execution_policy_enforcement": {"violation": "private-payload"},
+            },
+        ]
+        self.write_jsonl(dispatch, rows)
+
+        result, status = audit._health_dispatch(dispatch)
+
+        self.assertEqual(status, "degraded")
+        self.assertEqual(result["unique_dispatches"], 1)
+        self.assertEqual(result["final_verdicts"], {"typed_completed": 1})
+        self.assertEqual(result["raw_violation_distribution"], {
+            "token_budget_exceeded": 1,
+            "tool_calls_exceeded": 1,
+        })
+        self.assertEqual(result["anomalies"]["invalid_records"], 1)
+        self.assertNotIn("private-payload", json.dumps(result))
+
+    def test_health_excludes_unterminated_fragment_and_counts_anomaly(self):
+        pre = self.pre("unterminated-health", "unterminated-health-task")
+        post = self.post("unterminated-health", "unterminated-health-task")
+        self.ledger.parent.mkdir(parents=True, mode=0o700)
+        self.ledger.write_text(
+            json.dumps(pre) + "\n" + json.dumps(post),
+            encoding="utf-8",
+        )
+        os.chmod(self.ledger, 0o600)
+
+        attempts, status = audit._health_attempts(self.ledger, audit._load_policy())
+
+        self.assertEqual(status, "degraded")
+        self.assertEqual(attempts["totals"]["paired"], 0)
+        self.assertEqual(attempts["by_schema"]["0.1.0"]["pending"], 1)
+        self.assertEqual(attempts["anomalies"]["invalid_records"], 1)
+
+    def test_health_classifies_identifiers_and_excludes_invalid_task_history(self):
+        missing = self.pre("missing-health", "missing-health-task")
+        missing.pop("attempt_id")
+        duplicate = self.pre("duplicate-health", "duplicate-health-task")
+        invalid_pre = self.current_pre(
+            "sequence-health", "sequence-health-task", index=2
+        )
+        invalid_post = self.current_post(
+            "sequence-health",
+            "sequence-health-task",
+            index=2,
+            accepted=True,
+            failure_class="none",
+            oracle_verdict="pass",
+            integration_accepted=True,
+        )
+        invalid_post["post_result_detail"] = {
+            "observable_result_signals": ["tests_passed"],
+            "evidence_references": ["sequence-health-receipt"],
+            "route_assessment": "correct",
+            "next_action": "retain_route",
+        }
+        self.write_jsonl(
+            self.ledger,
+            [missing, duplicate, duplicate, invalid_pre, invalid_post],
+        )
+
+        attempts, status = audit._health_attempts(self.ledger, audit._load_policy())
+
+        self.assertEqual(status, "degraded")
+        self.assertEqual(attempts["anomalies"]["missing_identifier"], 1)
+        self.assertEqual(attempts["anomalies"]["duplicate_identifier"], 1)
+        self.assertEqual(attempts["anomalies"]["ambiguous_sequence"], 1)
+        self.assertEqual(attempts["by_schema"]["0.3.0"]["pre_decisions"], 1)
+        self.assertEqual(attempts["by_schema"]["0.3.0"]["post_results"], 1)
+        self.assertEqual(attempts["totals"]["current_policy_paired"], 0)
+        self.assertEqual(attempts["totals"]["current_policy_accepted"], 0)
+
+    def test_health_uses_canonical_linked_pair_key_across_schema_versions(self):
+        dispatch_id = "cross-schema-health"
+        self.write_jsonl(
+            self.ledger,
+            [
+                self.linked_pre(dispatch_id, "cross-schema-health-task"),
+                self.current_post(dispatch_id, "cross-schema-health-task"),
+            ],
+        )
+
+        attempts, status = audit._health_attempts(self.ledger, audit._load_policy())
+
+        self.assertEqual(status, "degraded")
+        self.assertEqual(attempts["anomalies"]["ambiguous_sequence"], 1)
+        self.assertEqual(attempts["totals"]["paired"], 0)
+
+    def test_health_all_sources_ok_is_healthy_and_creates_nothing(self):
+        self.ledger.parent.mkdir(parents=True, mode=0o700)
+        self.ledger.write_bytes(b"")
+        os.chmod(self.ledger, 0o600)
+        self.review_dir.mkdir(mode=0o700)
+        continuity = self.write_jsonl(self.root / "continuity.jsonl", [])
+        dispatch = self.write_jsonl(self.root / "dispatch.jsonl", [])
+        paths_before = sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*"))
+        bytes_before = {
+            path: path.read_bytes()
+            for path in (self.ledger, continuity, dispatch)
+        }
+
+        result = self.run_cli(
+            "health",
+            "--ledger", self.ledger,
+            "--review-dir", self.review_dir,
+            "--continuity-ledger", continuity,
+            "--dispatch-ledger", dispatch,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["overall_status"], "healthy")
+        self.assertEqual(
+            {source["status"] for source in payload["sources"].values()},
+            {"ok"},
+        )
+        self.assertEqual(
+            sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*")),
+            paths_before,
+        )
+        self.assertEqual(
+            {path: path.read_bytes() for path in bytes_before},
+            bytes_before,
+        )
+
+    def test_health_policy_source_rejects_invalid_and_symlinked_policy(self):
+        invalid = self.root / "invalid-policy.json"
+        self.write_jsonl(invalid, [{"policy_id": "incomplete"}])
+        target = SKILL_ROOT / "config" / "model-routing.defaults.json"
+        symlink = self.root / "policy-link.json"
+        symlink.symlink_to(target)
+        previous = audit.DEFAULT_CONFIG
+        try:
+            for candidate in (invalid, symlink):
+                audit.DEFAULT_CONFIG = candidate
+                payload, code = audit.health_report(
+                    self.ledger,
+                    self.root / "missing-reviews",
+                    self.root / "missing-continuity.jsonl",
+                    self.root / "missing-dispatch.jsonl",
+                )
+                self.assertEqual(code, 2)
+                self.assertEqual(payload["sources"]["policy"]["status"], "degraded")
+        finally:
+            audit.DEFAULT_CONFIG = previous
+
+    def test_health_present_malformed_input_is_degraded_and_read_only(self):
+        self.ledger.parent.mkdir(parents=True, mode=0o700)
+        self.ledger.write_text('{"prompt":"must-not-leak"}\nnot-json\n', encoding="utf-8")
+        os.chmod(self.ledger, 0o600)
+        before = self.ledger.read_bytes()
+
+        result = self.run_cli(
+            "health",
+            "--ledger", self.ledger,
+            "--review-dir", self.root / "missing-reviews",
+            "--continuity-ledger", self.root / "missing-continuity.jsonl",
+            "--dispatch-ledger", self.root / "missing-dispatch.jsonl",
+            "--format", "text",
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(json.loads(result.stdout)["overall_status"], "degraded")
+        self.assertNotIn("must-not-leak", result.stdout)
+        self.assertNotIn("prompt", result.stdout)
+        self.assertEqual(self.ledger.read_bytes(), before)
 
     def test_objective_lock_v1_records_remain_readable_but_cannot_continue_as_v3(self):
         legacy_pre = self.current_pre(

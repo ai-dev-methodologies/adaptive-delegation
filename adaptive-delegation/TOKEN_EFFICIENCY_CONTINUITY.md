@@ -22,6 +22,16 @@ still-valid decisions/evidence paths and invalidate them only with newer direct
 evidence. Each new record includes a complete carry_forward snapshot, so older
 raw logs are unnecessary.
 
+The packaged `model_routing_audit.py health` command has one deliberately
+narrow exception: an operator may use it to scan the whole continuity ledger
+for evidence-shape health. That path is bounded, owner-only, no-symlink, and
+aggregate-only. It returns only the fixed counts `accepted`, `nonaccepted`,
+`attestation`, and `unknown`; it does not return records, workspace/objective
+values, prompts, or evidence paths, and it never mutates or creates runtime
+state. This exception is for health diagnosis only. It does not authorize
+continuity reuse, which still requires the exact workspace/objective lookup
+above.
+
 At acceptance or handoff, append only when the Objective Lock permits the state
 write and future reuse is expected. Exactly one designated recorder writes the
 record: the independent Checker when present, else the sole verified executor.

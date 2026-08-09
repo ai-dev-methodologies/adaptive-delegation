@@ -14,6 +14,14 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.6.2] - 2026-08-09
+
+- Added the read-only `model_routing_audit.py health` command with a
+  versioned, sanitized evidence-health report, fixed anomaly categories, and
+  no runtime-ledger mutation or state-file creation. Current-policy sufficiency
+  excludes historical acceptance, reviews are treated as cumulative snapshots,
+  and continuity scanning is a documented aggregate-only health exception.
+
 ## [0.6.1] - 2026-08-08
 
 - Changed installation to copy an explicit runtime allowlist instead of the

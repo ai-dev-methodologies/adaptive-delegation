@@ -2298,6 +2298,580 @@ def record_issue_submission(
         os.close(fd)
 
 
+# Health is deliberately a separate, read-only seam.  It does not call the
+# append/review/report writers above and all malformed rows are reduced to
+# fixed diagnostic categories before any aggregate is emitted.
+HEALTH_SCHEMA_VERSION = "0.1.0"
+HEALTH_MAX_REVIEW_FILES = 1_024
+HEALTH_MAX_REVIEW_BYTES = MAX_LEDGER_BYTES
+HEALTH_ANOMALY_KEYS = (
+    "invalid_records",
+    "unsupported_schema",
+    "missing_identifier",
+    "duplicate_identifier",
+    "orphan_post",
+    "ambiguous_sequence",
+)
+HEALTH_DISPATCH_VERDICTS = frozenset(
+    {
+        "native_admission_rejected",
+        "unavailable",
+        "mismatch",
+        "unsafe_launch_path",
+        "match",
+        "protected_completed",
+        "protected_failed",
+        "launch_config_match",
+        "execution_policy_violation",
+        "forbidden_leaf_tool_call",
+        "runtime_unavailable",
+        "runtime_mismatch",
+        "typed_completed",
+        "typed_failed",
+    }
+)
+HEALTH_EXECUTION_POLICY_VIOLATIONS = frozenset(
+    {
+        "child_stdout_bytes_exceeded",
+        "cumulative_tool_output_bytes_exceeded",
+        "max_output_tokens_per_call_exceeded",
+        "rollout_line_bytes_exceeded",
+        "token_budget_exceeded",
+        "tool_calls_exceeded",
+    }
+)
+_CONTINUITY_FIELDS = {
+    "schema_version", "record_id", "recorded_at", "status", "workspace",
+    "objective_key", "source_fingerprint", "implementation_envelope",
+    "decisions", "changes", "routing", "verification", "evidence_paths",
+    "side_effects", "carry_forward", "next_action", "stop_condition",
+    "supersedes",
+}
+
+
+def _health_anomalies() -> dict[str, int]:
+    return {key: 0 for key in HEALTH_ANOMALY_KEYS}
+
+
+def _health_read_bytes(
+    path: Path, *, max_bytes: int = MAX_LEDGER_BYTES
+) -> tuple[bytes, str]:
+    """Read a bounded private regular file without creating or following it."""
+    path = Path(path)
+    if not os.path.lexists(path):
+        return b"", "unavailable"
+    try:
+        _check_existing_directory(path.parent, "health source directory")
+        st = path.lstat()
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+            return b"", "degraded"
+        _check_owner_only(path, st, "health source")
+        if st.st_size > max_bytes:
+            return b"", "degraded"
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            current = os.fstat(fd)
+            if stat.S_ISLNK(current.st_mode) or not stat.S_ISREG(current.st_mode):
+                return b"", "degraded"
+            _check_owner_only(path, current, "health source")
+            if current.st_size > max_bytes:
+                return b"", "degraded"
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                chunk = os.read(fd, min(1024 * 1024, max_bytes + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+                if total > max_bytes:
+                    return b"", "degraded"
+            data = b"".join(chunks)
+        finally:
+            os.close(fd)
+    except (OSError, AuditError):
+        return b"", "degraded"
+    return data, "ok"
+
+
+def _health_load_policy(path: Path | None = None) -> dict[str, Any]:
+    policy_path = Path(path) if path is not None else DEFAULT_CONFIG
+    raw, status = _health_read_bytes(policy_path, max_bytes=MAX_EVENT_BYTES)
+    if status != "ok":
+        raise AuditError("model-routing policy is unavailable or unsafe")
+    try:
+        policy = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AuditError("model-routing policy is malformed") from exc
+    if not isinstance(policy, dict):
+        raise AuditError("model-routing policy must be an object")
+    _policy_identity(policy)
+    if _route_policy is None:
+        raise AuditError("route policy contract is unavailable")
+    try:
+        _route_policy.validate_policy_routes(policy)
+    except _route_policy.PolicyContractError as exc:
+        raise AuditError(f"model-routing policy is invalid: {exc}") from exc
+    return policy
+
+
+def _health_read_lines(path: Path) -> tuple[list[bytes], str, bool]:
+    data, status = _health_read_bytes(path)
+    if status != "ok":
+        return [], status, False
+    if not data:
+        return [], "ok", False
+    if not data.endswith(b"\n"):
+        return data.split(b"\n")[:-1], "degraded", True
+    return data.split(b"\n")[:-1], "ok", False
+
+
+def _health_parse_json_lines(path: Path) -> tuple[list[dict[str, Any]], str, dict[str, int]]:
+    lines, status, unterminated = _health_read_lines(path)
+    anomalies = _health_anomalies()
+    anomalies["invalid_records"] += int(unterminated)
+    values: list[dict[str, Any]] = []
+    for raw in lines:
+        if not raw:
+            anomalies["invalid_records"] += 1
+            continue
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            anomalies["invalid_records"] += 1
+            continue
+        if not isinstance(value, dict):
+            anomalies["invalid_records"] += 1
+            continue
+        values.append(value)
+    return values, status, anomalies
+
+
+def _health_attempts(path: Path, policy: dict[str, Any] | None) -> tuple[dict[str, Any], str]:
+    values, status, anomalies = _health_parse_json_lines(path)
+    by_schema = {
+        schema: {
+            "pre_decisions": 0, "post_results": 0, "paired": 0,
+            "pending": 0, "accepted": 0, "execution_completed": 0,
+            "oracle_passed": 0, "integrated": 0,
+            "current_policy_paired": 0,
+            "current_policy_accepted": 0,
+            "current_policy_integrated": 0,
+            "legacy_nonfinalizable": 0,
+        }
+        for schema in SUPPORTED_SCHEMA_VERSIONS
+    }
+    valid: list[tuple[int, dict[str, Any]]] = []
+    for ordinal, value in enumerate(values):
+        schema = value.get("schema_version")
+        if schema not in SUPPORTED_SCHEMA_VERSIONS:
+            anomalies["unsupported_schema"] += 1
+            continue
+        identifier_field = "attempt_id" if schema == SCHEMA_VERSION else "dispatch_id"
+        identifier = value.get(identifier_field)
+        if not isinstance(identifier, str) or not identifier:
+            anomalies["missing_identifier"] += 1
+            continue
+        try:
+            validate_event(value)
+        except AuditError:
+            anomalies["invalid_records"] += 1
+            continue
+        valid.append((ordinal, value))
+        event_key = (
+            "pre_decisions"
+            if value["event_type"] == "pre_decision"
+            else "post_results"
+        )
+        by_schema[schema][event_key] += 1
+
+    groups: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
+    for ordinal, value in valid:
+        groups.setdefault(_pair_key(value), []).append((ordinal, value))
+
+    candidate_by_task: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    for records in groups.values():
+        pres = [item for item in records if item[1]["event_type"] == "pre_decision"]
+        posts = [item for item in records if item[1]["event_type"] == "post_result"]
+        if len(pres) > 1 or len(posts) > 1:
+            anomalies["duplicate_identifier"] += max(len(pres) - 1, 0) + max(len(posts) - 1, 0)
+            continue
+        if not pres and posts:
+            anomalies["orphan_post"] += len(posts)
+            continue
+        if not pres:
+            continue
+        task_ids = {item[1]["task_id"] for item in records}
+        if len(task_ids) != 1:
+            anomalies["ambiguous_sequence"] += 1
+            continue
+        task_id = next(iter(task_ids))
+        candidate_by_task.setdefault(task_id, []).extend(records)
+
+    pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    eligible_events: list[dict[str, Any]] = []
+    for records in candidate_by_task.values():
+        ordered = [value for _ordinal, value in sorted(records, key=lambda item: item[0])]
+        try:
+            task_pairs, _incomplete = _check_sequence(ordered)
+        except AuditError:
+            anomalies["ambiguous_sequence"] += 1
+            continue
+        pairs.extend(task_pairs)
+        eligible_events.extend(ordered)
+
+    paired_keys = {_pair_key(pre) for pre, _post in pairs}
+    for value in eligible_events:
+        schema = value["schema_version"]
+        if value["event_type"] == "pre_decision" and _pair_key(value) not in paired_keys:
+            by_schema[schema]["pending"] += 1
+            if schema != LINKED_SCHEMA_VERSION:
+                by_schema[schema]["legacy_nonfinalizable"] += 1
+
+    for pre, post in pairs:
+        schema = pre["schema_version"]
+        stats = by_schema[schema]
+        stats["paired"] += 1
+        stats["accepted"] += int(bool(post.get("accepted")))
+        stats["execution_completed"] += int(bool(post.get("execution_completed")))
+        stats["oracle_passed"] += int(post.get("oracle_verdict") == "pass")
+        stats["integrated"] += int(bool(post.get("integration_accepted")))
+        current_pair = bool(
+            policy
+            and all(_is_current_policy_event(row, policy) for row in (pre, post))
+        )
+        if current_pair:
+            stats["current_policy_paired"] += 1
+            stats["current_policy_accepted"] += int(bool(post.get("accepted")))
+            stats["current_policy_integrated"] += int(
+                bool(post.get("integration_accepted"))
+            )
+
+    # The public report exposes only fixed diagnostic names.
+    report_anomalies = {key: int(anomalies.get(key, 0)) for key in HEALTH_ANOMALY_KEYS}
+    if status == "unavailable":
+        return {
+            "by_schema": by_schema,
+            "totals": {
+                "pre_decisions": 0, "post_results": 0, "paired": 0,
+                "pending": 0, "accepted": 0, "execution_completed": 0,
+                "oracle_passed": 0, "integrated": 0,
+                "current_policy_paired": 0,
+                "current_policy_accepted": 0,
+                "current_policy_integrated": 0,
+            },
+            "anomalies": report_anomalies,
+            "terra_observations": {"direct_latency": 0, "post_luna_failure": 0},
+        }, "unavailable"
+    if any(report_anomalies.values()) or status != "ok":
+        status = "degraded"
+    current_pairs = [pair for pair in pairs if policy and all(_is_current_policy_event(row, policy) for row in pair)]
+    terra = {mode: 0 for mode in ("direct_latency", "post_luna_failure")}
+    for pre, _post in current_pairs:
+        if pre.get("model") == "gpt-5.6-terra":
+            mode = pre.get("rationale", {}).get("use_mode")
+            if mode in terra:
+                terra[mode] += 1
+    return {
+        "by_schema": by_schema,
+        "totals": {
+            "pre_decisions": sum(item["pre_decisions"] for item in by_schema.values()),
+            "post_results": sum(item["post_results"] for item in by_schema.values()),
+            "paired": len(pairs),
+            "pending": sum(item["pending"] for item in by_schema.values()),
+            "accepted": sum(item["accepted"] for item in by_schema.values()),
+            "execution_completed": sum(item["execution_completed"] for item in by_schema.values()),
+            "oracle_passed": sum(item["oracle_passed"] for item in by_schema.values()),
+            "integrated": sum(item["integrated"] for item in by_schema.values()),
+            "current_policy_paired": len(current_pairs),
+            "current_policy_accepted": sum(
+                item["current_policy_accepted"] for item in by_schema.values()
+            ),
+            "current_policy_integrated": sum(
+                item["current_policy_integrated"] for item in by_schema.values()
+            ),
+        },
+        "anomalies": report_anomalies,
+        "terra_observations": terra,
+    }, status
+
+
+def _health_review_counts(
+    value: dict[str, Any], section: str, fields: tuple[str, ...]
+) -> dict[str, int]:
+    source = value.get(section)
+    if not isinstance(source, dict):
+        raise AuditError(f"review {section} is missing")
+    result: dict[str, int] = {}
+    for field in fields:
+        if field not in source:
+            continue
+        item = source[field]
+        if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+            raise AuditError(f"review {section}.{field} is invalid")
+        result[field] = item
+    return result
+
+
+def _health_timestamp(value: str) -> _datetime.datetime:
+    stamp = _parse_timestamp(value)
+    if stamp.tzinfo is None or stamp.utcoffset() is None:
+        raise ValueError("health timestamps must include a timezone")
+    return stamp.astimezone(_datetime.timezone.utc)
+
+
+def _health_review_snapshot(value: dict[str, Any]) -> tuple[_datetime.datetime, dict[str, Any]]:
+    if value.get("schema_version") != SCHEMA_VERSION:
+        raise AuditError("review schema is unsupported")
+    generated = value.get("generated_at")
+    if not isinstance(generated, str):
+        raise AuditError("review ordering metadata is missing")
+    stamp = _health_timestamp(generated)
+    attempts = _health_review_counts(
+        value,
+        "attempts",
+        (
+            "paired",
+            "analysis_basis_paired",
+            "current_policy_paired",
+            "incomplete_pre_decisions",
+        ),
+    )
+    analysis_basis = value["attempts"].get("analysis_basis")
+    if analysis_basis not in {"current_0.3", "historical_only"}:
+        raise AuditError("review analysis basis is invalid")
+    attempts["analysis_basis"] = analysis_basis
+    latest = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": generated,
+        "attempts": attempts,
+        "linked_audit": _health_review_counts(
+            value,
+            "linked_audit",
+            ("paired", "legacy_paired", "incomplete_pre_decisions_excluded"),
+        ),
+        "tasks": _health_review_counts(
+            value, "tasks", ("total", "accepted", "first_pass_accepted")
+        ),
+        "metric_counts": _health_review_counts(
+            value,
+            "metric_counts",
+            (
+                "effort_escalated_attempts",
+                "model_escalated_attempts",
+                "sol_rescues",
+                "premium_calls",
+                "avoidable_premium_calls",
+                "cheap_routes",
+                "false_cheap_routes",
+                "effort_transition_count",
+                "model_transition_count",
+                "same_route_retry_count",
+                "main_takeover_count",
+            ),
+        ),
+    }
+    return stamp, latest
+
+
+def _empty_health_reviews(status: str) -> tuple[dict[str, Any], str]:
+    return {
+        "cumulative_snapshots": True,
+        "file_count": 0,
+        "valid_review_count": 0,
+        "latest": None,
+        "ambiguous_latest": 0,
+        "anomalies": _health_anomalies(),
+    }, status
+
+
+def _health_reviews(path: Path) -> tuple[dict[str, Any], str]:
+    if not os.path.lexists(path):
+        return _empty_health_reviews("unavailable")
+    try:
+        _check_existing_directory(path, "review directory")
+    except AuditError:
+        result, _status = _empty_health_reviews("degraded")
+        result["anomalies"]["invalid_records"] = 1
+        return result, "degraded"
+    anomalies = _health_anomalies()
+    file_count = 0
+    valid_review_count = 0
+    cumulative_bytes = 0
+    latest_stamp: _datetime.datetime | None = None
+    latest: dict[str, Any] | None = None
+    latest_count = 0
+    try:
+        for child in path.iterdir():
+            if child.suffix != ".json":
+                continue
+            file_count += 1
+            if file_count > HEALTH_MAX_REVIEW_FILES:
+                anomalies["invalid_records"] += 1
+                break
+            remaining = HEALTH_MAX_REVIEW_BYTES - cumulative_bytes
+            if remaining <= 0:
+                anomalies["invalid_records"] += 1
+                break
+            try:
+                raw, read_status = _health_read_bytes(child, max_bytes=remaining)
+                if read_status != "ok":
+                    raise AuditError("review file is unreadable or unsafe")
+                cumulative_bytes += len(raw)
+                value = json.loads(raw.decode("utf-8"))
+                if not isinstance(value, dict):
+                    raise AuditError("review must be an object")
+                if value.get("schema_version") != SCHEMA_VERSION:
+                    anomalies["unsupported_schema"] += 1
+                    continue
+                if not isinstance(value.get("generated_at"), str):
+                    anomalies["ambiguous_sequence"] += 1
+                    continue
+                stamp, sanitized = _health_review_snapshot(value)
+            except (
+                OSError,
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+                ValueError,
+                TypeError,
+                AuditError,
+            ):
+                anomalies["invalid_records"] += 1
+                continue
+            valid_review_count += 1
+            if latest_stamp is None or stamp > latest_stamp:
+                latest_stamp = stamp
+                latest = sanitized
+                latest_count = 1
+            elif stamp == latest_stamp:
+                latest = None
+                latest_count += 1
+    except OSError:
+        anomalies["invalid_records"] += 1
+    ambiguous = latest_count if latest_count > 1 else 0
+    if ambiguous:
+        anomalies["ambiguous_sequence"] += 1
+    result = {
+        "cumulative_snapshots": True,
+        "file_count": file_count,
+        "valid_review_count": valid_review_count,
+        "latest": latest,
+        "ambiguous_latest": ambiguous,
+        "anomalies": anomalies,
+    }
+    return result, ("degraded" if any(anomalies.values()) else "ok")
+
+
+def _health_continuity(path: Path) -> tuple[dict[str, Any], str]:
+    if not os.path.lexists(path):
+        return {"aggregate_only": True, "categories": {"accepted": 0, "nonaccepted": 0, "attestation": 0, "unknown": 0}, "anomalies": _health_anomalies()}, "unavailable"
+    values, status, anomalies = _health_parse_json_lines(path)
+    categories = {"accepted": 0, "nonaccepted": 0, "attestation": 0, "unknown": 0}
+    for value in values:
+        if _CONTINUITY_FIELDS.issubset(value):
+            categories["accepted" if value.get("status") == "accepted" else "nonaccepted"] += 1
+        elif "dispatch_id" in value and "verdict" in value:
+            categories["attestation"] += 1
+        else:
+            categories["unknown"] += 1
+            anomalies["invalid_records"] += 1
+    result = {"aggregate_only": True, "categories": categories, "anomalies": anomalies}
+    return result, ("degraded" if status != "ok" or any(anomalies.values()) else "ok")
+
+
+def _health_dispatch(path: Path) -> tuple[dict[str, Any], str]:
+    if not os.path.lexists(path):
+        return {"unique_dispatches": 0, "final_verdicts": {}, "raw_violation_distribution": {}, "anomalies": _health_anomalies()}, "unavailable"
+    values, status, anomalies = _health_parse_json_lines(path)
+    grouped: dict[str, list[tuple[_datetime.datetime, int, dict[str, Any]]]] = {}
+    raw_violations: dict[str, int] = {}
+    for ordinal, value in enumerate(values):
+        dispatch_id = value.get("dispatch_id")
+        if not isinstance(dispatch_id, str) or not dispatch_id:
+            anomalies["missing_identifier"] += 1
+            continue
+        try:
+            stamp = _health_timestamp(value["timestamp"])
+        except (KeyError, TypeError, ValueError):
+            anomalies["invalid_records"] += 1
+            continue
+        verdict = value.get("verdict")
+        if verdict not in HEALTH_DISPATCH_VERDICTS:
+            anomalies["invalid_records"] += 1
+            continue
+        enforcement = value.get("execution_policy_enforcement")
+        if enforcement is not None and not isinstance(enforcement, dict):
+            anomalies["invalid_records"] += 1
+            continue
+        violation = (
+            enforcement.get("violation")
+            if isinstance(enforcement, dict)
+            else value.get("execution_policy_violation")
+        )
+        if violation in HEALTH_EXECUTION_POLICY_VIOLATIONS:
+            raw_violations[violation] = raw_violations.get(violation, 0) + 1
+        elif violation is not None:
+            anomalies["invalid_records"] += 1
+            continue
+        grouped.setdefault(dispatch_id, []).append((stamp, ordinal, value))
+    final_verdicts: dict[str, int] = {}
+    for records in grouped.values():
+        value = max(records, key=lambda item: (item[0], item[1]))[2]
+        verdict = value["verdict"]
+        final_verdicts[verdict] = final_verdicts.get(verdict, 0) + 1
+    result = {"unique_dispatches": len(grouped), "final_verdicts": dict(sorted(final_verdicts.items())), "raw_violation_distribution": dict(sorted(raw_violations.items())), "anomalies": anomalies}
+    return result, ("degraded" if status != "ok" or any(anomalies.values()) else "ok")
+
+
+def health_report(ledger: Path = DEFAULT_LEDGER, review_dir: Path = DEFAULT_REVIEW_DIR, continuity_ledger: Path | None = None, dispatch_ledger: Path | None = None) -> tuple[dict[str, Any], int]:
+    """Return a sanitized read-only evidence-health report and its exit code."""
+    continuity_ledger = continuity_ledger or (CODEX_HOME / "state" / "adaptive-delegation" / "continuity.jsonl")
+    dispatch_ledger = dispatch_ledger or (CODEX_HOME / "state" / "adaptive-delegation" / "dispatch_attestation.jsonl")
+    try:
+        policy = _health_load_policy()
+        policy_status = "ok"
+    except AuditError:
+        policy = None
+        policy_status = "degraded" if os.path.exists(DEFAULT_CONFIG) else "unavailable"
+    attempts, attempts_status = _health_attempts(Path(ledger), policy)
+    reviews, reviews_status = _health_reviews(Path(review_dir))
+    continuity, continuity_status = _health_continuity(Path(continuity_ledger))
+    dispatch, dispatch_status = _health_dispatch(Path(dispatch_ledger))
+    sources = {
+        "policy": {"status": policy_status},
+        "attempts": {"status": attempts_status},
+        "reviews": {"status": reviews_status},
+        "continuity": {"status": continuity_status},
+        "dispatch": {"status": dispatch_status},
+    }
+    required_bad = policy_status != "ok" or attempts_status != "ok"
+    present_bad = any(item["status"] == "degraded" for item in sources.values())
+    optional_unavailable = any(sources[key]["status"] == "unavailable" for key in ("reviews", "continuity", "dispatch"))
+    overall_status = "degraded" if required_bad or present_bad else "partial" if optional_unavailable else "healthy"
+    current = attempts["totals"]["current_policy_paired"]
+    current_accepted = attempts["totals"]["current_policy_accepted"]
+    current_integrated = attempts["totals"]["current_policy_integrated"]
+    evidence = {
+        "status": "insufficient_current_policy_evidence" if current_accepted == 0 or current_integrated == 0 else "sufficient_current_policy_evidence",
+        "current_policy_paired": current,
+        "accepted": current_accepted,
+        "integrated": current_integrated,
+        "terra_direct_latency": attempts["terra_observations"]["direct_latency"],
+        "terra_post_luna_failure": attempts["terra_observations"]["post_luna_failure"],
+    }
+    report = {
+        "schema_version": HEALTH_SCHEMA_VERSION,
+        "overall_status": overall_status,
+        "sources": sources,
+        "attempts": attempts,
+        "reviews": reviews,
+        "continuity": continuity,
+        "dispatch": dispatch,
+        "evidence_sufficiency": evidence,
+    }
+    return report, 2 if overall_status == "degraded" else 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2343,6 +2917,15 @@ def _build_parser() -> argparse.ArgumentParser:
     submission.add_argument(
         "--issue-state", type=Path, default=DEFAULT_ISSUE_STATE
     )
+
+    health = subparsers.add_parser(
+        "health", help="print a sanitized, read-only evidence health report"
+    )
+    health.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
+    health.add_argument("--review-dir", type=Path, default=DEFAULT_REVIEW_DIR)
+    health.add_argument("--continuity-ledger", type=Path)
+    health.add_argument("--dispatch-ledger", type=Path)
+    health.add_argument("--format", choices=("json", "text"), default="json")
     return parser
 
 
@@ -2377,6 +2960,18 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 )
             )
+        elif args.command == "health":
+            report, exit_code = health_report(
+                args.ledger,
+                args.review_dir,
+                args.continuity_ledger,
+                args.dispatch_ledger,
+            )
+            rendered = _canonical_json(report)
+            if args.format == "text":
+                rendered = json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2)
+            print(rendered)
+            return exit_code
         else:
             raise AuditError(f"unsupported command: {args.command}")
     except NoUnsubmittedReportError:
