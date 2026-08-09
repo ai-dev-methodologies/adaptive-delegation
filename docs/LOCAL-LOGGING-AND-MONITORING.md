@@ -117,18 +117,40 @@ failure, while a recorded failed `post_result` is a real closed attempt.
 
 For routine use, follow this order:
 
-1. Confirm that the attempt ledger modification time changed after the
+1. Run the packaged evidence-health command for sanitized aggregate status:
+
+   ```sh
+   python3 adaptive-delegation/scripts/model_routing_audit.py health
+   ```
+
+2. Confirm that the attempt ledger modification time changed after the
    invocation.
-2. Ask Codex to summarize only the target workspace's schema, event counts,
-   selected model/effort, failure or escalation classes, pending count, and
-   integration acceptance. Do not request raw lines.
 3. Inspect the latest relevant review when one was triggered.
 4. Open dispatcher evidence only to diagnose a concrete admission or
    integration failure.
-5. Consult continuity only for a repeated stable objective and only through
-   the helper.
+5. Consult continuity for a repeated stable objective only through the exact
+   match helper described below.
 6. Use the allowlisted issue-report workflow only when intentionally preparing
    public feedback.
+
+`health` is read-only and emits schema `0.1.0`. Required policy and attempt
+sources fail closed. Missing optional review, continuity, or dispatch sources
+produce `partial` with exit 0; any required unavailable source or any present
+malformed, unreadable, or unsafe source produces `degraded` with exit 2 while
+still emitting a sanitized report. `healthy` and `partial` do not mean that
+route-tuning evidence is sufficient: read the independent
+`evidence_sufficiency.status` field. Review files are cumulative snapshots, so
+the command selects the latest unambiguous parsed `generated_at` instead of
+summing snapshots.
+
+The command's whole-ledger continuity scan is a narrow operator-health
+exception to objective-specific continuity lookup. It performs a bounded,
+owner-only, no-symlink read and emits only fixed aggregate categories:
+`accepted`, `nonaccepted`, `attestation`, and `unknown`. It never emits
+workspace/objective text, evidence paths, prompts, or raw records and never
+creates, appends, rewrites, backfills, or finalizes state. For actual continuity
+reuse, the normal rule remains unchanged: use `read_continuity.py` with an exact
+workspace and objective key, and never use `cat`, `tail`, or `grep`.
 
 A suitable read-only request is:
 

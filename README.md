@@ -25,7 +25,23 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.6.1`.
+Current installable package version: `0.6.2`.
+
+### Read-only evidence health
+
+Run `python3 adaptive-delegation/scripts/model_routing_audit.py health` to
+inspect sanitized attempt, cumulative-review, continuity-shape, dispatch, and
+current-policy evidence. The command accepts `--ledger`, `--review-dir`,
+`--continuity-ledger`, `--dispatch-ledger`, and `--format {json,text}`. It
+returns schema `0.1.0`, exits `0` for `healthy` or `partial`, and exits `2`
+for `degraded` while still emitting the report. Required policy and attempt
+sources are fail-closed; review, continuity, and dispatch sources are optional.
+Rows that fail validation are excluded from aggregates and represented only by
+fixed diagnostic counts. Continuity scanning is aggregate-only and the command
+does not append, rewrite, backfill, finalize, or create any runtime state.
+The independent `evidence_sufficiency.status` field uses only current-policy
+paired acceptance and integration facts; historical success cannot make current
+evidence sufficient and the command never recommends a routing change.
 
 External research, benchmark snapshots, practitioner reports, confidence
 limits, and the current routing decision are preserved in
