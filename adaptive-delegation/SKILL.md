@@ -51,6 +51,10 @@ network calls. Before a child launch, use the exact installed
 `controller_gate.py decision` command to record `leaf_required` with the
 Objective Lock digest and package-fixed `agent_type`, model, and effort. The
 next spawn must match that envelope and use `fork_turns="none"`.
+The hook recognizes the fixed control-plane and spawn allowlists in both their
+separator-preserving and Codex-sanitized tool-name forms. A repeated explicit
+invocation in the same session preserves any open controller, Objective Lock,
+and pending launch; it does not start a second activation or reset progress.
 
 Direct main execution is allowed only after the controller records one of
 these evidence-backed states:

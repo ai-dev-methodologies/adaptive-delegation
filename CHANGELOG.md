@@ -14,6 +14,16 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.7.2] - 2026-08-10
+
+- Accepted Codex hook tool names in both separator-preserving and sanitized
+  forms, so the allowlisted collaboration control plane and an exact locked
+  `spawn_agent` launch remain usable while main task tools stay denied.
+- Preserved an existing open controller across repeated explicit invocations
+  instead of overwriting its Objective Lock, pending launch, and activation
+  identity. Regression coverage now exercises the sanitized spawn name through
+  leaf result, cumulative review, and controller close.
+
 ## [0.7.1] - 2026-08-10
 
 - Adapted controller activation to Codex prompt-hook payloads that provide the

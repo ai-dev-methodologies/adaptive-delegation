@@ -24,6 +24,10 @@ delegable task work runs in package-fixed leaves. The installed hooks deny main
 task tools until an exact leaf launch is Objective-Locked or a bounded
 evidence-backed main-only exception/takeover is recorded. Cost, task size,
 existing context, convenience, and latency never justify direct main work.
+The hook accepts only the fixed control-plane and spawn allowlists while
+matching both separator-preserving tool names and Codex's sanitized hook names.
+Repeating an explicit invocation preserves the existing open controller rather
+than replacing its Objective Lock or pending launch.
 Each authorized Native launch must be closed with a structured controller
 result before another route decision; that result creates a cumulative local
 controller review. The main closes the controller as `complete` or `blocked`
@@ -43,7 +47,7 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.7.1`.
+Current installable package version: `0.7.2`.
 
 ### Read-only evidence health
 

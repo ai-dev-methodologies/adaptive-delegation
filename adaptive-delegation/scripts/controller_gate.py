@@ -233,6 +233,16 @@ def _activate(payload: dict[str, Any], runtime_home: Path) -> bool:
         raise ControllerGateError(
             "main authority must be gpt-5.6-sol with reasoning_effort >= high"
         )
+    existing = _load_state(runtime_home, session_id, workspace)
+    if existing is not None and existing.get("phase") != "closed":
+        if existing.get("phase") == "awaiting_main_declaration":
+            return False
+        if (
+            existing.get("main_model") == "gpt-5.6-sol"
+            and existing.get("main_reasoning_effort") in MAIN_EFFORTS
+        ):
+            return True
+        raise ControllerGateError("open controller state lacks valid main authority")
     declared = bool(main_model and main_effort)
     activated_at = _timestamp()
     activation_id = hashlib.sha256(
@@ -866,6 +876,12 @@ def _spawn_input(payload: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _tool_matches(tool_name: str, allowed: set[str]) -> bool:
+    return tool_name in allowed or tool_name in {
+        candidate.replace(".", "") for candidate in allowed
+    }
+
+
 def _authorize_spawn(
     payload: dict[str, Any],
     state: dict[str, Any],
@@ -924,7 +940,7 @@ def _handle_pre_tool_use(payload: dict[str, Any], runtime_home: Path) -> dict[st
         return {}
     tool_name = _payload_string(payload, "tool_name", "toolName")
     if phase in {"main_only_exception", "takeover"}:
-        if tool_name in SPAWN_TOOLS:
+        if _tool_matches(tool_name, SPAWN_TOOLS):
             return _denied(
                 reason=(
                     "Adaptive Delegation main-only execution does not authorize an "
@@ -937,13 +953,14 @@ def _handle_pre_tool_use(payload: dict[str, Any], runtime_home: Path) -> dict[st
         return {}
     if _adaptive_child(payload, session_id):
         return {}
-    if tool_name in CONTROL_PLANE_TOOLS:
+    if _tool_matches(tool_name, CONTROL_PLANE_TOOLS):
         return {}
-    if tool_name in CONTROLLER_EXEC_TOOLS and _authorized_controller_command(
-        payload, state, workspace
+    if (
+        _tool_matches(tool_name, CONTROLLER_EXEC_TOOLS)
+        and _authorized_controller_command(payload, state, workspace)
     ):
         return {}
-    if tool_name in SPAWN_TOOLS and phase == "leaf_required":
+    if _tool_matches(tool_name, SPAWN_TOOLS) and phase == "leaf_required":
         result = _authorize_spawn(payload, state, runtime_home, state_path)
         if not result:
             return result

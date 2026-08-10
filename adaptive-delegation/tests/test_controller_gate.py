@@ -90,6 +90,66 @@ class ControllerGateTests(unittest.TestCase):
         self.assertEqual(output, {})
         self.assertFalse((self.runtime_home / "state").exists())
 
+    def test_repeated_explicit_invocation_preserves_open_controller(self) -> None:
+        state_path = self.activate()
+        gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest="6" * 64,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        before = json.loads(state_path.read_text(encoding="utf-8"))
+
+        output = gate.handle_hook(
+            self.prompt_payload("$adaptive-delegation continue the same task"),
+            runtime_home=self.runtime_home,
+        )
+
+        after = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(output, {})
+        self.assertEqual(after["activation_id"], before["activation_id"])
+        self.assertEqual(after["phase"], "leaf_required")
+        ledger = state_path.parent / "controller-events.jsonl"
+        events = [json.loads(line) for line in ledger.read_text().splitlines()]
+        self.assertEqual(
+            sum(event["event_type"] == "explicit_activation" for event in events),
+            1,
+        )
+
+    def test_closed_controller_starts_a_distinct_later_activation(self) -> None:
+        state_path = self.activate()
+        before = json.loads(state_path.read_text(encoding="utf-8"))
+        gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="main_only_exception",
+            exception_reason="non_delegable_authority",
+            objective_lock_digest="5" * 64,
+            evidence_references=["local/authority-check.json"],
+        )
+        gate.close_controller(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            terminal_status="complete",
+            evidence_references=["local/authority-check.json"],
+        )
+
+        output = gate.handle_hook(
+            self.prompt_payload("$adaptive-delegation start a later task"),
+            runtime_home=self.runtime_home,
+        )
+
+        after = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(output, {})
+        self.assertNotEqual(after["activation_id"], before["activation_id"])
+        self.assertEqual(after["phase"], "explicit_active")
+
     def test_explicit_invocation_rejects_main_below_sol_high(self) -> None:
         payload = self.prompt_payload("$adaptive-delegation implement it")
         payload["model"] = "gpt-5.6-luna"
@@ -226,6 +286,16 @@ class ControllerGateTests(unittest.TestCase):
         self.assertEqual(events[-1]["event_type"], "main_tool_denied")
         self.assertEqual(events[-1]["tool_name"], "functions.apply_patch")
         self.assertNotIn("tool_input", events[-1])
+
+    def test_codex_sanitized_control_plane_tool_name_is_allowed(self) -> None:
+        self.activate()
+
+        output = gate.handle_hook(
+            self.tool_payload("collaborationlist_agents", {}),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output, {})
 
     def test_controller_decision_cli_is_the_only_allowed_main_exec_lane(self) -> None:
         self.activate()
@@ -435,6 +505,44 @@ class ControllerGateTests(unittest.TestCase):
 
         self.assertEqual(allowed, {})
 
+    def test_arbitrary_punctuation_variant_is_not_a_spawn_alias(self) -> None:
+        self.activate()
+        gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest="4" * 64,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload(
+                "collaboration/spawn_agent",
+                {
+                    "task_name": "bounded_change",
+                    "message": f"OBJECTIVE LOCK: {'4' * 64}",
+                    "agent_type": "adaptive-luna-maker-high",
+                    "reasoning_effort": "high",
+                    "fork_turns": "none",
+                },
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(
+            output["hookSpecificOutput"]["permissionDecision"], "deny"
+        )
+        state_path = next(
+            (self.runtime_home / "state" / "adaptive-delegation" / "controller").glob(
+                "state-*.json"
+            )
+        )
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["phase"], "leaf_required")
+
     def test_leaf_result_closes_launch_and_writes_cumulative_private_review(self) -> None:
         self.activate()
         gate.record_decision(
@@ -449,7 +557,7 @@ class ControllerGateTests(unittest.TestCase):
         )
         gate.handle_hook(
             self.tool_payload(
-                "spawn_agent",
+                "collaborationspawn_agent",
                 {
                     "task_name": "bounded_change",
                     "message": f"OBJECTIVE LOCK: {'9' * 64}",
