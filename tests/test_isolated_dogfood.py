@@ -140,6 +140,35 @@ class IsolatedDogfoodTests(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("fingerprint", result.diagnostic)
 
+    def test_rejects_mutation_of_user_hook_installation_surface(self) -> None:
+        module = load_module()
+        result = self.run_gate(
+            module,
+            behavior=(
+                "target.write_text(\"def normalize(value):\\n"
+                "    return value.strip().lower()\\n\", encoding='utf-8'); "
+                "pathlib.Path(os.environ['USER_CODEX_HOME'], 'hooks.json').write_text("
+                "'changed', encoding='utf-8')"
+            ),
+        )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("fingerprint", result.diagnostic)
+
+    def test_allows_append_only_runtime_audit_evidence(self) -> None:
+        module = load_module()
+        result = self.run_gate(
+            module,
+            behavior=(
+                "target.write_text(\"def normalize(value):\\n"
+                "    return value.strip().lower()\\n\", encoding='utf-8'); "
+                "audit = pathlib.Path(os.environ['USER_CODEX_HOME'], 'state', "
+                "'model-routing', 'attempts.jsonl'); "
+                "audit.parent.mkdir(parents=True, exist_ok=True); "
+                "audit.open('a', encoding='utf-8').write('{}\\n')"
+            ),
+        )
+        self.assertEqual(result.exit_code, 0, result.diagnostic)
+
     def test_rejects_verification_ceiling_drift(self) -> None:
         module = load_module()
         result = self.run_gate(
