@@ -14,6 +14,36 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.7.0] - 2026-08-10
+
+- Made `$adaptive-delegation` explicit and controller-only. Installed
+  `UserPromptSubmit` and `PreToolUse` hooks now keep the Sol/high-or-above main
+  on orchestration, require a declared current-session authority and Objective
+  Lock digest, admit only the exact package role/model/effort launch, and deny
+  main task tools unless a bounded evidence-backed exception or exhausted
+  ladder takeover is recorded. Cost, task size, existing context, and latency
+  cannot authorize direct main execution.
+- Added owner-only controller event evidence for activations, decisions,
+  authorized leaf launches, main-only exceptions, takeovers, and denied main
+  tools. Installation preserves foreign hooks and the existing Stop owner,
+  installs no Stop hook, and records trust only for its two managed handlers.
+- Expanded cumulative routing reviews and sanitized health reporting with
+  explicit trigger metadata,
+  model-selection fitness (`appropriate`, `underpowered`, `overpowered`, and
+  `inconclusive`), observed-versus-unobserved token cost coverage, quality and
+  integration outcomes, controller aggregates in health output, and a
+  25-accepted-task sufficiency floor. Unavailable measurements are no longer
+  represented as observed zero cost.
+
+## [0.6.3] - 2026-08-10
+
+- Fixed failed direct-typed child executions being left as integration-pending
+  attempts. Nonzero dispatcher results now close the adaptive audit with a
+  failure `post_result`; only successful child execution can await integration.
+- Classified stdout, tool-output, tool-count, and rollout-size limits as
+  `context_ceiling`, so quantitative policy failures produce a valid paired
+  audit result instead of being rejected as scope overbreadth.
+
 ## [0.6.2] - 2026-08-09
 
 - Added the read-only `model_routing_audit.py health` command with a

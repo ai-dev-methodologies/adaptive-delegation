@@ -8,7 +8,7 @@ executable sources of truth when this explanation differs from runtime code.
 
 | Role | Responsibility | Invocation point | May change scope or route? |
 | --- | --- | --- | --- |
-| Main authority | Interpret intent, build the Objective Lock, classify each bounded slice, select routes, integrate evidence, decide retry/escalation/takeover, and make the final claim. | The active skill requires `gpt-5.6-sol` at `high` or above. Main remains active throughout the workflow. | Main may select only an authorized path under the unchanged lock. A broader objective requires new user authority. |
+| Main authority | Interpret intent, build the Objective Lock, classify each bounded slice, select routes, orchestrate leaves, integrate returned evidence, decide retry/escalation/takeover, and make the final claim. It does not perform delegable task work. | Explicit `$adaptive-delegation` requires `gpt-5.6-sol` at `high` or above. Main remains active as controller throughout the workflow. | Main may select only an authorized path under the unchanged lock. Direct task tools require a structured evidence-backed main-only exception or exhausted-ladder takeover; cost and convenience are never exceptions. |
 | Maker leaf | Perform one bounded implementation, transformation, lookup, or other owned change. | Main launches the exact package role selected by the task-class ladder. | No. It reports evidence and returns control to main. |
 | Checker leaf | Independently test declared acceptance evidence without owning the Maker's change. | Main uses a distinct session when risk warrants independent checking. Package-owned integration finalization specifically requires `adaptive-sol-checker-medium` as the receipt issuer. | No. Checker routes do not join or alter the Maker escalation ladder. |
 | Final verifier | No separate package role exists. | Not invoked as an additional mandatory stage. | Not applicable. Checker supplies independent leaf evidence; main owns final integration acceptance and stopping. |
@@ -23,15 +23,18 @@ distinct, observable responsibility.
 
 ```mermaid
 flowchart TD
-    U[User request] --> M[Sol high-or-above main authority]
-    M --> G{Activation gate passes?}
+    U[Explicit adaptive-delegation request] --> M[Sol high-or-above main controller]
+    M --> G{Declared main-authority gate passes?}
     G -- No --> S0[Stop: no child launched]
-    G -- Yes --> L[Construct Objective Lock v3]
+    G -- Metadata omitted --> D[Controller declaration required;<br/>task tools denied]
+    D --> G
+    G -- Yes --> L[Construct Objective Lock v3 and digest]
     L --> C[Main classifies one bounded slice]
     C --> W{Weak oracle, ambiguity,<br/>high risk, or long contract?}
-    W -- Yes --> MT[Main Sol ultra execution or takeover]
+    W -- Yes --> MT[Record evidence-backed<br/>main-only exception or takeover]
     W -- No --> R[Select exact Luna-first Maker ladder]
-    R --> A{Native admission matches<br/>role, model, effort, packet, lock?}
+    R --> RD[Record leaf_required decision]
+    RD --> A{Native admission matches<br/>role, model, effort, packet, lock?}
     A -- No --> RC[Cancel only that child;<br/>main corrects the same envelope]
     RC --> A
     A -- Yes --> MK[Maker leaf executes bounded work]
@@ -76,6 +79,12 @@ Maker routes form the escalation ladders. Observable acceptance or quality
 failure may advance to the next configured Maker route. A model or effort
 change never gives the Maker authority to reinterpret intent, broaden scope,
 or add verification.
+
+The installed `PreToolUse` controller admits only the exact recorded
+`agent_type`, model, reasoning effort, `fork_turns="none"`, and Objective Lock
+digest. A mismatch denies the launch and records aggregate-only controller
+evidence. After authorization, the main remains restricted to control-plane
+operations until it records another allowed controller transition.
 
 ## When Checker is invoked
 

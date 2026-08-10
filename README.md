@@ -18,6 +18,18 @@ strength, risk and ambiguity, latency sensitivity, execution horizon, and
 recoverability. It then selects the matching fixed path. A workflow name never
 selects a path by itself, and children cannot reroute themselves.
 
+Explicit `$adaptive-delegation` sessions are controller-only. The main owns
+intent, routing, orchestration, evidence integration, and final claims, while
+delegable task work runs in package-fixed leaves. The installed hooks deny main
+task tools until an exact leaf launch is Objective-Locked or a bounded
+evidence-backed main-only exception/takeover is recorded. Cost, task size,
+existing context, convenience, and latency never justify direct main work.
+Each authorized Native launch must be closed with a structured controller
+result before another route decision; that result creates a cumulative local
+controller review. The main closes the controller as `complete` or `blocked`
+before its terminal answer, preventing stale state from restricting a later
+non-adaptive request in the same conversation.
+
 Its primary invariant is: delegate bounded independent work aggressively, but
 only inside one portable Objective Lock. No valid lock means no child launch;
 no external `AGENTS.md` is required to construct or enforce the packaged lock.
@@ -25,23 +37,30 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.6.2`.
+Current installable package version: `0.7.0`.
 
 ### Read-only evidence health
 
 Run `python3 adaptive-delegation/scripts/model_routing_audit.py health` to
-inspect sanitized attempt, cumulative-review, continuity-shape, dispatch, and
-current-policy evidence. The command accepts `--ledger`, `--review-dir`,
-`--continuity-ledger`, `--dispatch-ledger`, and `--format {json,text}`. It
+inspect sanitized attempt, cumulative-review, continuity-shape, dispatch,
+controller-enforcement, and current-policy evidence. The command accepts
+`--ledger`, `--review-dir`, `--continuity-ledger`, `--dispatch-ledger`,
+`--controller-ledger`, and `--format {json,text}`. It
 returns schema `0.1.0`, exits `0` for `healthy` or `partial`, and exits `2`
 for `degraded` while still emitting the report. Required policy and attempt
-sources are fail-closed; review, continuity, and dispatch sources are optional.
+sources are fail-closed; review, continuity, dispatch, and controller sources
+are optional.
 Rows that fail validation are excluded from aggregates and represented only by
 fixed diagnostic counts. Continuity scanning is aggregate-only and the command
 does not append, rewrite, backfill, finalize, or create any runtime state.
 The independent `evidence_sufficiency.status` field uses only current-policy
-paired acceptance and integration facts; historical success cannot make current
-evidence sufficient and the command never recommends a routing change.
+paired acceptance and integration facts and remains insufficient until at
+least 25 accepted and integrated tasks exist. Historical success cannot make
+current evidence sufficient. Each cumulative review names its trigger and
+covered pair count, distinguishes missing cost observations from observed zero,
+and reports model selection as appropriate, underpowered, overpowered, or
+inconclusive alongside quality outcomes. The command never recommends a routing
+change by itself.
 
 External research, benchmark snapshots, practitioner reports, confidence
 limits, and the current routing decision are preserved in
@@ -60,12 +79,22 @@ user-level install only after validation and isolated promotion pass.
 
 ## What the skill validates and requires
 
-The dispatcher fails closed on the typed/direct paths it owns. Native child
-and main-takeover scope rules are agent obligations plus local post-hoc
-consistency checks; they are not an operating-system security boundary.
+The dispatcher fails closed on the typed/direct paths it owns. For an explicit
+invocation, installed `UserPromptSubmit` and `PreToolUse` hooks additionally
+enforce the controller boundary before main task tools run. This is a same-user
+policy boundary, not an operating-system security boundary.
 
 - The declared main session must be `gpt-5.6-sol` at `high`, `xhigh`, `max`, or
   `ultra` before a package-owned child can launch.
+- The main must record the Objective Lock digest and exact fixed
+  role/model/effort before a native leaf launch. A launch mismatch is denied.
+- The main must record the leaf outcome, route fitness, quality/integration
+  verdict, measurement coverage, and bounded evidence before another decision.
+  Missing token usage is unavailable, never observed zero.
+- Direct main execution requires a structured `non_delegable_authority`,
+  `weak_oracle`, `high_risk_or_ambiguous`, or exhausted-ladder record with
+  bounded evidence. Weak/high-risk work and takeover additionally require the
+  declared main to be `ultra`; economic discretion is not an exception.
 - Every default and escalation step resolves to an installed, package-declared
   Codex role with an exact model and reasoning effort.
 - Leaf `ultra` and silent model substitution are forbidden.
@@ -161,10 +190,11 @@ final verification remains main-authoritative.
 
 ## Activate the skill
 
-Use `$adaptive-delegation` explicitly when deterministic activation matters.
-Implicit activation is also available for matching requests. The skill
-frontmatter contains the only two localized trigger literals; all other package
-documentation is English. See
+Use `$adaptive-delegation` explicitly. This skill is explicit and opt-in:
+matching prose,
+bare workflow names, localized trigger literals, and old session artifacts do
+not activate it. The skill frontmatter retains search vocabulary for discovery,
+but discovery is not activation. See
 [`adaptive-delegation/references/TRIGGERS.md`](adaptive-delegation/references/TRIGGERS.md).
 No additional Luna-first, stop-on-acceptance, or no-extra-review prompt is
 required; those constraints are part of the installed skill contract.
@@ -179,18 +209,20 @@ skill does not change the running main model or its effort, and requesting
 | --- | --- | --- |
 | `$adaptive-delegation ...` | Deterministic explicit activation. | The main-authority gate runs, an Objective Lock is created, and bounded work follows the Luna-first route. |
 | `$adaptive-delegation ... Use ultra reasoning.` | Deterministic explicit activation. | `ultra` applies to the main only if the current runtime is already configured as `gpt-5.6-sol/ultra`. Prompt text cannot upgrade the session. Leaf `ultra` remains forbidden. |
-| A bounded task request containing either localized token-efficiency literal declared in the skill frontmatter | Eligible for implicit activation because the localized literal is in the skill description and implicit invocation is enabled. Explicit `$adaptive-delegation` remains the deterministic choice. | If activated, it runs the same Objective Lock and Luna-first workflow as explicit invocation. |
-| The same localized token-efficiency request plus `Use ultra reasoning.` | Eligible for implicit activation because of the localized token-efficiency literal, not because of `ultra`. | An already-`ultra` main remains the authority; bounded children still use fixed Luna, Terra, or Sol leaf roles and never inherit main `ultra`. |
+| A matching bounded task without `$adaptive-delegation` | Does not activate this skill. | Scoped main-direct behavior and any separately invoked workflow remain unchanged. |
+| A localized token-efficiency request, with or without `Use ultra reasoning.` | Does not activate this skill. | Search vocabulary cannot activate routing or upgrade the session. |
 | `Use ultra reasoning.` | Does not activate this skill by itself. | Normal session-level model and effort rules apply. |
 
 A localized trigger must occur in an actionable delegation, implementation, or
 verification request. Quoting the word, translating it, or asking only for its
 definition does not request adaptive routing.
 
-After activation, the workflow is identical for explicit and implicit entry:
+After explicit activation:
 
-1. Validate that the current main is `gpt-5.6-sol` at `high` or above. The
-   skill cannot mutate a failing parent configuration.
+1. Validate that the current main is `gpt-5.6-sol` at `high` or above. When the
+   documented prompt hook omits model metadata, the main completes the bounded
+   controller declaration before any task tool. The skill cannot mutate a
+   failing parent configuration.
 2. Construct one portable Objective Lock before any child launch.
 3. The main classifies every bounded slice before launch. It records task
    shape, oracle strength, risk and ambiguity, latency sensitivity, execution
@@ -207,7 +239,10 @@ After activation, the workflow is identical for explicit and implicit entry:
    `xhigh/max` before Sol. Leaf `ultra` is never allowed.
 6. Keep weak-oracle, ambiguous, high-risk, or long-contract work with the main
    at `gpt-5.6-sol/ultra`, or return exhausted leaf work to that main takeover.
-7. Stop as soon as the locked acceptance evidence passes. Do not add another
+7. Keep the main on control-plane operations throughout delegated work. It may
+   execute directly only through an evidence-backed main-only exception or an
+   exhausted-ladder takeover; cost and convenience cannot open that lane.
+8. Stop as soon as the locked acceptance evidence passes. Do not add another
    review or broader verification merely because the main has `ultra` effort.
 
 The fixed automatic paths are:
@@ -285,7 +320,9 @@ The default target is `$CODEX_HOME`, or `~/.codex` when `CODEX_HOME` is unset.
 Use `--codex-home /path/to/.codex` for another target. The installer replaces
 each managed target safely, preserves unrelated roles and existing directory
 permissions, and removes only stale adaptive roles declared by the previously
-installed package.
+installed package. It also adds one `adaptive-delegation` command handler to
+`UserPromptSubmit` and `PreToolUse`, writes matching Codex trust entries,
+preserves foreign handlers, and never adds or replaces a Stop handler.
 
 The installer never copies authentication, audit logs, issue-report state,
 continuity records, or rollout/session data. Those remain local to the machine
@@ -306,8 +343,10 @@ python3 -m unittest -v tests.test_install tests.test_dispatcher_gate tests.test_
 python3 -m unittest discover -v -s adaptive-delegation/tests -p 'test_*.py'
 ```
 
-Codex normally detects installed skill changes automatically. Restart Codex
-only if the updated skill is not visible after installation.
+Skill files may be detected automatically, but hook topology is cached by the
+running process. Start a fresh Codex process after installing this release,
+then invoke `$adaptive-delegation` to verify controller events and routing data
+from the new deployment baseline.
 
 ## Version and update comparison
 

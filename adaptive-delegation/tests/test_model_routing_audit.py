@@ -75,6 +75,34 @@ class ModelRoutingAuditTests(unittest.TestCase):
             },
             "tasks": {"total": 1, "accepted": 1, "first_pass_accepted": 1},
             "metric_counts": {"model_transition_count": 0},
+            "review_metadata": {
+                "snapshot_kind": "cumulative",
+                "trigger_reasons": ["failure"],
+                "covered_pairs": 2,
+                "covered_current_policy_pairs": 1,
+                "incomplete_pre_decisions": 0,
+            },
+            "evaluation": {
+                "model_selection": {
+                    "status": "insufficient_sample",
+                    "appropriate": 1,
+                    "underpowered": 0,
+                    "overpowered": 0,
+                    "inconclusive": 0,
+                    "conclusive_attempts": 1,
+                },
+                "cost": {
+                    "status": "partial",
+                    "observed_attempts": 1,
+                    "unobserved_attempts": 1,
+                },
+                "quality": {
+                    "status": "insufficient_sample",
+                    "accepted_tasks": 1,
+                    "accepted_attempts": 1,
+                    "integration_accepted_attempts": 1,
+                },
+            },
             "terra_observations": {},
         }
 
@@ -370,7 +398,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertEqual(payload["evidence_sufficiency"]["integrated"], 0)
         self.assertEqual(
             payload["evidence_sufficiency"]["status"],
-            "insufficient_current_policy_evidence",
+            "insufficient_current_policy_sample",
         )
 
     def test_health_current_pair_requires_pair_context_and_counts_acceptance(self):
@@ -407,8 +435,10 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertEqual(payload["attempts"]["anomalies"]["orphan_post"], 1)
         self.assertEqual(
             payload["evidence_sufficiency"]["status"],
-            "sufficient_current_policy_evidence",
+            "insufficient_current_policy_sample",
         )
+        self.assertEqual(payload["evidence_sufficiency"]["minimum_accepted"], 25)
+        self.assertEqual(payload["evidence_sufficiency"]["accepted_remaining"], 24)
 
     def test_health_reviews_use_latest_timestamp_and_never_emit_payload_fields(self):
         self.review_dir.mkdir(mode=0o700)
@@ -424,6 +454,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertEqual(status, "degraded")
         self.assertEqual(result["file_count"], 2)
         self.assertEqual(result["valid_review_count"], 2)
+        self.assertEqual(result["cumulative_snapshot_count"], 2)
         self.assertEqual(result["ambiguous_latest"], 2)
         self.assertNotIn("must-not-leak", json.dumps(result))
         self.assertNotIn("prompt", json.dumps(result))
@@ -444,6 +475,16 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertEqual(result["valid_review_count"], 1)
         self.assertEqual(result["anomalies"]["invalid_records"], 1)
         self.assertEqual(result["latest"]["generated_at"], "2026-01-01T00:00:00Z")
+        self.assertEqual(result["latest_covered_pairs"], 2)
+        self.assertEqual(
+            result["latest"]["review_metadata"]["trigger_reasons"], ["failure"]
+        )
+        self.assertEqual(
+            result["latest"]["evaluation"]["model_selection"]["appropriate"], 1
+        )
+        self.assertEqual(
+            result["latest"]["evaluation"]["cost"]["unobserved_attempts"], 1
+        )
 
     def test_health_review_scan_degrades_at_cumulative_byte_limit(self):
         self.review_dir.mkdir(mode=0o700)
@@ -579,10 +620,11 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.review_dir.mkdir(mode=0o700)
         continuity = self.write_jsonl(self.root / "continuity.jsonl", [])
         dispatch = self.write_jsonl(self.root / "dispatch.jsonl", [])
+        controller = self.write_jsonl(self.root / "controller.jsonl", [])
         paths_before = sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*"))
         bytes_before = {
             path: path.read_bytes()
-            for path in (self.ledger, continuity, dispatch)
+            for path in (self.ledger, continuity, dispatch, controller)
         }
 
         result = self.run_cli(
@@ -591,6 +633,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
             "--review-dir", self.review_dir,
             "--continuity-ledger", continuity,
             "--dispatch-ledger", dispatch,
+            "--controller-ledger", controller,
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -983,6 +1026,9 @@ class ModelRoutingAuditTests(unittest.TestCase):
         review_path = Path(payload["automatic_review"]["path"])
         self.assertTrue(review_path.is_file())
         self.assertEqual(stat.S_IMODE(review_path.stat().st_mode), 0o600)
+        review = json.loads(review_path.read_text(encoding="utf-8"))
+        self.assertEqual(review["review_metadata"]["snapshot_kind"], "cumulative")
+        self.assertEqual(review["review_metadata"]["trigger_reasons"], ["failure"])
 
     def test_detailed_pair_is_valid_and_review_counts_are_aggregated(self):
         pre = self.pre("detail", "detailed-task")
@@ -1004,6 +1050,15 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertEqual(review["metric_counts"]["next_actions"]["raise_model"], 0)
         self.assertEqual(review["tasks"]["elapsed_metric_covered"], 1)
         self.assertEqual(review["tasks"]["token_cost_metric_covered"], 1)
+        evaluation = review["evaluation"]
+        self.assertEqual(evaluation["model_selection"]["appropriate"], 1)
+        self.assertEqual(evaluation["model_selection"]["underpowered"], 0)
+        self.assertEqual(evaluation["model_selection"]["overpowered"], 0)
+        self.assertEqual(evaluation["cost"]["observed_attempts"], 1)
+        self.assertEqual(evaluation["cost"]["unobserved_attempts"], 0)
+        self.assertEqual(evaluation["cost"]["weighted_tokens_observed"], 20)
+        self.assertEqual(evaluation["quality"]["accepted_attempts"], 1)
+        self.assertEqual(evaluation["quality"]["status"], "insufficient_sample")
 
     def test_detail_validation_rejects_bad_enum_and_unsafe_or_oversized_evidence(self):
         bad_enum = self.pre("bad-enum", "task")
@@ -1102,7 +1157,165 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertEqual(review["tasks"]["accepted"], 1)
         self.assertEqual(review["tasks"]["elapsed_metric_covered"], 0)
         self.assertEqual(review["tasks"]["token_cost_metric_covered"], 0)
-        self.assertEqual(review["metrics"]["weighted_tokens_per_accepted_task"], 0.0)
+        self.assertIsNone(review["metrics"]["weighted_tokens_per_accepted_task"])
+        cost = review["evaluation"]["cost"]
+        self.assertEqual(cost["observed_attempts"], 0)
+        self.assertEqual(cost["unobserved_attempts"], 1)
+        self.assertIsNone(cost["weighted_tokens_observed"])
+        route = next(iter(review["metrics"]["tokens_and_calls_by_model_effort"].values()))
+        self.assertEqual(route["observed_calls"], 0)
+        self.assertEqual(route["unobserved_calls"], 1)
+        self.assertIsNone(route["weighted_tokens_observed"])
+        self.assertIsNone(route["weighted_tokens"])
+        self.assertIsNone(route["cost_proxy_total"])
+
+    def test_missing_measurement_metadata_is_unobserved_not_zero(self):
+        self.record("legacy-missing-pre.json", self.pre("legacy-missing", "legacy-task"))
+        self.record(
+            "legacy-missing-post.json",
+            self.post(
+                "legacy-missing",
+                "legacy-task",
+                weighted_tokens=0,
+                cost_proxy=0,
+                elapsed_ms=0,
+            ),
+        )
+
+        result = self.run_cli(
+            "review", "--ledger", self.ledger, "--review-dir", self.review_dir
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        review = json.loads(Path(result.stdout.strip()).read_text(encoding="utf-8"))
+        self.assertEqual(review["evaluation"]["cost"]["observed_attempts"], 0)
+        self.assertEqual(review["evaluation"]["cost"]["unobserved_attempts"], 1)
+        self.assertIsNone(review["metrics"]["weighted_tokens_per_accepted_task"])
+        self.assertIsNone(review["metrics"]["elapsed_time_per_accepted_task_ms"])
+        route = next(iter(review["metrics"]["tokens_and_calls_by_model_effort"].values()))
+        self.assertEqual(route["observed_calls"], 0)
+        self.assertEqual(route["unobserved_calls"], 1)
+        self.assertIsNone(route["weighted_tokens"])
+        self.assertIsNone(route["cost_proxy_total"])
+
+    def test_controller_health_reports_enforcement_flow_without_payloads(self):
+        controller = self.root / "controller" / "controller-events.jsonl"
+        base = {
+            "schema_version": "1",
+            "timestamp": "2026-08-10T00:00:00Z",
+            "activation_id": "a" * 64,
+            "session_id": "session-1",
+            "workspace": "/workspace/project",
+        }
+        self.write_jsonl(
+            controller,
+            [
+                {**base, "event_type": "explicit_activation_requested"},
+                {**base, "event_type": "explicit_activation"},
+                {**base, "event_type": "delegation_decision", "decision": "leaf_required"},
+                {**base, "event_type": "leaf_launch_authorized"},
+                {**base, "event_type": "main_tool_denied", "tool_name": "apply_patch"},
+                {
+                    **base,
+                    "event_type": "delegation_decision",
+                    "decision": "main_only_exception",
+                    "exception_reason": "weak_oracle",
+                },
+                {
+                    **base,
+                    "event_type": "leaf_result_recorded",
+                    "planned_launch": {
+                        "model": "gpt-5.6-luna",
+                        "reasoning_effort": "high",
+                    },
+                    "outcome": "accepted",
+                    "route_assessment": "correct",
+                    "quality_verdict": "pass",
+                    "integration_accepted": True,
+                    "token_observation": "unavailable",
+                },
+                {
+                    **base,
+                    "event_type": "controller_closed",
+                    "terminal_status": "complete",
+                },
+            ],
+        )
+        controller_reviews = controller.parent / "reviews"
+        controller_reviews.mkdir(mode=0o700)
+        controller_review = controller_reviews / "controller-review.json"
+        controller_review.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1",
+                    "generated_at": "2026-08-10T00:01:00Z",
+                    "snapshot_kind": "cumulative",
+                    "covered_leaf_results": 1,
+                }
+            ),
+            encoding="utf-8",
+        )
+        os.chmod(controller_review, 0o600)
+
+        result, status = audit._health_controller(controller)
+
+        self.assertEqual(status, "ok")
+        self.assertEqual(result["activations"], 1)
+        self.assertEqual(result["leaf_required_decisions"], 1)
+        self.assertEqual(result["authorized_leaf_launches"], 1)
+        self.assertEqual(result["main_tool_denials"], 1)
+        self.assertEqual(result["main_only_exceptions"], {"weak_oracle": 1})
+        self.assertEqual(result["leaf_results"], 1)
+        self.assertEqual(result["pending_leaf_results"], 0)
+        self.assertEqual(result["model_selection"]["appropriate"], 1)
+        self.assertEqual(result["cost"]["unobserved_results"], 1)
+        self.assertEqual(result["quality"]["accepted"], 1)
+        self.assertEqual(result["closed"], {"complete": 1, "blocked": 0})
+        self.assertEqual(result["open_activations"], 0)
+        self.assertEqual(result["reviews"]["cumulative_snapshot_count"], 1)
+        self.assertEqual(result["reviews"]["latest_covered_leaf_results"], 1)
+        self.assertEqual(result["reviews"]["unreviewed_leaf_results"], 0)
+        self.assertNotIn("session_id", result)
+        self.assertNotIn("workspace", result)
+
+        self.write_jsonl(self.ledger, [])
+        report, code = audit.health_report(
+            self.ledger,
+            self.review_dir,
+            self.root / "missing-continuity.jsonl",
+            self.root / "missing-dispatch.jsonl",
+            controller,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(report["sources"]["controller"]["status"], "ok")
+        self.assertEqual(report["controller"]["authorized_leaf_launches"], 1)
+
+    def test_controller_health_rejects_accepted_result_without_passing_quality(self):
+        controller = self.root / "controller" / "controller-events.jsonl"
+        self.write_jsonl(
+            controller,
+            [
+                {
+                    "schema_version": "1",
+                    "timestamp": "2026-08-10T00:00:00Z",
+                    "activation_id": "a" * 64,
+                    "session_id": "session-1",
+                    "workspace": "/workspace/project",
+                    "event_type": "leaf_result_recorded",
+                    "outcome": "accepted",
+                    "route_assessment": "correct",
+                    "quality_verdict": "fail",
+                    "integration_accepted": True,
+                    "token_observation": "unavailable",
+                }
+            ],
+        )
+
+        result, status = audit._health_controller(controller)
+
+        self.assertEqual(status, "degraded")
+        self.assertEqual(result["leaf_results"], 0)
+        self.assertEqual(result["anomalies"]["invalid_records"], 1)
 
     def test_review_counts_actual_route_transitions(self):
         self.record("route-1-pre.json", self.pre("route-1", "route-task", index=1))

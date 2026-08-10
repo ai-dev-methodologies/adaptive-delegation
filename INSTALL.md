@@ -115,8 +115,15 @@ For a Codex home represented by `$CODEX_HOME`, installation manages:
 - `$CODEX_HOME/skills/adaptive-delegation/` — the allowlisted runtime skill
   package and package policy;
 - `$CODEX_HOME/scripts/adaptive_dispatch_attestation.py` — the package
-  dispatcher; and
+  dispatcher;
 - `$CODEX_HOME/agents/adaptive-*.toml` — exact package-declared Codex roles.
+- `$CODEX_HOME/hooks.json` — one preserved/idempotent controller handler under
+  `UserPromptSubmit` and one under `PreToolUse`; and
+- `$CODEX_HOME/config.toml` — trust hashes for those two controller handlers.
+
+The installer preserves unrelated hooks and trust entries. It never registers
+an adaptive-delegation Stop handler and does not replace the user's existing
+Stop owner.
 
 The policy source of truth is
 `$CODEX_HOME/skills/adaptive-delegation/config/model-routing.defaults.json`.
@@ -192,6 +199,11 @@ python3 scripts/version_status.py
 
 Rerunning the installer is the supported repair and reinstall path.
 
+Hook configuration is loaded at process start. After an install or update,
+start a fresh Codex process before validating `$adaptive-delegation`; an
+already-running process may retain the previous hook topology even when the
+skill files are current.
+
 ## Roll back
 
 Check out a known-good commit, or a known-good tag when one exists, then rerun
@@ -227,6 +239,7 @@ Never copy, commit, attach, or publish:
 - `$CODEX_HOME/state/model-routing/issue-report-state.jsonl`;
 - `$CODEX_HOME/state/adaptive-delegation/continuity.jsonl`;
 - `$CODEX_HOME/state/adaptive-delegation/dispatch_attestation.jsonl`;
+- `$CODEX_HOME/state/adaptive-delegation/controller/`;
 - Codex rollout or session records; or
 - repository-local hidden runtime-state directories.
 
@@ -237,7 +250,10 @@ required, inspect it before transfer.
 To report routing behavior, generate and manually inspect a sanitized summary
 as described in [`REPORTING.md`](REPORTING.md). Never upload a raw ledger.
 
-## Skill visibility
+## Skill and controller visibility
 
-Codex normally detects skill changes automatically. Restart the Codex process
-only when the installed update is not visible.
+Codex may detect skill text changes automatically, but controller hooks require
+a fresh process. After installation, open a new Codex process, invoke
+`$adaptive-delegation`, and confirm that the owner-only controller ledger is
+created under `$CODEX_HOME/state/adaptive-delegation/controller/` before using
+new review data as release evidence.
