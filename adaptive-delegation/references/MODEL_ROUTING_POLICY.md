@@ -159,9 +159,13 @@ passing the controller decision's exact `launch_task_name` as `task_name`, the
 same effort, and `fork_turns="none"`, and validating local runtime model/effort
 metadata. Native `PreToolUse` receives an opaque child message, so this issued
 task name binds the launch to the recorded Objective Lock decision without
-claiming message decryption. The role selection is an explicit model choice. The
-selected model need not appear in the optional `model` override enum, so its
-absence there is not evidence that the fixed Native route is unsupported.
+claiming message decryption. Child tool hooks reuse the parent session id; the
+controller binds the one child turn whose private rollout metadata matches the
+issued task name, role, parent, and start turn after that exact spawn while
+continuing to deny the main and foreign turns. The role selection is an
+explicit model choice. The selected model need not appear in the optional
+`model` override enum, so its absence there is not evidence that the fixed
+Native route is unsupported.
 
 Use an explicit `model` override only on a surface that supports it and accepts
 the exact requested value. Use typed direct only when the fixed role or Native

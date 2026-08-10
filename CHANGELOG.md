@@ -14,6 +14,19 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.7.5] - 2026-08-10
+
+- Aligned child tool admission with the documented Codex hook wire format.
+  Subagent `PreToolUse` calls share the parent `session_id` and do not expose an
+  agent role, so the controller now binds the current main `turn_id`, refreshes
+  it on later user prompts, and admits only the single child turn whose private
+  rollout metadata matches the exact issued task name, role, parent, and start
+  turn while a locked leaf launch is active.
+- Kept same-turn main tools denied during leaf execution and retained the
+  legacy role/parent fallback only for payloads without turn identifiers.
+  Regression coverage exercises parent-session child tools, same-turn main
+  denial, foreign/stale turn rejection, and non-explicit main-turn refresh.
+
 ## [0.7.4] - 2026-08-10
 
 - Closed a native-hook ordering bypass found by the clean-main isolated

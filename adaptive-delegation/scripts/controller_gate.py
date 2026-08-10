@@ -20,6 +20,8 @@ from typing import Any
 STATE_SCHEMA_VERSION = "1"
 EVENT_SCHEMA_VERSION = "1"
 MAX_INPUT_BYTES = 1024 * 1024
+MAX_TRANSCRIPT_BINDING_BYTES = 256 * 1024
+MAX_TRANSCRIPT_BINDING_LINES = 8
 MAX_EVIDENCE_REFERENCES = 8
 MAX_EVIDENCE_REFERENCE_LENGTH = 256
 EXPLICIT_INVOCATION = re.compile(r"^\s*\$adaptive-delegation(?:\s|:|$)", re.I)
@@ -237,6 +239,7 @@ def _activation_event(state: dict[str, Any]) -> dict[str, Any]:
 def _activate(payload: dict[str, Any], runtime_home: Path) -> bool:
     session_id = _session_from_payload(payload)
     workspace = _workspace_from_payload(payload)
+    main_turn_id = _payload_string(payload, "turn_id", "turnId")
     main_model = _payload_string(payload, "model", "main_model", "mainModel")
     main_effort = _payload_string(
         payload,
@@ -257,6 +260,13 @@ def _activate(payload: dict[str, Any], runtime_home: Path) -> bool:
         )
     existing = _load_state(runtime_home, session_id, workspace)
     if existing is not None and existing.get("phase") != "closed":
+        if main_turn_id and existing.get("main_turn_id") != main_turn_id:
+            existing = dict(existing)
+            existing["main_turn_id"] = main_turn_id
+            existing["updated_at"] = _timestamp()
+            _atomic_write_json(
+                _state_path(runtime_home, session_id, workspace), existing
+            )
         if existing.get("phase") == "awaiting_main_declaration":
             return False
         if (
@@ -282,6 +292,8 @@ def _activate(payload: dict[str, Any], runtime_home: Path) -> bool:
     if declared:
         state["main_model"] = main_model
         state["main_reasoning_effort"] = main_effort
+    if main_turn_id:
+        state["main_turn_id"] = main_turn_id
     _atomic_write_json(_state_path(runtime_home, session_id, workspace), state)
     if declared:
         _append_event(runtime_home, _activation_event(state))
@@ -316,6 +328,25 @@ def _load_state(runtime_home: Path, session_id: str, workspace: Path) -> dict[st
     if value.get("session_id") != session_id or value.get("workspace") != str(workspace):
         raise ControllerGateError("controller state binding does not match hook scope")
     return value
+
+
+def _refresh_main_turn(payload: dict[str, Any], runtime_home: Path) -> None:
+    main_turn_id = _payload_string(payload, "turn_id", "turnId")
+    if not main_turn_id:
+        return
+    session_id = _session_from_payload(payload)
+    workspace = _workspace_from_payload(payload)
+    state = _load_state(runtime_home, session_id, workspace)
+    if (
+        state is None
+        or state.get("phase") == "closed"
+        or state.get("main_turn_id") == main_turn_id
+    ):
+        return
+    updated = dict(state)
+    updated["main_turn_id"] = main_turn_id
+    updated["updated_at"] = _timestamp()
+    _atomic_write_json(_state_path(runtime_home, session_id, workspace), updated)
 
 
 def _evidence_references(values: list[str] | None) -> list[str]:
@@ -893,7 +924,121 @@ def _authorized_controller_command(
     return command_workspace == workspace
 
 
-def _adaptive_child(payload: dict[str, Any], main_session_id: str) -> bool:
+def _resolved_transcript_path(
+    payload: dict[str, Any], runtime_home: Path
+) -> Path | None:
+    value = _payload_string(payload, "transcript_path", "transcriptPath")
+    if not value:
+        return None
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        return None
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to((runtime_home / "sessions").resolve())
+    except (OSError, ValueError):
+        return None
+    if candidate.is_symlink() or not resolved.is_file():
+        return None
+    return resolved
+
+
+def _transcript_binds_planned_child(
+    *,
+    transcript: Path,
+    session_id: str,
+    turn_id: str,
+    planned: dict[str, Any],
+) -> bool:
+    rows: list[dict[str, Any]] = []
+    consumed = 0
+    try:
+        with transcript.open("r", encoding="utf-8") as handle:
+            for _ in range(MAX_TRANSCRIPT_BINDING_LINES):
+                line = handle.readline(MAX_TRANSCRIPT_BINDING_BYTES - consumed + 1)
+                if not line:
+                    break
+                consumed += len(line.encode("utf-8"))
+                if consumed > MAX_TRANSCRIPT_BINDING_BYTES:
+                    return False
+                value = json.loads(line)
+                if isinstance(value, dict):
+                    rows.append(value)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not rows or rows[0].get("type") != "session_meta":
+        return False
+    metadata = rows[0].get("payload")
+    if not isinstance(metadata, dict):
+        return False
+    source = metadata.get("source")
+    subagent = source.get("subagent") if isinstance(source, dict) else None
+    spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
+    task_name = planned.get("task_name")
+    agent_type = planned.get("agent_type")
+    if not isinstance(spawn, dict) or not all(
+        isinstance(value, str) and value
+        for value in (task_name, agent_type)
+    ):
+        return False
+    expected_agent_path = f"/root/{task_name}"
+    metadata_matches = (
+        metadata.get("session_id") == session_id
+        and metadata.get("parent_thread_id") == session_id
+        and metadata.get("thread_source") == "subagent"
+        and metadata.get("agent_role") == agent_type
+        and spawn.get("parent_thread_id") == session_id
+        and spawn.get("agent_path") == expected_agent_path
+        and spawn.get("agent_role") == agent_type
+    )
+    task_started = any(
+        row.get("type") == "event_msg"
+        and isinstance(row.get("payload"), dict)
+        and row["payload"].get("type") == "task_started"
+        and row["payload"].get("turn_id") == turn_id
+        for row in rows[1:]
+    )
+    return metadata_matches and task_started
+
+
+def _adaptive_child(
+    payload: dict[str, Any],
+    main_session_id: str,
+    state: dict[str, Any],
+    runtime_home: Path,
+    state_path: Path,
+) -> bool:
+    if state.get("phase") != "leaf_launch_authorized":
+        return False
+    turn_id = _payload_string(payload, "turn_id", "turnId")
+    main_turn_id = state.get("main_turn_id")
+    if turn_id and isinstance(main_turn_id, str):
+        if turn_id == main_turn_id:
+            return False
+        transcript = _resolved_transcript_path(payload, runtime_home)
+        if transcript is None:
+            return False
+        child_turn_id = state.get("child_turn_id")
+        child_transcript_path = state.get("child_transcript_path")
+        if isinstance(child_turn_id, str) or isinstance(child_transcript_path, str):
+            return (
+                turn_id == child_turn_id
+                and str(transcript) == child_transcript_path
+            )
+        planned = state.get("planned_launch")
+        if not isinstance(planned, dict) or not _transcript_binds_planned_child(
+            transcript=transcript,
+            session_id=main_session_id,
+            turn_id=turn_id,
+            planned=planned,
+        ):
+            return False
+        updated = dict(state)
+        updated["child_turn_id"] = turn_id
+        updated["child_transcript_path"] = str(transcript)
+        updated["updated_at"] = _timestamp()
+        _atomic_write_json(state_path, updated)
+        return True
     role = _payload_string(payload, "agent_type", "agent_role", "agentType", "agentRole")
     parent = _payload_string(payload, "parent_session_id", "parentSessionId")
     return role.startswith("adaptive-") and parent == main_session_id
@@ -1002,7 +1147,7 @@ def _handle_pre_tool_use(payload: dict[str, Any], runtime_home: Path) -> dict[st
             state=state,
             runtime_home=runtime_home,
         )
-    if _adaptive_child(payload, session_id):
+    if _adaptive_child(payload, session_id, state, runtime_home, state_path):
         return {}
     if _tool_matches(tool_name, CONTROL_PLANE_TOOLS):
         return {}
@@ -1082,6 +1227,17 @@ def handle_hook(
                         "session to gpt-5.6-sol/high or above, then invoke "
                         "$adaptive-delegation again."
                     )
+                }
+        else:
+            try:
+                _refresh_main_turn(payload, resolved_home)
+            except ControllerGateError as exc:
+                return {
+                    "continue": False,
+                    "stopReason": (
+                        "Adaptive Delegation controller turn binding failed closed: "
+                        f"{exc}"
+                    ),
                 }
         return {}
     if event == "PreToolUse":
