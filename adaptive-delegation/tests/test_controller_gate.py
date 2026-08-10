@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import shlex
 import stat
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from unittest import mock
 from pathlib import Path
 
 
@@ -442,7 +445,7 @@ class ControllerGateTests(unittest.TestCase):
 
     def test_leaf_decision_allows_only_exact_fixed_role_spawn(self) -> None:
         self.activate()
-        gate.record_decision(
+        decision = gate.record_decision(
             runtime_home=self.runtime_home,
             session_id=self.session_id,
             workspace=self.cwd,
@@ -452,13 +455,14 @@ class ControllerGateTests(unittest.TestCase):
             model="gpt-5.6-luna",
             reasoning_effort="high",
         )
+        task_name = decision["planned_launch"]["task_name"]
 
         allowed = gate.handle_hook(
             self.tool_payload(
                 "collaboration.spawn_agent",
                 {
-                    "task_name": "bounded_change",
-                    "message": f"OBJECTIVE LOCK: {'c' * 64}",
+                    "task_name": task_name,
+                    "message": "gAAAAABopaque-native-hook-message",
                     "agent_type": "adaptive-luna-maker-high",
                     "reasoning_effort": "high",
                     "fork_turns": "none",
@@ -476,9 +480,78 @@ class ControllerGateTests(unittest.TestCase):
         state = json.loads(state_path.read_text())
         self.assertEqual(state["phase"], "leaf_launch_authorized")
 
+    def test_leaf_decision_cli_returns_exact_launch_task_name(self) -> None:
+        self.activate()
+        output = io.StringIO()
+        arguments = [
+            "decision",
+            "--session-id",
+            self.session_id,
+            "--workspace",
+            str(self.cwd),
+            "--decision",
+            "leaf_required",
+            "--objective-lock-digest",
+            "e" * 64,
+            "--agent-type",
+            "adaptive-luna-maker-high",
+            "--model",
+            "gpt-5.6-luna",
+            "--reasoning-effort",
+            "high",
+        ]
+
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(self.runtime_home)}):
+            with redirect_stdout(output):
+                exit_code = gate.main(arguments)
+
+        result = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertRegex(result["launch_task_name"], r"^adaptive_[0-9a-f]{64}$")
+
+    def test_leaf_decision_denies_wrong_launch_task_name_with_opaque_message(self) -> None:
+        self.activate()
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest="a" * 64,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload(
+                "collaborationspawn_agent",
+                {
+                    "task_name": "adaptive_" + "0" * 64,
+                    "message": "gAAAAABopaque-native-hook-message",
+                    "agent_type": "adaptive-luna-maker-high",
+                    "reasoning_effort": "high",
+                    "fork_turns": "none",
+                },
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertNotEqual(
+            decision["planned_launch"].get("task_name"),
+            "adaptive_" + "0" * 64,
+        )
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        state_path = next(
+            (self.runtime_home / "state" / "adaptive-delegation" / "controller").glob(
+                "state-*.json"
+            )
+        )
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["phase"], "leaf_required")
+
     def test_native_spawn_tool_name_uses_the_same_exact_launch_gate(self) -> None:
         self.activate()
-        gate.record_decision(
+        decision = gate.record_decision(
             runtime_home=self.runtime_home,
             session_id=self.session_id,
             workspace=self.cwd,
@@ -493,7 +566,7 @@ class ControllerGateTests(unittest.TestCase):
             self.tool_payload(
                 "spawn_agent",
                 {
-                    "task_name": "bounded_change",
+                    "task_name": decision["planned_launch"]["task_name"],
                     "message": f"OBJECTIVE LOCK: {'f' * 64}",
                     "agent_type": "adaptive-luna-maker-high",
                     "reasoning_effort": "high",
@@ -507,7 +580,7 @@ class ControllerGateTests(unittest.TestCase):
 
     def test_arbitrary_punctuation_variant_is_not_a_spawn_alias(self) -> None:
         self.activate()
-        gate.record_decision(
+        decision = gate.record_decision(
             runtime_home=self.runtime_home,
             session_id=self.session_id,
             workspace=self.cwd,
@@ -522,7 +595,7 @@ class ControllerGateTests(unittest.TestCase):
             self.tool_payload(
                 "collaboration/spawn_agent",
                 {
-                    "task_name": "bounded_change",
+                    "task_name": decision["planned_launch"]["task_name"],
                     "message": f"OBJECTIVE LOCK: {'4' * 64}",
                     "agent_type": "adaptive-luna-maker-high",
                     "reasoning_effort": "high",
@@ -545,7 +618,7 @@ class ControllerGateTests(unittest.TestCase):
 
     def test_leaf_result_closes_launch_and_writes_cumulative_private_review(self) -> None:
         self.activate()
-        gate.record_decision(
+        decision = gate.record_decision(
             runtime_home=self.runtime_home,
             session_id=self.session_id,
             workspace=self.cwd,
@@ -559,7 +632,7 @@ class ControllerGateTests(unittest.TestCase):
             self.tool_payload(
                 "collaborationspawn_agent",
                 {
-                    "task_name": "bounded_change",
+                    "task_name": decision["planned_launch"]["task_name"],
                     "message": f"OBJECTIVE LOCK: {'9' * 64}",
                     "agent_type": "adaptive-luna-maker-high",
                     "reasoning_effort": "high",
@@ -653,7 +726,7 @@ class ControllerGateTests(unittest.TestCase):
     def test_objective_lock_digest_is_immutable_across_leaf_retries(self) -> None:
         self.activate()
         digest = "7" * 64
-        gate.record_decision(
+        decision = gate.record_decision(
             runtime_home=self.runtime_home,
             session_id=self.session_id,
             workspace=self.cwd,
@@ -667,7 +740,7 @@ class ControllerGateTests(unittest.TestCase):
             self.tool_payload(
                 "spawn_agent",
                 {
-                    "task_name": "bounded_change",
+                    "task_name": decision["planned_launch"]["task_name"],
                     "message": f"OBJECTIVE LOCK: {digest}",
                     "agent_type": "adaptive-luna-maker-high",
                     "reasoning_effort": "high",
@@ -711,10 +784,14 @@ class ControllerGateTests(unittest.TestCase):
             reasoning_effort="xhigh",
         )
         self.assertEqual(retry["objective_lock_digest"], digest)
+        self.assertNotEqual(
+            retry["planned_launch"]["task_name"],
+            decision["planned_launch"]["task_name"],
+        )
 
     def test_leaf_decision_denies_spawn_effort_mismatch(self) -> None:
         self.activate()
-        gate.record_decision(
+        decision = gate.record_decision(
             runtime_home=self.runtime_home,
             session_id=self.session_id,
             workspace=self.cwd,
@@ -729,7 +806,7 @@ class ControllerGateTests(unittest.TestCase):
             self.tool_payload(
                 "collaboration.spawn_agent",
                 {
-                    "task_name": "bounded_change",
+                    "task_name": decision["planned_launch"]["task_name"],
                     "message": f"OBJECTIVE LOCK: {'d' * 64}",
                     "agent_type": "adaptive-luna-maker-high",
                     "reasoning_effort": "xhigh",

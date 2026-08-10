@@ -14,6 +14,16 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.7.3] - 2026-08-10
+
+- Replaced plaintext Objective Lock digest inspection in native spawn messages
+  with a controller-issued, decision-bound `task_name`. Codex presents the
+  child message opaquely to `PreToolUse`; the decision command now returns the
+  exact launch name, and the hook fail-closes on any task/role/model/effort
+  mismatch while still requiring a nonempty child message.
+- Added regression coverage for opaque native messages, wrong launch names,
+  CLI handoff of the exact launch name, and distinct names across retries.
+
 ## [0.7.2] - 2026-08-10
 
 - Accepted Codex hook tool names in both separator-preserving and sanitized

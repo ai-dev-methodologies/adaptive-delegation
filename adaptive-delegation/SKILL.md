@@ -50,7 +50,12 @@ task execution, including edits, shell work, repository inspection, tests, and
 network calls. Before a child launch, use the exact installed
 `controller_gate.py decision` command to record `leaf_required` with the
 Objective Lock digest and package-fixed `agent_type`, model, and effort. The
-next spawn must match that envelope and use `fork_turns="none"`.
+command returns `launch_task_name`; the next spawn must use that exact
+`task_name`, match the remaining envelope, and use `fork_turns="none"`.
+Codex exposes the native child `message` opaquely to `PreToolUse`, so the hook
+does not pretend to decrypt or inspect it. Instead, the controller-issued task
+name binds that spawn to the recorded Objective Lock decision while the skill
+contract still requires the full portable Objective Lock in the child message.
 The hook recognizes the fixed control-plane and spawn allowlists in both their
 separator-preserving and Codex-sanitized tool-name forms. A repeated explicit
 invocation in the same session preserves any open controller, Objective Lock,
@@ -346,10 +351,11 @@ triggers external rerouting.
 
 After delegation is chosen, prefer Native V2 through a verified fixed
 `agent_type`. Select the installed package role whose TOML fixes the exact Luna,
-Terra, or Sol leaf model and effort, pass the matching `reasoning_effort` and
-`fork_turns="none"`, and verify the role binding before creation. In this mode
-the chosen `agent_type` is the explicit model selection; omitting the optional
-`model` override is not leader-model inheritance.
+Terra, or Sol leaf model and effort, pass the decision command's returned
+`launch_task_name` as the exact `task_name`, the matching `reasoning_effort`,
+and `fork_turns="none"`, and verify the role binding before creation. In this
+mode the chosen `agent_type` is the explicit model selection; omitting the
+optional `model` override is not leader-model inheritance.
 
 Inspect the live `collaboration.spawn_agent` schema and agent-type catalog
 before every route; do not reuse an old capability claim. The absence of a
