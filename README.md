@@ -29,7 +29,9 @@ matching both separator-preserving tool names and Codex's sanitized hook names.
 Each leaf decision returns a one-time `launch_task_name`; the next native spawn
 must use it exactly. This binds the opaque native child message to the recorded
 Objective Lock decision without claiming that the hook can decrypt or inspect
-the message body.
+the message body. Spawn authorization takes precedence over adaptive-child
+metadata carried on the main request, so that metadata cannot bypass the
+pending locked launch.
 Repeating an explicit invocation preserves the existing open controller rather
 than replacing its Objective Lock or pending launch.
 Each authorized Native launch must be closed with a structured controller
@@ -51,7 +53,7 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.7.3`.
+Current installable package version: `0.7.4`.
 
 ### Read-only evidence health
 

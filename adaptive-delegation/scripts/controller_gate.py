@@ -985,6 +985,23 @@ def _handle_pre_tool_use(payload: dict[str, Any], runtime_home: Path) -> dict[st
                 runtime_home=runtime_home,
             )
         return {}
+    if _tool_matches(tool_name, SPAWN_TOOLS):
+        if phase == "leaf_required":
+            result = _authorize_spawn(payload, state, runtime_home, state_path)
+            if not result:
+                return result
+            reason = result["hookSpecificOutput"]["permissionDecisionReason"]
+        else:
+            reason = (
+                "Adaptive Delegation child launch requires a pending locked "
+                "leaf decision."
+            )
+        return _denied(
+            reason=reason,
+            tool_name=tool_name,
+            state=state,
+            runtime_home=runtime_home,
+        )
     if _adaptive_child(payload, session_id):
         return {}
     if _tool_matches(tool_name, CONTROL_PLANE_TOOLS):
@@ -994,17 +1011,6 @@ def _handle_pre_tool_use(payload: dict[str, Any], runtime_home: Path) -> dict[st
         and _authorized_controller_command(payload, state, workspace)
     ):
         return {}
-    if _tool_matches(tool_name, SPAWN_TOOLS) and phase == "leaf_required":
-        result = _authorize_spawn(payload, state, runtime_home, state_path)
-        if not result:
-            return result
-        reason = result["hookSpecificOutput"]["permissionDecisionReason"]
-        return _denied(
-            reason=reason,
-            tool_name=tool_name,
-            state=state,
-            runtime_home=runtime_home,
-        )
     return _denied(
         reason=(
             "Adaptive Delegation controller-only enforcement denied main task execution. "
