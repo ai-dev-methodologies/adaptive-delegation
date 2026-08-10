@@ -1,0 +1,1141 @@
+#!/usr/bin/env python3
+"""Enforce controller-only tool use for explicit adaptive-delegation sessions."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as _datetime
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shlex
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+
+STATE_SCHEMA_VERSION = "1"
+EVENT_SCHEMA_VERSION = "1"
+MAX_INPUT_BYTES = 1024 * 1024
+MAX_EVIDENCE_REFERENCES = 8
+MAX_EVIDENCE_REFERENCE_LENGTH = 256
+EXPLICIT_INVOCATION = re.compile(r"^\s*\$adaptive-delegation(?:\s|:|$)", re.I)
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+SAFE_AGENT_TYPE = re.compile(r"^adaptive-[a-z0-9-]+$")
+SAFE_EVIDENCE_REFERENCE = re.compile(
+    r"^(?!.*[?#@:])(?!.*://)(?!.*(?:/|\\){2})"
+    r"(?:[A-Za-z0-9][A-Za-z0-9._/\\+ ~-]*|/[A-Za-z0-9][A-Za-z0-9._/\\+ ~-]*)$"
+)
+MAIN_ONLY_REASONS = {
+    "non_delegable_authority",
+    "weak_oracle",
+    "high_risk_or_ambiguous",
+}
+DECISIONS = {"leaf_required", "main_only_exception", "takeover"}
+LEAF_OUTCOMES = {"accepted", "failed", "path_blocked"}
+ROUTE_ASSESSMENTS = {"correct", "too-cheap", "too-premium", "inconclusive"}
+QUALITY_VERDICTS = {"pass", "fail", "inconclusive"}
+TOKEN_OBSERVATIONS = {"exact", "estimated", "unavailable"}
+TERMINAL_STATUSES = {"complete", "blocked"}
+CONTROL_PLANE_TOOLS = {
+    "functions.request_user_input",
+    "request_user_input",
+    "functions.update_plan",
+    "update_plan",
+    "collaboration.list_agents",
+    "collaboration.wait_agent",
+    "collaboration.send_message",
+    "collaboration.followup_task",
+    "collaboration.interrupt_agent",
+}
+MAIN_EFFORTS = {"high", "xhigh", "max", "ultra"}
+CONTROLLER_EXEC_TOOLS = {"Bash", "exec_command", "functions.exec_command"}
+SPAWN_TOOLS = {
+    "Task",
+    "task",
+    "spawn_agent",
+    "collaboration.spawn_agent",
+    "multi_agent_v1.spawn_agent",
+}
+SKILL_ROOT = Path(__file__).resolve().parent.parent
+POLICY_PATH = SKILL_ROOT / "config" / "model-routing.defaults.json"
+
+
+class ControllerGateError(RuntimeError):
+    """A fail-closed controller state or transition error."""
+
+
+def _runtime_home(value: Path | None = None) -> Path:
+    if value is not None:
+        return value.expanduser().resolve()
+    configured = os.environ.get("CODEX_HOME")
+    return Path(configured).expanduser().resolve() if configured else (Path.home() / ".codex").resolve()
+
+
+def _controller_dir(runtime_home: Path) -> Path:
+    return runtime_home / "state" / "adaptive-delegation" / "controller"
+
+
+def _canonical_workspace(value: str | Path) -> Path:
+    path = Path(value).expanduser().resolve()
+    if not path.is_dir():
+        raise ControllerGateError("controller workspace must be an existing directory")
+    return path
+
+
+def _state_key(session_id: str, workspace: Path) -> str:
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise ControllerGateError("controller session_id is required")
+    material = f"{session_id.strip()}\0{workspace}".encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
+
+
+def _state_path(runtime_home: Path, session_id: str, workspace: Path) -> Path:
+    return _controller_dir(runtime_home) / f"state-{_state_key(session_id, workspace)}.json"
+
+
+def _ensure_private_directory(path: Path) -> None:
+    if os.path.lexists(path) and path.is_symlink():
+        raise ControllerGateError("controller state directory must not be a symlink")
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not path.is_dir():
+        raise ControllerGateError("controller state path is not a directory")
+    path.chmod(0o700)
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def _timestamp() -> str:
+    return _datetime.datetime.now(_datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
+    _ensure_private_directory(path.parent)
+    if os.path.lexists(path) and path.is_symlink():
+        raise ControllerGateError("controller state file must not be a symlink")
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        payload = (_canonical_json(value) + "\n").encode("utf-8")
+        os.write(descriptor, payload)
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(temporary, path)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _append_event(runtime_home: Path, event: dict[str, Any]) -> None:
+    directory = _controller_dir(runtime_home)
+    _ensure_private_directory(directory)
+    ledger = directory / "controller-events.jsonl"
+    if os.path.lexists(ledger) and ledger.is_symlink():
+        raise ControllerGateError("controller event ledger must not be a symlink")
+    descriptor = os.open(
+        ledger,
+        os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        os.write(descriptor, (_canonical_json(event) + "\n").encode("utf-8"))
+        os.fsync(descriptor)
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def _payload_string(payload: dict[str, Any], *names: str) -> str:
+    for name in names:
+        value = payload.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _hook_event(payload: dict[str, Any]) -> str:
+    return _payload_string(
+        payload,
+        "hook_event_name",
+        "hookEventName",
+        "event",
+        "name",
+    )
+
+
+def _workspace_from_payload(payload: dict[str, Any]) -> Path:
+    value = _payload_string(payload, "cwd", "working_directory", "workingDirectory")
+    if not value:
+        raise ControllerGateError("hook payload is missing cwd")
+    return _canonical_workspace(value)
+
+
+def _session_from_payload(payload: dict[str, Any]) -> str:
+    value = _payload_string(payload, "session_id", "sessionId")
+    if not value:
+        raise ControllerGateError("hook payload is missing session_id")
+    return value
+
+
+def _prompt_from_payload(payload: dict[str, Any]) -> str:
+    return _payload_string(payload, "prompt", "user_prompt", "userPrompt")
+
+
+def _activation_event(state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": EVENT_SCHEMA_VERSION,
+        "event_type": "explicit_activation",
+        "timestamp": state["activated_at"],
+        "activation_id": state["activation_id"],
+        "session_id": state["session_id"],
+        "workspace": state["workspace"],
+        "phase": state["phase"],
+        "main_model": state["main_model"],
+        "main_reasoning_effort": state["main_reasoning_effort"],
+    }
+
+
+def _activate(payload: dict[str, Any], runtime_home: Path) -> bool:
+    session_id = _session_from_payload(payload)
+    workspace = _workspace_from_payload(payload)
+    main_model = _payload_string(payload, "model", "main_model", "mainModel")
+    main_effort = _payload_string(
+        payload,
+        "reasoning_effort",
+        "model_reasoning_effort",
+        "main_reasoning_effort",
+        "reasoningEffort",
+    )
+    if bool(main_model) != bool(main_effort):
+        raise ControllerGateError("main authority declaration is incomplete")
+    if main_model and (main_model != "gpt-5.6-sol" or main_effort not in MAIN_EFFORTS):
+        raise ControllerGateError(
+            "main authority must be gpt-5.6-sol with reasoning_effort >= high"
+        )
+    activated_at = _timestamp()
+    activation_id = hashlib.sha256(
+        f"{session_id}\0{workspace}\0{activated_at}".encode("utf-8")
+    ).hexdigest()
+    state = {
+        "schema_version": STATE_SCHEMA_VERSION,
+        "activation_id": activation_id,
+        "session_id": session_id,
+        "workspace": str(workspace),
+        "phase": "explicit_active" if main_model else "awaiting_main_declaration",
+        "activated_at": activated_at,
+        "updated_at": activated_at,
+    }
+    if main_model:
+        state["main_model"] = main_model
+        state["main_reasoning_effort"] = main_effort
+    _atomic_write_json(_state_path(runtime_home, session_id, workspace), state)
+    if main_model:
+        _append_event(runtime_home, _activation_event(state))
+    else:
+        _append_event(
+            runtime_home,
+            {
+                "schema_version": EVENT_SCHEMA_VERSION,
+                "event_type": "explicit_activation_requested",
+                "timestamp": activated_at,
+                "activation_id": activation_id,
+                "session_id": session_id,
+                "workspace": str(workspace),
+                "phase": state["phase"],
+            },
+        )
+    return bool(main_model)
+
+
+def _load_state(runtime_home: Path, session_id: str, workspace: Path) -> dict[str, Any] | None:
+    path = _state_path(runtime_home, session_id, workspace)
+    if not os.path.lexists(path):
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise ControllerGateError("controller state file is unsafe")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ControllerGateError("controller state file is invalid") from exc
+    if not isinstance(value, dict) or value.get("schema_version") != STATE_SCHEMA_VERSION:
+        raise ControllerGateError("controller state schema is unsupported")
+    if value.get("session_id") != session_id or value.get("workspace") != str(workspace):
+        raise ControllerGateError("controller state binding does not match hook scope")
+    return value
+
+
+def _evidence_references(values: list[str] | None) -> list[str]:
+    if not isinstance(values, list) or not 1 <= len(values) <= MAX_EVIDENCE_REFERENCES:
+        raise ControllerGateError("main-only exception requires bounded evidence references")
+    if len(values) != len(set(values)):
+        raise ControllerGateError("evidence references must be unique")
+    for value in values:
+        if (
+            not isinstance(value, str)
+            or not 1 <= len(value) <= MAX_EVIDENCE_REFERENCE_LENGTH
+            or SAFE_EVIDENCE_REFERENCE.fullmatch(value) is None
+        ):
+            raise ControllerGateError("main-only exception evidence reference is invalid")
+    return values
+
+
+def _role_binding(agent_type: str) -> dict[str, Any]:
+    if SAFE_AGENT_TYPE.fullmatch(agent_type) is None:
+        raise ControllerGateError("leaf decision requires a safe adaptive agent_type")
+    try:
+        policy = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ControllerGateError("installed routing policy is unavailable") from exc
+    bindings = policy.get("role_bindings") if isinstance(policy, dict) else None
+    binding = bindings.get(agent_type) if isinstance(bindings, dict) else None
+    if not isinstance(binding, dict):
+        raise ControllerGateError("leaf decision agent_type is not package-declared")
+    return binding
+
+
+def record_main_declaration(
+    *,
+    runtime_home: Path | None,
+    session_id: str,
+    workspace: str | Path,
+    model: str,
+    reasoning_effort: str,
+) -> dict[str, Any]:
+    resolved_home = _runtime_home(runtime_home)
+    resolved_workspace = _canonical_workspace(workspace)
+    state = _load_state(resolved_home, session_id, resolved_workspace)
+    if state is None or state.get("phase") != "awaiting_main_declaration":
+        raise ControllerGateError("main authority declaration is not pending")
+    if model != "gpt-5.6-sol" or reasoning_effort not in MAIN_EFFORTS:
+        raise ControllerGateError(
+            "main authority must be gpt-5.6-sol with reasoning_effort >= high"
+        )
+    timestamp = _timestamp()
+    updated = dict(state)
+    updated.update(
+        {
+            "phase": "explicit_active",
+            "main_model": model,
+            "main_reasoning_effort": reasoning_effort,
+            "updated_at": timestamp,
+        }
+    )
+    _atomic_write_json(
+        _state_path(resolved_home, session_id, resolved_workspace), updated
+    )
+    event = _activation_event(updated)
+    event["timestamp"] = timestamp
+    _append_event(resolved_home, event)
+    return updated
+
+
+def _controller_events(runtime_home: Path) -> list[dict[str, Any]]:
+    ledger = _controller_dir(runtime_home) / "controller-events.jsonl"
+    if ledger.is_symlink() or not ledger.is_file():
+        raise ControllerGateError("controller event ledger is unavailable")
+    if ledger.stat().st_size > 64 * 1024 * 1024:
+        raise ControllerGateError("controller event ledger exceeds review bound")
+    events: list[dict[str, Any]] = []
+    try:
+        for line in ledger.read_text(encoding="utf-8").splitlines():
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise ControllerGateError("controller event ledger row is invalid")
+            events.append(value)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ControllerGateError("controller event ledger is invalid") from exc
+    return events
+
+
+def _controller_review(events: list[dict[str, Any]]) -> dict[str, Any]:
+    results = [event for event in events if event.get("event_type") == "leaf_result_recorded"]
+    assessment_counts = {
+        "appropriate": 0,
+        "underpowered": 0,
+        "overpowered": 0,
+        "inconclusive": 0,
+    }
+    assessment_names = {
+        "correct": "appropriate",
+        "too-cheap": "underpowered",
+        "too-premium": "overpowered",
+        "inconclusive": "inconclusive",
+    }
+    outcomes = {value: 0 for value in sorted(LEAF_OUTCOMES)}
+    verdicts = {value: 0 for value in sorted(QUALITY_VERDICTS)}
+    routes: dict[str, int] = {}
+    observed = 0
+    weighted_tokens = 0
+    cost_by_route: dict[str, float] = {}
+    integration_accepted = 0
+    for event in results:
+        assessment = assessment_names.get(event.get("route_assessment"), "inconclusive")
+        assessment_counts[assessment] += 1
+        outcome = event.get("outcome")
+        if outcome in outcomes:
+            outcomes[outcome] += 1
+        verdict = event.get("quality_verdict")
+        if verdict in verdicts:
+            verdicts[verdict] += 1
+        integration_accepted += int(event.get("integration_accepted") is True)
+        planned = event.get("planned_launch")
+        if isinstance(planned, dict):
+            route = f"{planned.get('model', 'unknown')}/{planned.get('reasoning_effort', 'unknown')}"
+            routes[route] = routes.get(route, 0) + 1
+        else:
+            route = "unknown/unknown"
+        if event.get("token_observation") != "unavailable":
+            observed += 1
+            weighted_tokens += int(event.get("weighted_tokens", 0))
+            cost_by_route[route] = round(
+                cost_by_route.get(route, 0.0) + float(event.get("cost_proxy", 0.0)),
+                6,
+            )
+    total = len(results)
+    conclusive = (
+        assessment_counts["appropriate"]
+        + assessment_counts["underpowered"]
+        + assessment_counts["overpowered"]
+    )
+    try:
+        policy = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
+        sample_threshold = policy["audit"]["review_every_accepted_attempts"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ControllerGateError("controller review policy is unavailable") from exc
+    if (
+        not isinstance(sample_threshold, int)
+        or isinstance(sample_threshold, bool)
+        or not 1 <= sample_threshold <= 10000
+    ):
+        raise ControllerGateError("controller review sample threshold is invalid")
+    return {
+        "schema_version": EVENT_SCHEMA_VERSION,
+        "generated_at": _timestamp(),
+        "snapshot_kind": "cumulative",
+        "trigger_reasons": ["leaf-result"],
+        "covered_leaf_results": total,
+        "model_selection": {
+            "status": (
+                "evaluated"
+                if conclusive >= sample_threshold
+                else "insufficient_sample"
+            ),
+            "minimum_conclusive_results": sample_threshold,
+            "conclusive_results": conclusive,
+            **assessment_counts,
+        },
+        "routes": dict(sorted(routes.items())),
+        "cost": {
+            "status": (
+                "unavailable"
+                if observed == 0
+                else "observed"
+                if observed == total
+                else "partial"
+            ),
+            "observed_results": observed,
+            "unobserved_results": total - observed,
+            "weighted_tokens_observed": weighted_tokens if observed else None,
+            "cost_proxy_observed_by_model_effort": dict(sorted(cost_by_route.items())),
+            "cross_model_cost_comparison": "not_comparable_without_price_table",
+        },
+        "quality": {
+            "status": (
+                "sufficient_sample"
+                if outcomes["accepted"] >= sample_threshold
+                else "insufficient_sample"
+            ),
+            "minimum_accepted_results": sample_threshold,
+            **outcomes,
+            "integration_accepted": integration_accepted,
+            "verdicts": verdicts,
+        },
+    }
+
+
+def _write_controller_review(runtime_home: Path) -> Path:
+    review = _controller_review(_controller_events(runtime_home))
+    directory = _controller_dir(runtime_home) / "reviews"
+    _ensure_private_directory(directory)
+    name = _datetime.datetime.now(_datetime.timezone.utc).strftime(
+        "controller-review-%Y%m%dT%H%M%S.%fZ.json"
+    )
+    path = directory / name
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        os.write(descriptor, (_canonical_json(review) + "\n").encode("utf-8"))
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return path
+
+
+def record_leaf_result(
+    *,
+    runtime_home: Path | None,
+    session_id: str,
+    workspace: str | Path,
+    outcome: str,
+    route_assessment: str,
+    quality_verdict: str,
+    integration_accepted: bool,
+    token_observation: str,
+    evidence_references: list[str] | None,
+    weighted_tokens: int | None = None,
+    cost_proxy: float | None = None,
+) -> dict[str, Any]:
+    resolved_home = _runtime_home(runtime_home)
+    resolved_workspace = _canonical_workspace(workspace)
+    state = _load_state(resolved_home, session_id, resolved_workspace)
+    if state is None or state.get("phase") != "leaf_launch_authorized":
+        raise ControllerGateError("leaf result requires one authorized leaf launch")
+    if outcome not in LEAF_OUTCOMES or route_assessment not in ROUTE_ASSESSMENTS:
+        raise ControllerGateError("leaf result outcome or route assessment is invalid")
+    if quality_verdict not in QUALITY_VERDICTS or token_observation not in TOKEN_OBSERVATIONS:
+        raise ControllerGateError("leaf result quality or token observation is invalid")
+    if outcome == "accepted" and (
+        quality_verdict != "pass" or integration_accepted is not True
+    ):
+        raise ControllerGateError("accepted leaf result requires passed integration")
+    if outcome != "accepted" and integration_accepted:
+        raise ControllerGateError("nonaccepted leaf result cannot be integration accepted")
+    references = _evidence_references(evidence_references)
+    if token_observation == "unavailable":
+        if weighted_tokens is not None or cost_proxy is not None:
+            raise ControllerGateError("unavailable token observation cannot carry cost values")
+    elif (
+        not isinstance(weighted_tokens, int)
+        or isinstance(weighted_tokens, bool)
+        or weighted_tokens < 0
+        or not isinstance(cost_proxy, (int, float))
+        or isinstance(cost_proxy, bool)
+        or cost_proxy < 0
+    ):
+        raise ControllerGateError("observed token result requires nonnegative cost values")
+    timestamp = _timestamp()
+    updated = dict(state)
+    updated["phase"] = "leaf_result_recorded"
+    updated["last_outcome"] = outcome
+    updated["last_integration_accepted"] = integration_accepted
+    updated["updated_at"] = timestamp
+    event = {
+        "schema_version": EVENT_SCHEMA_VERSION,
+        "event_type": "leaf_result_recorded",
+        "timestamp": timestamp,
+        "activation_id": state["activation_id"],
+        "session_id": session_id,
+        "workspace": str(resolved_workspace),
+        "objective_lock_digest": state["objective_lock_digest"],
+        "planned_launch": state["planned_launch"],
+        "outcome": outcome,
+        "route_assessment": route_assessment,
+        "quality_verdict": quality_verdict,
+        "integration_accepted": integration_accepted,
+        "token_observation": token_observation,
+        "evidence_references": references,
+    }
+    if token_observation != "unavailable":
+        event["weighted_tokens"] = weighted_tokens
+        event["cost_proxy"] = round(float(cost_proxy), 6)
+    _append_event(resolved_home, event)
+    _atomic_write_json(
+        _state_path(resolved_home, session_id, resolved_workspace), updated
+    )
+    _write_controller_review(resolved_home)
+    return updated
+
+
+def close_controller(
+    *,
+    runtime_home: Path | None,
+    session_id: str,
+    workspace: str | Path,
+    terminal_status: str,
+    evidence_references: list[str] | None,
+) -> dict[str, Any]:
+    resolved_home = _runtime_home(runtime_home)
+    resolved_workspace = _canonical_workspace(workspace)
+    state = _load_state(resolved_home, session_id, resolved_workspace)
+    if state is None or state.get("phase") not in {
+        "leaf_result_recorded",
+        "main_only_exception",
+        "takeover",
+    }:
+        raise ControllerGateError("controller can close only after terminal evidence")
+    if terminal_status not in TERMINAL_STATUSES:
+        raise ControllerGateError("controller terminal status is invalid")
+    if (
+        terminal_status == "complete"
+        and state.get("phase") == "leaf_result_recorded"
+        and (
+            state.get("last_outcome") != "accepted"
+            or state.get("last_integration_accepted") is not True
+        )
+    ):
+        raise ControllerGateError("complete requires an accepted integrated leaf result")
+    references = _evidence_references(evidence_references)
+    timestamp = _timestamp()
+    updated = dict(state)
+    updated.update(
+        {
+            "phase": "closed",
+            "terminal_status": terminal_status,
+            "updated_at": timestamp,
+        }
+    )
+    _append_event(
+        resolved_home,
+        {
+            "schema_version": EVENT_SCHEMA_VERSION,
+            "event_type": "controller_closed",
+            "timestamp": timestamp,
+            "activation_id": state["activation_id"],
+            "session_id": session_id,
+            "workspace": str(resolved_workspace),
+            "objective_lock_digest": state.get("objective_lock_digest"),
+            "terminal_status": terminal_status,
+            "evidence_references": references,
+        },
+    )
+    _atomic_write_json(
+        _state_path(resolved_home, session_id, resolved_workspace), updated
+    )
+    return updated
+
+
+def record_decision(
+    *,
+    runtime_home: Path | None,
+    session_id: str,
+    workspace: str | Path,
+    decision: str,
+    exception_reason: str | None = None,
+    objective_lock_digest: str,
+    evidence_references: list[str] | None = None,
+    agent_type: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> dict[str, Any]:
+    resolved_home = _runtime_home(runtime_home)
+    resolved_workspace = _canonical_workspace(workspace)
+    state = _load_state(resolved_home, session_id, resolved_workspace)
+    if state is None:
+        raise ControllerGateError("explicit controller state is not active")
+    current_phase = state.get("phase")
+    if current_phase == "awaiting_main_declaration":
+        raise ControllerGateError("main authority declaration is still pending")
+    if current_phase == "leaf_launch_authorized":
+        raise ControllerGateError("leaf result must be recorded before another decision")
+    if current_phase not in {"explicit_active", "leaf_result_recorded"}:
+        raise ControllerGateError("controller phase does not admit another decision")
+    if current_phase == "leaf_result_recorded" and state.get("last_outcome") == "accepted":
+        raise ControllerGateError("accepted leaf result must close the controller")
+    if decision not in DECISIONS:
+        raise ControllerGateError("delegation decision is unsupported")
+    if SHA256.fullmatch(objective_lock_digest) is None:
+        raise ControllerGateError("delegation decision requires an Objective Lock digest")
+    prior_digest = state.get("objective_lock_digest")
+    if prior_digest is not None and prior_digest != objective_lock_digest:
+        raise ControllerGateError("Objective Lock digest must remain immutable")
+    if (
+        decision == "takeover"
+        or exception_reason in {"weak_oracle", "high_risk_or_ambiguous"}
+    ) and state.get("main_reasoning_effort") != "ultra":
+        raise ControllerGateError(
+            "weak/high-risk main execution or takeover requires declared main ultra"
+        )
+    references: list[str] = []
+    if decision == "main_only_exception":
+        if exception_reason not in MAIN_ONLY_REASONS:
+            raise ControllerGateError("main-only exception reason is not authorized")
+        references = _evidence_references(evidence_references)
+        phase = "main_only_exception"
+    elif decision == "takeover":
+        if exception_reason != "ladder_exhausted":
+            raise ControllerGateError("main takeover requires exhausted-ladder evidence")
+        references = _evidence_references(evidence_references)
+        phase = "takeover"
+    else:
+        if exception_reason is not None or evidence_references not in (None, []):
+            raise ControllerGateError("leaf-required decision must not carry a main-only exception")
+        if not all(isinstance(item, str) and item for item in (agent_type, model, reasoning_effort)):
+            raise ControllerGateError("leaf-required decision requires exact role/model/effort")
+        binding = _role_binding(str(agent_type))
+        if binding.get("model") != model or binding.get("reasoning_effort") != reasoning_effort:
+            raise ControllerGateError("leaf-required role/model/effort does not match policy")
+        phase = "leaf_required"
+    timestamp = _timestamp()
+    updated = dict(state)
+    updated.update(
+        {
+            "phase": phase,
+            "objective_lock_digest": objective_lock_digest,
+            "updated_at": timestamp,
+        }
+    )
+    if exception_reason is not None:
+        updated["exception_reason"] = exception_reason
+        updated["evidence_references"] = references
+    if decision == "leaf_required":
+        updated["planned_launch"] = {
+            "agent_type": agent_type,
+            "model": model,
+            "reasoning_effort": reasoning_effort,
+            "fork_turns": "none",
+        }
+    _atomic_write_json(_state_path(resolved_home, session_id, resolved_workspace), updated)
+    event = {
+        "schema_version": EVENT_SCHEMA_VERSION,
+        "event_type": "delegation_decision",
+        "timestamp": timestamp,
+        "activation_id": updated["activation_id"],
+        "session_id": session_id,
+        "workspace": str(resolved_workspace),
+        "decision": decision,
+        "phase": phase,
+        "objective_lock_digest": objective_lock_digest,
+    }
+    if exception_reason is not None:
+        event["exception_reason"] = exception_reason
+        event["evidence_references"] = references
+    if decision == "leaf_required":
+        event["planned_launch"] = updated["planned_launch"]
+    _append_event(resolved_home, event)
+    return updated
+
+
+def _deny(reason: str) -> dict[str, Any]:
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+def _denied(
+    *,
+    reason: str,
+    tool_name: str,
+    state: dict[str, Any],
+    runtime_home: Path,
+) -> dict[str, Any]:
+    _append_event(
+        runtime_home,
+        {
+            "schema_version": EVENT_SCHEMA_VERSION,
+            "event_type": "main_tool_denied",
+            "timestamp": _timestamp(),
+            "activation_id": state["activation_id"],
+            "session_id": state["session_id"],
+            "workspace": state["workspace"],
+            "phase": state.get("phase"),
+            "tool_name": tool_name or "unknown",
+            "reason": reason,
+        },
+    )
+    return _deny(reason)
+
+
+def _authorized_controller_command(
+    payload: dict[str, Any], state: dict[str, Any], workspace: Path
+) -> bool:
+    tool_input = _spawn_input(payload)
+    command = tool_input.get("cmd") or tool_input.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return False
+    if any(token in command for token in ("$", "`", "\n", "\r", ";", "&", "|", "<", ">")):
+        return False
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    if len(tokens) < 5:
+        return False
+    try:
+        interpreter = Path(tokens[0]).expanduser().resolve()
+        controller = Path(tokens[1]).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return False
+    if interpreter != Path(sys.executable).resolve():
+        return False
+    if controller != Path(__file__).resolve() or tokens[2] not in {
+        "decision",
+        "declare-main",
+        "result",
+        "close",
+    }:
+        return False
+    allowed_flags = {
+        "--session-id",
+        "--workspace",
+        "--decision",
+        "--exception-reason",
+        "--objective-lock-digest",
+        "--evidence-ref",
+        "--agent-type",
+        "--model",
+        "--reasoning-effort",
+        "--outcome",
+        "--route-assessment",
+        "--quality-verdict",
+        "--integration-accepted",
+        "--token-observation",
+        "--weighted-tokens",
+        "--cost-proxy",
+        "--terminal-status",
+    }
+    values: dict[str, list[str]] = {}
+    index = 3
+    while index < len(tokens):
+        flag = tokens[index]
+        if flag not in allowed_flags or index + 1 >= len(tokens):
+            return False
+        value = tokens[index + 1]
+        if value.startswith("--") or flag in values and flag != "--evidence-ref":
+            return False
+        values.setdefault(flag, []).append(value)
+        index += 2
+    required = {"--session-id", "--workspace"}
+    if tokens[2] == "decision":
+        required.update({"--decision", "--objective-lock-digest"})
+    elif tokens[2] == "declare-main":
+        required.update({"--model", "--reasoning-effort"})
+    elif tokens[2] == "result":
+        required.update(
+            {
+                "--outcome",
+                "--route-assessment",
+                "--quality-verdict",
+                "--integration-accepted",
+                "--token-observation",
+                "--evidence-ref",
+            }
+        )
+    else:
+        required.update({"--terminal-status", "--evidence-ref"})
+    if not required.issubset(values):
+        return False
+    if values["--session-id"] != [state["session_id"]]:
+        return False
+    try:
+        command_workspace = _canonical_workspace(values["--workspace"][0])
+    except ControllerGateError:
+        return False
+    return command_workspace == workspace
+
+
+def _adaptive_child(payload: dict[str, Any], main_session_id: str) -> bool:
+    role = _payload_string(payload, "agent_type", "agent_role", "agentType", "agentRole")
+    parent = _payload_string(payload, "parent_session_id", "parentSessionId")
+    return role.startswith("adaptive-") and parent == main_session_id
+
+
+def _spawn_input(payload: dict[str, Any]) -> dict[str, Any]:
+    value = payload.get("tool_input")
+    if not isinstance(value, dict):
+        value = payload.get("toolInput")
+    return value if isinstance(value, dict) else {}
+
+
+def _authorize_spawn(
+    payload: dict[str, Any],
+    state: dict[str, Any],
+    runtime_home: Path,
+    state_path: Path,
+) -> dict[str, Any]:
+    planned = state.get("planned_launch")
+    launch = _spawn_input(payload)
+    if not isinstance(planned, dict):
+        return _deny("Adaptive Delegation launch envelope is missing from controller state.")
+    exact = (
+        launch.get("agent_type") == planned.get("agent_type")
+        and launch.get("reasoning_effort") == planned.get("reasoning_effort")
+        and launch.get("fork_turns") == "none"
+        and (
+            launch.get("model") is None
+            or launch.get("model") == planned.get("model")
+        )
+    )
+    if not exact:
+        return _deny("Adaptive Delegation launch envelope does not match the locked role/model/effort.")
+    message = launch.get("message")
+    digest = state.get("objective_lock_digest")
+    if not isinstance(message, str) or not isinstance(digest, str) or digest not in message:
+        return _deny("Adaptive Delegation launch envelope is missing the locked Objective Lock digest.")
+    timestamp = _timestamp()
+    updated = dict(state)
+    updated["phase"] = "leaf_launch_authorized"
+    updated["updated_at"] = timestamp
+    _atomic_write_json(state_path, updated)
+    _append_event(
+        runtime_home,
+        {
+            "schema_version": EVENT_SCHEMA_VERSION,
+            "event_type": "leaf_launch_authorized",
+            "timestamp": timestamp,
+            "activation_id": state["activation_id"],
+            "session_id": state["session_id"],
+            "workspace": state["workspace"],
+            "objective_lock_digest": digest,
+            "planned_launch": planned,
+        },
+    )
+    return {}
+
+
+def _handle_pre_tool_use(payload: dict[str, Any], runtime_home: Path) -> dict[str, Any]:
+    session_id = _session_from_payload(payload)
+    workspace = _workspace_from_payload(payload)
+    state_path = _state_path(runtime_home, session_id, workspace)
+    state = _load_state(runtime_home, session_id, workspace)
+    if state is None:
+        return {}
+    phase = state.get("phase")
+    if phase == "closed":
+        return {}
+    tool_name = _payload_string(payload, "tool_name", "toolName")
+    if phase in {"main_only_exception", "takeover"}:
+        if tool_name in SPAWN_TOOLS:
+            return _denied(
+                reason=(
+                    "Adaptive Delegation main-only execution does not authorize an "
+                    "unlocked child launch."
+                ),
+                tool_name=tool_name,
+                state=state,
+                runtime_home=runtime_home,
+            )
+        return {}
+    if _adaptive_child(payload, session_id):
+        return {}
+    if tool_name in CONTROL_PLANE_TOOLS:
+        return {}
+    if tool_name in CONTROLLER_EXEC_TOOLS and _authorized_controller_command(
+        payload, state, workspace
+    ):
+        return {}
+    if tool_name in SPAWN_TOOLS and phase == "leaf_required":
+        result = _authorize_spawn(payload, state, runtime_home, state_path)
+        if not result:
+            return result
+        reason = result["hookSpecificOutput"]["permissionDecisionReason"]
+        return _denied(
+            reason=reason,
+            tool_name=tool_name,
+            state=state,
+            runtime_home=runtime_home,
+        )
+    return _denied(
+        reason=(
+            "Adaptive Delegation controller-only enforcement denied main task execution. "
+            "Record an Objective-Locked leaf decision and use an admitted adaptive leaf, "
+            "or record an evidence-backed authorized main-only exception."
+        ),
+        tool_name=tool_name,
+        state=state,
+        runtime_home=runtime_home,
+    )
+
+
+def handle_hook(
+    payload: dict[str, Any], *, runtime_home: Path | None = None
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ControllerGateError("hook payload must be an object")
+    resolved_home = _runtime_home(runtime_home)
+    event = _hook_event(payload)
+    if event == "UserPromptSubmit":
+        prompt = _prompt_from_payload(payload)
+        if EXPLICIT_INVOCATION.search(prompt):
+            try:
+                activated = _activate(payload, resolved_home)
+                if not activated:
+                    command = shlex.join(
+                        [
+                            sys.executable,
+                            str(Path(__file__).resolve()),
+                            "declare-main",
+                            "--session-id",
+                            _session_from_payload(payload),
+                            "--workspace",
+                            str(_workspace_from_payload(payload)),
+                            "--model",
+                            "gpt-5.6-sol",
+                            "--reasoning-effort",
+                            "<high|xhigh|max|ultra>",
+                        ]
+                    )
+                    return {
+                        "systemMessage": (
+                            "Adaptive Delegation is controller-only and is waiting for a "
+                            "declared current-session main authority. Replace the final "
+                            "effort placeholder with the actual current effort and run: "
+                            f"{command}. Task tools remain denied until that bounded "
+                            "gpt-5.6-sol/high-or-above declaration succeeds."
+                        )
+                    }
+            except ControllerGateError:
+                model = _payload_string(payload, "model", "main_model", "mainModel") or "unknown"
+                effort = _payload_string(
+                    payload,
+                    "reasoning_effort",
+                    "model_reasoning_effort",
+                    "main_reasoning_effort",
+                    "reasoningEffort",
+                ) or "unknown"
+                return {
+                    "systemMessage": (
+                        "Adaptive Delegation blocked: main authority must be gpt-5.6-sol "
+                        "with reasoning_effort >= high. "
+                        f"Current: {model}/{effort}. No child was launched. Switch the main "
+                        "session to gpt-5.6-sol/high or above, then invoke "
+                        "$adaptive-delegation again."
+                    )
+                }
+        return {}
+    if event == "PreToolUse":
+        try:
+            return _handle_pre_tool_use(payload, resolved_home)
+        except ControllerGateError as exc:
+            return _deny(f"Adaptive Delegation controller state is invalid: {exc}")
+    return {}
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command")
+    decision = subparsers.add_parser("decision")
+    decision.add_argument("--session-id", required=True)
+    decision.add_argument("--workspace", required=True, type=Path)
+    decision.add_argument("--decision", required=True, choices=sorted(DECISIONS))
+    decision.add_argument("--exception-reason")
+    decision.add_argument("--objective-lock-digest", required=True)
+    decision.add_argument("--evidence-ref", action="append", default=[])
+    decision.add_argument("--agent-type")
+    decision.add_argument("--model")
+    decision.add_argument("--reasoning-effort")
+    declare = subparsers.add_parser("declare-main")
+    declare.add_argument("--session-id", required=True)
+    declare.add_argument("--workspace", required=True, type=Path)
+    declare.add_argument("--model", required=True)
+    declare.add_argument("--reasoning-effort", required=True)
+    result = subparsers.add_parser("result")
+    result.add_argument("--session-id", required=True)
+    result.add_argument("--workspace", required=True, type=Path)
+    result.add_argument("--outcome", required=True, choices=sorted(LEAF_OUTCOMES))
+    result.add_argument(
+        "--route-assessment", required=True, choices=sorted(ROUTE_ASSESSMENTS)
+    )
+    result.add_argument(
+        "--quality-verdict", required=True, choices=sorted(QUALITY_VERDICTS)
+    )
+    result.add_argument(
+        "--integration-accepted", required=True, choices=("true", "false")
+    )
+    result.add_argument(
+        "--token-observation", required=True, choices=sorted(TOKEN_OBSERVATIONS)
+    )
+    result.add_argument("--weighted-tokens", type=int)
+    result.add_argument("--cost-proxy", type=float)
+    result.add_argument("--evidence-ref", action="append", default=[])
+    close = subparsers.add_parser("close")
+    close.add_argument("--session-id", required=True)
+    close.add_argument("--workspace", required=True, type=Path)
+    close.add_argument(
+        "--terminal-status", required=True, choices=sorted(TERMINAL_STATUSES)
+    )
+    close.add_argument("--evidence-ref", action="append", default=[])
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        if args.command == "decision":
+            result = record_decision(
+                runtime_home=None,
+                session_id=args.session_id,
+                workspace=args.workspace,
+                decision=args.decision,
+                exception_reason=args.exception_reason,
+                objective_lock_digest=args.objective_lock_digest,
+                evidence_references=args.evidence_ref,
+                agent_type=args.agent_type,
+                model=args.model,
+                reasoning_effort=args.reasoning_effort,
+            )
+            print(_canonical_json({"phase": result["phase"], "recorded": True}))
+            return 0
+        if args.command == "declare-main":
+            result = record_main_declaration(
+                runtime_home=None,
+                session_id=args.session_id,
+                workspace=args.workspace,
+                model=args.model,
+                reasoning_effort=args.reasoning_effort,
+            )
+            print(_canonical_json({"phase": result["phase"], "recorded": True}))
+            return 0
+        if args.command == "result":
+            result = record_leaf_result(
+                runtime_home=None,
+                session_id=args.session_id,
+                workspace=args.workspace,
+                outcome=args.outcome,
+                route_assessment=args.route_assessment,
+                quality_verdict=args.quality_verdict,
+                integration_accepted=args.integration_accepted == "true",
+                token_observation=args.token_observation,
+                evidence_references=args.evidence_ref,
+                weighted_tokens=args.weighted_tokens,
+                cost_proxy=args.cost_proxy,
+            )
+            print(_canonical_json({"phase": result["phase"], "recorded": True}))
+            return 0
+        if args.command == "close":
+            result = close_controller(
+                runtime_home=None,
+                session_id=args.session_id,
+                workspace=args.workspace,
+                terminal_status=args.terminal_status,
+                evidence_references=args.evidence_ref,
+            )
+            print(_canonical_json({"phase": result["phase"], "recorded": True}))
+            return 0
+        raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
+        if len(raw) > MAX_INPUT_BYTES:
+            raise ControllerGateError("hook payload exceeds size bound")
+        payload = json.loads(raw.decode("utf-8")) if raw.strip() else {}
+        print(_canonical_json(handle_hook(payload)))
+        return 0
+    except (ControllerGateError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        print(_canonical_json(_deny(f"Adaptive Delegation controller gate failed: {exc}")))
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

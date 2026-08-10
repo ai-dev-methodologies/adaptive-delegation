@@ -6,6 +6,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -88,6 +89,7 @@ class InstallerTests(unittest.TestCase):
                 source_version,
             )
             self.assertTrue((installed / "scripts" / "read_continuity.py").is_file())
+            self.assertTrue((installed / "scripts" / "controller_gate.py").is_file())
             self.assertTrue(
                 (installed / "references" / "CODEX-ISSUE-REPORT-PROMPT.md").is_file()
             )
@@ -113,6 +115,31 @@ class InstallerTests(unittest.TestCase):
 
             second = self.run_installer(codex_home)
             self.assertEqual(second.returncode, 0, second.stderr)
+
+            hooks = json.loads((codex_home / "hooks.json").read_text(encoding="utf-8"))[
+                "hooks"
+            ]
+            for event in ("UserPromptSubmit", "PreToolUse"):
+                commands = [
+                    hook["command"]
+                    for group in hooks[event]
+                    for hook in group.get("hooks", [])
+                    if "command" in hook
+                ]
+                controller_commands = [
+                    command for command in commands if "controller_gate.py" in command
+                ]
+                self.assertEqual(len(controller_commands), 1, (event, commands))
+            self.assertNotIn("Stop", hooks)
+            config = tomllib.loads(
+                (codex_home / "config.toml").read_text(encoding="utf-8")
+            )
+            trust = config["hooks"]["state"]
+            self.assertEqual(len(trust), 2)
+            self.assertTrue(any(":pre_tool_use:" in key for key in trust))
+            self.assertTrue(any(":user_prompt_submit:" in key for key in trust))
+            for item in trust.values():
+                self.assertRegex(item["trusted_hash"], r"^sha256:[0-9a-f]{64}$")
 
     def test_update_removes_only_roles_managed_by_the_previous_package(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -193,6 +220,105 @@ class InstallerTests(unittest.TestCase):
             self.assertIn("no files changed", result.stdout)
             self.assertFalse(codex_home.exists())
 
+    def test_install_preserves_unrelated_hooks_and_does_not_add_stop_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            codex_home = Path(temporary) / ".codex"
+            codex_home.mkdir(parents=True)
+            (codex_home / "config.toml").write_text(
+                'model = "gpt-5.6-sol"\n', encoding="utf-8"
+            )
+            hooks_path = codex_home / "hooks.json"
+            foreign_wrapper = (
+                "foreign-wrapper --delegate "
+                f"{codex_home}/skills/adaptive-delegation/scripts/controller_gate.py "
+                "--audit"
+            )
+            hooks_path.write_text(
+                json.dumps(
+                    {
+                        "hooks": {
+                            "PreToolUse": [
+                                {
+                                    "matcher": "Read",
+                                    "hooks": [
+                                        {
+                                            "type": "command",
+                                            "command": "preserve-pre-tool",
+                                        }
+                                    ],
+                                }
+                            ],
+                            "UserPromptSubmit": [
+                                {
+                                    "hooks": [
+                                        {
+                                            "type": "command",
+                                            "command": "preserve-prompt",
+                                        },
+                                        {
+                                            "type": "command",
+                                            "command": foreign_wrapper,
+                                        }
+                                    ]
+                                }
+                            ],
+                            "Stop": [
+                                {
+                                    "hooks": [
+                                        {
+                                            "type": "command",
+                                            "command": "single-stop-owner",
+                                        }
+                                    ]
+                                }
+                            ],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_installer(codex_home)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            hooks = json.loads(hooks_path.read_text(encoding="utf-8"))["hooks"]
+            serialized = json.dumps(hooks, sort_keys=True)
+            self.assertIn("preserve-pre-tool", serialized)
+            self.assertIn("preserve-prompt", serialized)
+            self.assertIn(foreign_wrapper, serialized)
+            self.assertEqual(serialized.count("controller_gate.py"), 3)
+            stop_commands = [
+                hook["command"]
+                for group in hooks["Stop"]
+                for hook in group.get("hooks", [])
+            ]
+            self.assertEqual(stop_commands, ["single-stop-owner"])
+            installed_config = (codex_home / "config.toml").read_text(encoding="utf-8")
+            self.assertIn('model = "gpt-5.6-sol"', installed_config)
+            self.assertIn("adaptive-delegation-controller-trust:start", installed_config)
+
+    def test_reinstall_replaces_unmarked_controller_trust_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            codex_home = Path(temporary) / ".codex"
+            first = self.run_installer(codex_home)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            config_path = codex_home / "config.toml"
+            config_text = config_path.read_text(encoding="utf-8")
+            config_text = config_text.replace(
+                "# adaptive-delegation-controller-trust:start\n", ""
+            ).replace("# adaptive-delegation-controller-trust:end\n", "")
+            config_path.write_text(config_text, encoding="utf-8")
+
+            second = self.run_installer(codex_home)
+
+            self.assertEqual(second.returncode, 0, second.stderr)
+            parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
+            trust = parsed["hooks"]["state"]
+            controller_keys = [
+                key for key in trust if str(codex_home / "hooks.json") in key
+            ]
+            self.assertEqual(len(controller_keys), 2)
+
     def test_docs_define_weighted_budget_and_portable_trigger_contract(self) -> None:
         skill = (ROOT / "adaptive-delegation" / "SKILL.md").read_text(
             encoding="utf-8"
@@ -263,7 +389,9 @@ class InstallerTests(unittest.TestCase):
             readme,
         )
         self.assertIn("Does not activate this skill by itself.", readme)
-        self.assertIn("eligible for implicit activation", readme.lower())
+        self.assertIn("explicit and opt-in", readme.lower())
+        self.assertNotIn("eligible for implicit activation", readme.lower())
+        self.assertIn("controller-only", readme)
         self.assertIn("Prompt text cannot upgrade the session.", readme)
         self.assertIn("Leaf `ultra` remains forbidden.", readme)
         self.assertIn("dispatch_attestation.jsonl", install)

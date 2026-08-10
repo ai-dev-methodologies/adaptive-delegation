@@ -9,9 +9,10 @@ description: Codex-only skill for Codex native subagents. Use when routing bound
 is unsupported, and this package does not provide a general external runtime
 integration.
 
-Use explicit `$adaptive-delegation` when deterministic activation matters.
-Implicit activation remains allowed for requests that match this skill's
-description.
+This skill is explicit and opt-in. It activates only when the current user
+request begins with `$adaptive-delegation`. Matching prose, a bare workflow
+name, old session state, or a localized token-efficiency phrase does not
+activate it.
 
 The invocation is sufficient by itself. Do not require the user to append a
 separate Luna-first, stop-on-acceptance, or no-extra-review prompt. This skill
@@ -20,7 +21,7 @@ forbids Terra or Sol escalation without observable route failure except the
 declared direct-latency case, stops immediately at acceptance, and excludes
 optional reviews, broad tests, and adjacent improvements.
 
-## Activation gate
+## Activation and controller gate
 
 Step zero, before routing or launching any child, checks that the current main
 authority is exactly `gpt-5.6-sol` with `reasoning_effort` set to `high`,
@@ -32,7 +33,59 @@ Adaptive Delegation blocked: main authority must be gpt-5.6-sol with reasoning_e
 ```
 
 The skill cannot mutate the parent model. After printing the block, launch no
-child and stop. Do not route around this gate.
+child and stop. Do not route around this gate. Current Codex
+`UserPromptSubmit` payloads may omit model and effort. In that documented
+case, the installed hook creates an owner-only
+`awaiting_main_declaration` state and returns the exact
+`controller_gate.py declare-main` command for the main to run. That declaration
+is current-session context supplied by the main, not cryptographic runtime
+proof. Task tools remain denied until the declaration is exactly
+`gpt-5.6-sol` at `high`, `xhigh`, `max`, or `ultra`.
+
+Once active, the main is a controller, not a task worker. It may interpret
+intent, build and digest the Objective Lock, classify routes, launch or message
+leaves, integrate returned evidence, choose retries or escalation, ask the
+user, and make the final claim. The installed `PreToolUse` hook denies main
+task execution, including edits, shell work, repository inspection, tests, and
+network calls. Before a child launch, use the exact installed
+`controller_gate.py decision` command to record `leaf_required` with the
+Objective Lock digest and package-fixed `agent_type`, model, and effort. The
+next spawn must match that envelope and use `fork_turns="none"`.
+
+Direct main execution is allowed only after the controller records one of
+these evidence-backed states:
+
+- `main_only_exception` with `non_delegable_authority`, `weak_oracle`, or
+  `high_risk_or_ambiguous`, plus one or more bounded local evidence references;
+- `takeover` with `ladder_exhausted`, plus bounded local evidence references.
+
+`weak_oracle`, `high_risk_or_ambiguous`, and `ladder_exhausted` execution also
+require the declared main effort to be `ultra`; the controller does not pretend
+that a `high`, `xhigh`, or `max` session was upgraded. A narrowly
+`non_delegable_authority` action may use the already-admitted Sol/high-or-above
+main because its exception is authority shape, not capability escalation.
+
+Estimated cost, task size, existing main context, convenience, and latency are
+never main-only exception reasons. A more capable main does not convert a
+delegable slice into direct work. This closes the economic-discretion hole:
+the Sol/high-or-above requirement gives the controller enough authority to
+classify and integrate, while leaves still perform delegable task work.
+
+Every authorized Native launch must be closed before another decision. After
+the leaf returns, run the exact installed `controller_gate.py result` command
+with `accepted`, `failed`, or `path_blocked`; the route assessment (`correct`,
+`too-cheap`, `too-premium`, or `inconclusive`); the quality verdict;
+integration acceptance; bounded evidence references; and token observation.
+Use `token_observation=unavailable` when provider usage is absent and omit
+token/cost values—never encode missing measurement as observed zero. An exact
+or estimated observation must include nonnegative weighted tokens and the
+route-relative cost proxy. The controller denies a new route decision until
+this result is recorded, then writes a cumulative owner-only controller review.
+Before the terminal user-facing answer, run `controller_gate.py close` with
+`complete` or `blocked` and bounded evidence. `complete` after a leaf requires
+an accepted integrated result. A closed state releases the session's task-tool
+restriction so a later non-adaptive request in the same conversation is not
+captured by stale controller state.
 
 When the gate passes, before tools print exactly:
 `Routing: main=<decision>; ready=<n>; parallel=<n>; serial=<reason|none>.`
@@ -55,7 +108,8 @@ chooses the ordinary task-shape route or keeps the work main-authoritative.
 After the initial selection, only observable failure may advance the exact
 ladder.
 
-Start implementation in a bounded leaf. When the evidence-classified ladder is
+Start implementation in a bounded leaf; the main must not implement the slice
+it classified for delegation. When the evidence-classified ladder is
 exhausted, the main is the final escalator and may take over the unresolved
 slice without widening it. Model or reasoning escalation changes capability,
 never authority or scope. Use Maker/Checker separation when risk warrants it:
@@ -75,9 +129,10 @@ final integration acceptance and the stop decision.
 
 ## Primary invariant — Objective Lock
 
-Delegate bounded independent work aggressively when it materially improves
-speed, token efficiency, or verification quality, but only inside one
-canonical **OBJECTIVE LOCK**. No valid Objective Lock, no child launch.
+Delegate every delegable bounded work slice inside one canonical **OBJECTIVE
+LOCK**. No valid Objective Lock, no child launch. The main does not compare its
+own apparent marginal cost with a leaf and choose direct task execution; only
+the structured controller exceptions above permit it.
 
 Before routing, construct a self-contained **OBJECTIVE LOCK** from the current
 user request and repository evidence. It must declare the terminal outcome,
@@ -236,8 +291,22 @@ integration acceptance. Review failures, escalations, direct-Sol use, and
 model-price changes at the configured cadence. The dispatcher records package
 attempts automatically and the audit CLI auto-creates triggered reviews.
 
-When asked to validate model selection, read the audit logs automatically:
-consult the model-routing attempts and reviews before reporting a conclusion.
+Each review file is a cumulative snapshot, not one independent task record.
+Its metadata states the trigger and covered pair count. The evaluation section
+separates model selection into `appropriate`, `underpowered`, `overpowered`,
+and `inconclusive`; cost into observed and unobserved attempts so unavailable
+tokens never look like observed zero; and quality into accepted, integrated,
+oracle, and failure outcomes. Evidence remains `insufficient_sample` until the
+configured 25 accepted-task cadence is met. Controller events are stored
+separately and health output aggregates activations, exact leaf decisions,
+authorized launches, exceptions, takeovers, and main-tool denials without
+returning prompts, tool inputs, session identifiers, or workspace paths.
+
+When asked to validate model selection, route the bounded read-only analysis to
+an admitted leaf, then consult the model-routing attempts, cumulative reviews,
+and sanitized controller health before reporting a conclusion. Do not claim
+cost reduction or no quality loss when measurement coverage or the accepted
+sample is insufficient.
 
 When asked to turn local usage experience into a GitHub issue, read
 [references/CODEX-ISSUE-REPORT-PROMPT.md](references/CODEX-ISSUE-REPORT-PROMPT.md),
@@ -290,13 +359,15 @@ locally validated runtime metadata. Before creation, require the bounded local
 sequence `pending_receipt -> native_spawn_gate -> child_creation_eligibility`;
 this is consistency evidence, not a clock-backed security proof.
 
-Use the exact typed direct path (`--direct-typed`) only when the fixed role or
-Native surface is unavailable, the Native call is rejected, validated runtime
-model/effort mismatches the binding, or a hard parent-enforced cap is required.
-Model substitution is forbidden for a rejected admission. In particular,
-Terra may not replace Luna or Sol merely because the chosen fixed role is
-unavailable. A pre-creation rejection means no child and child token 0. Network
-defaults to off unless the packet explicitly permits it.
+The package retains the typed direct dispatcher for isolated validation and
+non-controller compatibility, but an active controller does not admit a main
+shell command that constructs or runs that fallback. Native V2 is the enforced
+leaf surface for explicit controller sessions. If Native creation is rejected,
+record the observable admission failure and return to the main for another
+authorized lane or a truthful blocked result; do not silently substitute a
+model or bypass the controller through typed execution. A pre-creation
+rejection means no child and child token 0. Network defaults to off unless the
+packet explicitly permits it.
 
 A corrected or fallback launch envelope must canonically match the dispatched
 packet in full, including objective, scope, network, resource, budget, and
@@ -375,6 +446,9 @@ as cryptographic proof.
 | Adaptive-delegation package | `$RUNTIME_HOME/skills/adaptive-delegation/` |
 | Policy source of truth | `$RUNTIME_HOME/skills/adaptive-delegation/config/model-routing.defaults.json` |
 | Package dispatcher | `$RUNTIME_HOME/scripts/adaptive_dispatch_attestation.py` |
+| Controller gate | `$RUNTIME_HOME/skills/adaptive-delegation/scripts/controller_gate.py` |
+| Controller events | `$RUNTIME_HOME/state/adaptive-delegation/controller/controller-events.jsonl` |
+| Controller reviews | `$RUNTIME_HOME/state/adaptive-delegation/controller/reviews/` |
 | Issue-publication prompt | `$RUNTIME_HOME/skills/adaptive-delegation/references/CODEX-ISSUE-REPORT-PROMPT.md` |
 | Model-routing attempts | `$RUNTIME_HOME/state/model-routing/attempts.jsonl` |
 | Model-routing reviews | `$RUNTIME_HOME/state/model-routing/reviews/` |
@@ -385,9 +459,11 @@ The standalone repository is the portable source for Codex deployment.
 Deployment fetches the repository and runs `python3 scripts/install.py`; see
 the canonical [installation documentation](https://github.com/ai-dev-methodologies/adaptive-delegation/blob/main/INSTALL.md).
 The installer copies only the allowlisted runtime package files, installs its
-package dispatcher, and regenerates only package-declared role bindings.
-Codex normally detects the skill change automatically; restart only when the
-update does not appear.
+package dispatcher, regenerates only package-declared role bindings, appends
+one controller handler to `UserPromptSubmit` and `PreToolUse`, and records their
+Codex trust hashes. It never installs a Stop handler and preserves unrelated
+hooks. Hook topology is loaded at process start, so verify controller behavior
+in a fresh Codex process after installation.
 
 Never copy authentication, logs, issue-report state, continuity data, or
 rollout/session data. Those files stay on the machine where they were created.

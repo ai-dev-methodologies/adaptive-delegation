@@ -1202,6 +1202,61 @@ class DispatcherGateTests(unittest.TestCase):
         self.assertIs(dispatch.call_args.kwargs["packet"], packet)
         self.assertTrue(dispatch.call_args.kwargs["packet_loaded"])
 
+    def test_audited_dispatch_failure_records_post_result(self) -> None:
+        module = self.load_dispatcher_module()
+        packet = self.packet("failed-child-policy", "gpt-5.6-luna", "medium")
+        context = SimpleNamespace()
+
+        def fail_after_child(*_args: object, **kwargs: object) -> int:
+            status = kwargs["execution_status"]
+            status.update(
+                execution_completed=True,
+                child_succeeded=True,
+                integration_accepted=False,
+                failure_class="execution_policy_violation",
+            )
+            return module.EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE
+
+        args = SimpleNamespace(
+            validate_only=False,
+            model_routing_ledger=self.root / "model-routing.jsonl",
+            model_routing_review_dir=self.root / "reviews",
+            ledger=self.root / "attestations.jsonl",
+            finalize_integration=False,
+            selected_launcher="direct_typed",
+            fallback_reason=None,
+        )
+        with (
+            mock.patch.object(module, "_start_adaptive_audit", return_value=(context, None)),
+            mock.patch.object(module, "_dispatch_main", side_effect=fail_after_child),
+            mock.patch.object(module, "_finish_adaptive_audit") as finish,
+        ):
+            result = module._audited_dispatch(args, packet)
+
+        self.assertEqual(result, module.EXIT_NATIVE_UNAVAILABLE_FALLBACK_FAILURE)
+        finish.assert_called_once_with(context, mock.ANY, result)
+
+    def test_quantitative_execution_policy_violations_are_context_ceiling(self) -> None:
+        module = self.load_dispatcher_module()
+        for violation in (
+            "rollout_line_bytes_exceeded",
+            "cumulative_tool_output_bytes_exceeded",
+            "tool_calls_exceeded",
+            "max_output_tokens_per_call_exceeded",
+            "child_stdout_bytes_exceeded",
+            "token_budget_exceeded",
+        ):
+            with self.subTest(violation=violation):
+                self.assertEqual(
+                    module._execution_policy_failure_class(violation),
+                    "context_ceiling",
+                )
+
+        self.assertEqual(
+            module._execution_policy_failure_class("repo_wide_search_forbidden"),
+            "scope_or_retrieval_overbreadth",
+        )
+
     def test_adaptive_audit_uses_explicit_escalated_route(self) -> None:
         module = self.load_dispatcher_module()
         packet = self.packet("explicit-escalation", "gpt-5.6-sol", "high")

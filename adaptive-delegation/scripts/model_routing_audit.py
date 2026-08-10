@@ -43,6 +43,13 @@ DEFAULT_REVIEW_DIR = CODEX_HOME / "state" / "model-routing" / "reviews"
 DEFAULT_ISSUE_STATE = (
     CODEX_HOME / "state" / "model-routing" / "issue-report-state.jsonl"
 )
+DEFAULT_CONTROLLER_LEDGER = (
+    CODEX_HOME
+    / "state"
+    / "adaptive-delegation"
+    / "controller"
+    / "controller-events.jsonl"
+)
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = SKILL_ROOT / "config" / "model-routing.defaults.json"
 AUDITOR_NAME = "model-routing-audit"
@@ -1390,7 +1397,9 @@ def record_event(
         else []
     )
     review_path = (
-        _review(Path(ledger_path), Path(review_dir)) if reasons else None
+        _review(Path(ledger_path), Path(review_dir), trigger_reasons=reasons)
+        if reasons
+        else None
     )
     return {
         "recorded": validated,
@@ -1592,11 +1601,14 @@ def _make_review(
             elapsed += post["elapsed_ms"]
             weighted_tokens += post["weighted_tokens"]
             detail = post.get("post_result_detail")
-            if isinstance(detail, dict):
-                if detail.get("elapsed_observation") == "unavailable":
-                    elapsed_covered = False
-                if detail.get("token_observation") == "unavailable":
-                    token_cost_covered = False
+            if not isinstance(detail, dict) or detail.get(
+                "elapsed_observation"
+            ) not in {"exact", "estimated"}:
+                elapsed_covered = False
+            if not isinstance(detail, dict) or detail.get(
+                "token_observation"
+            ) not in {"exact", "lower_bound", "estimated"}:
+                token_cost_covered = False
             if post["accepted"] and first_accepted_index is None:
                 first_accepted_index = pre["attempt_index"]
                 break
@@ -1644,6 +1656,15 @@ def _make_review(
 
     route_metrics: dict[str, dict[str, Any]] = {}
     policy_segments: dict[str, dict[str, Any]] = {}
+    selection_by_route: dict[str, dict[str, int]] = {}
+    observed_attempts = 0
+    observed_weighted_tokens = 0
+    observed_cost_by_route: dict[str, float] = {}
+    accepted_attempts = 0
+    integrated_attempts = 0
+    oracle_verdict_counts = {value: 0 for value in ORACLE_VERDICTS}
+    unavailable_oracle_verdicts = 0
+    failure_class_counts: dict[str, int] = {}
     for pre, post in pairs:
         fingerprint = pre.get("policy_fingerprint", "legacy")
         segment_key = f"{pre['schema_version']}:{fingerprint}"
@@ -1659,11 +1680,45 @@ def _make_review(
             "accepted_calls": 0,
             "weighted_tokens": 0,
             "cost_proxy_total": 0.0,
+            "observed_calls": 0,
+            "unobserved_calls": 0,
+            "weighted_tokens_observed": 0,
+            "cost_proxy_observed": 0.0,
         })
+        detail = post.get("post_result_detail")
+        token_observed = isinstance(detail, dict) and detail.get(
+            "token_observation"
+        ) in {"exact", "lower_bound", "estimated"}
         route["calls"] += 1
         route["accepted_calls"] += int(post["accepted"])
         route["weighted_tokens"] += post["weighted_tokens"]
         route["cost_proxy_total"] = _round(route["cost_proxy_total"] + float(post["cost_proxy"]))
+        route["observed_calls" if token_observed else "unobserved_calls"] += 1
+        if token_observed:
+            observed_attempts += 1
+            observed_weighted_tokens += post["weighted_tokens"]
+            route["weighted_tokens_observed"] += post["weighted_tokens"]
+            route["cost_proxy_observed"] = _round(
+                route["cost_proxy_observed"] + float(post["cost_proxy"])
+            )
+            observed_cost_by_route[route_key] = _round(
+                observed_cost_by_route.get(route_key, 0.0) + float(post["cost_proxy"])
+            )
+        accepted_attempts += int(post["accepted"])
+        integrated_attempts += int(post.get("integration_accepted", post["accepted"]))
+        oracle = post.get("oracle_verdict")
+        if oracle in oracle_verdict_counts:
+            oracle_verdict_counts[oracle] += 1
+        else:
+            unavailable_oracle_verdicts += 1
+        failure = post.get("failure_class", "unknown")
+        failure_class_counts[failure] = failure_class_counts.get(failure, 0) + 1
+        assessment = detail.get("route_assessment") if isinstance(detail, dict) else "inconclusive"
+        assessment = assessment if assessment in ROUTE_ASSESSMENTS else "inconclusive"
+        selection = selection_by_route.setdefault(
+            route_key, {value: 0 for value in ROUTE_ASSESSMENTS}
+        )
+        selection[assessment] += 1
         segment = policy_segments.setdefault(segment_key, {
             "schema_version": pre["schema_version"],
             "policy_fingerprint": fingerprint,
@@ -1675,6 +1730,71 @@ def _make_review(
         segment["accepted_calls"] += int(post["accepted"])
         segment["weighted_tokens"] += post["weighted_tokens"]
 
+    for route in route_metrics.values():
+        if route["unobserved_calls"]:
+            route["weighted_tokens"] = None
+            route["cost_proxy_total"] = None
+        if route["observed_calls"] == 0:
+            route["weighted_tokens_observed"] = None
+            route["cost_proxy_observed"] = None
+
+    conclusive_assessments = (
+        route_assessment_counts["correct"]
+        + route_assessment_counts["too-cheap"]
+        + route_assessment_counts["too-premium"]
+    )
+    inconclusive_assessments = paired_attempts - conclusive_assessments
+    sample_threshold = int(
+        policy.get("audit", {}).get("review_every_accepted_attempts", 25)
+    )
+    evaluation = {
+        "model_selection": {
+            "status": (
+                "evaluated"
+                if conclusive_assessments >= sample_threshold
+                else "insufficient_sample"
+            ),
+            "minimum_conclusive_attempts": sample_threshold,
+            "conclusive_attempts": conclusive_assessments,
+            "appropriate": route_assessment_counts["correct"],
+            "underpowered": route_assessment_counts["too-cheap"],
+            "overpowered": route_assessment_counts["too-premium"],
+            "inconclusive": inconclusive_assessments,
+            "by_model_effort": selection_by_route,
+        },
+        "cost": {
+            "status": (
+                "unavailable"
+                if observed_attempts == 0
+                else "observed"
+                if observed_attempts == paired_attempts
+                else "partial"
+            ),
+            "observed_attempts": observed_attempts,
+            "unobserved_attempts": paired_attempts - observed_attempts,
+            "coverage_rate": _rate(observed_attempts, paired_attempts),
+            "weighted_tokens_observed": (
+                observed_weighted_tokens if observed_attempts else None
+            ),
+            "cost_proxy_observed_by_model_effort": observed_cost_by_route,
+            "cross_model_cost_comparison": "not_comparable_without_price_table",
+        },
+        "quality": {
+            "status": (
+                "sufficient_sample"
+                if accepted_tasks >= sample_threshold
+                else "insufficient_sample"
+            ),
+            "minimum_accepted_tasks": sample_threshold,
+            "accepted_tasks": accepted_tasks,
+            "accepted_attempts": accepted_attempts,
+            "integration_accepted_attempts": integrated_attempts,
+            "oracle_verdicts": oracle_verdict_counts,
+            "oracle_verdict_unavailable": unavailable_oracle_verdicts,
+            "failure_classes": dict(sorted(failure_class_counts.items())),
+        },
+    }
+
     metrics = {
         "first_pass_acceptance_rate": _rate(first_pass_accepted, task_count),
         "effort_escalation_rate": _rate(effort_escalated, paired_attempts),
@@ -1684,10 +1804,10 @@ def _make_review(
         "false_cheap_route_rate": _rate(false_cheap, cheap_routes),
         "elapsed_time_per_accepted_task_ms": _round(elapsed_total / len(elapsed_values))
         if elapsed_values
-        else 0.0,
+        else None,
         "weighted_tokens_per_accepted_task": _round(weighted_total / len(weighted_values))
         if weighted_values
-        else 0.0,
+        else None,
         # Model-relative price fractions are only comparable inside a route
         # segment; no common cross-model cost is reported here.
         "cost_proxy_per_accepted_task": None,
@@ -1736,6 +1856,7 @@ def _make_review(
             "next_actions": next_action_counts,
         },
         "metrics": metrics,
+        "evaluation": evaluation,
         "terra_observations": {
             "use_modes": {
                 mode: {
@@ -1760,7 +1881,12 @@ def _make_review(
     }
 
 
-def _review(ledger_path: Path, review_dir: Path) -> Path:
+def _review(
+    ledger_path: Path,
+    review_dir: Path,
+    *,
+    trigger_reasons: list[str] | None = None,
+) -> Path:
     fd = _open_ledger(ledger_path, writable=False)
     try:
         fcntl.flock(fd, fcntl.LOCK_SH)
@@ -1775,6 +1901,13 @@ def _review(ledger_path: Path, review_dir: Path) -> Path:
     generated = _datetime.datetime.now(_datetime.timezone.utc)
     timestamp = generated.strftime("%Y%m%dT%H%M%S.%fZ")
     payload = _make_review(pairs, incomplete, ledger_path)
+    payload["review_metadata"] = {
+        "snapshot_kind": "cumulative",
+        "trigger_reasons": list(trigger_reasons or ["manual"]),
+        "covered_pairs": payload["attempts"]["paired"],
+        "covered_current_policy_pairs": payload["attempts"]["current_policy_paired"],
+        "incomplete_pre_decisions": incomplete,
+    }
     payload["generated_at"] = generated.isoformat(timespec="microseconds").replace("+00:00", "Z")
     serialized = (_canonical_json(payload) + "\n").encode("utf-8")
     if len(serialized) > MAX_LINE_BYTES * 16:
@@ -2671,6 +2804,94 @@ def _health_review_snapshot(value: dict[str, Any]) -> tuple[_datetime.datetime, 
             ),
         ),
     }
+    metadata = value.get("review_metadata")
+    if metadata is not None:
+        if not isinstance(metadata, dict) or metadata.get("snapshot_kind") != "cumulative":
+            raise AuditError("review metadata is invalid")
+        reasons = metadata.get("trigger_reasons")
+        allowed_reasons = {
+            "manual",
+            "failure",
+            "escalation",
+            "route-assessment",
+            "direct-sol",
+            "model-price-change",
+            "accepted-cadence",
+        }
+        if (
+            not isinstance(reasons, list)
+            or not reasons
+            or len(reasons) > 8
+            or len(reasons) != len(set(reasons))
+            or any(reason not in allowed_reasons for reason in reasons)
+        ):
+            raise AuditError("review trigger reasons are invalid")
+        counts = {}
+        for field in (
+            "covered_pairs",
+            "covered_current_policy_pairs",
+            "incomplete_pre_decisions",
+        ):
+            item = metadata.get(field)
+            if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+                raise AuditError(f"review metadata {field} is invalid")
+            counts[field] = item
+        latest["review_metadata"] = {
+            "snapshot_kind": "cumulative",
+            "trigger_reasons": reasons,
+            **counts,
+        }
+    evaluation = value.get("evaluation")
+    if evaluation is not None:
+        if not isinstance(evaluation, dict):
+            raise AuditError("review evaluation is invalid")
+        selection = evaluation.get("model_selection")
+        cost = evaluation.get("cost")
+        quality = evaluation.get("quality")
+        if not all(isinstance(item, dict) for item in (selection, cost, quality)):
+            raise AuditError("review evaluation sections are invalid")
+        if selection.get("status") not in {"evaluated", "insufficient_sample"}:
+            raise AuditError("review model-selection status is invalid")
+        if cost.get("status") not in {"observed", "partial", "unavailable"}:
+            raise AuditError("review cost status is invalid")
+        if quality.get("status") not in {"sufficient_sample", "insufficient_sample"}:
+            raise AuditError("review quality status is invalid")
+        latest["evaluation"] = {
+            "model_selection": {
+                "status": selection["status"],
+                **_health_review_counts(
+                    {"selection": selection},
+                    "selection",
+                    (
+                        "appropriate",
+                        "underpowered",
+                        "overpowered",
+                        "inconclusive",
+                        "conclusive_attempts",
+                    ),
+                ),
+            },
+            "cost": {
+                "status": cost["status"],
+                **_health_review_counts(
+                    {"cost": cost},
+                    "cost",
+                    ("observed_attempts", "unobserved_attempts"),
+                ),
+            },
+            "quality": {
+                "status": quality["status"],
+                **_health_review_counts(
+                    {"quality": quality},
+                    "quality",
+                    (
+                        "accepted_tasks",
+                        "accepted_attempts",
+                        "integration_accepted_attempts",
+                    ),
+                ),
+            },
+        }
     return stamp, latest
 
 
@@ -2679,7 +2900,9 @@ def _empty_health_reviews(status: str) -> tuple[dict[str, Any], str]:
         "cumulative_snapshots": True,
         "file_count": 0,
         "valid_review_count": 0,
+        "cumulative_snapshot_count": 0,
         "latest": None,
+        "latest_covered_pairs": None,
         "ambiguous_latest": 0,
         "anomalies": _health_anomalies(),
     }, status
@@ -2755,7 +2978,15 @@ def _health_reviews(path: Path) -> tuple[dict[str, Any], str]:
         "cumulative_snapshots": True,
         "file_count": file_count,
         "valid_review_count": valid_review_count,
+        "cumulative_snapshot_count": valid_review_count,
         "latest": latest,
+        "latest_covered_pairs": (
+            latest.get("review_metadata", {}).get(
+                "covered_pairs", latest["attempts"].get("paired")
+            )
+            if latest is not None
+            else None
+        ),
         "ambiguous_latest": ambiguous,
         "anomalies": anomalies,
     }
@@ -2777,6 +3008,231 @@ def _health_continuity(path: Path) -> tuple[dict[str, Any], str]:
             anomalies["invalid_records"] += 1
     result = {"aggregate_only": True, "categories": categories, "anomalies": anomalies}
     return result, ("degraded" if status != "ok" or any(anomalies.values()) else "ok")
+
+
+def _health_controller(path: Path) -> tuple[dict[str, Any], str]:
+    empty = {
+        "aggregate_only": True,
+        "activation_requests": 0,
+        "activations": 0,
+        "open_activations": 0,
+        "pending_main_declarations": 0,
+        "leaf_required_decisions": 0,
+        "authorized_leaf_launches": 0,
+        "pending_leaf_results": 0,
+        "main_tool_denials": 0,
+        "takeovers": 0,
+        "main_only_exceptions": {},
+        "closed": {"complete": 0, "blocked": 0},
+        "leaf_results": 0,
+        "model_selection": {
+            "appropriate": 0,
+            "underpowered": 0,
+            "overpowered": 0,
+            "inconclusive": 0,
+        },
+        "cost": {
+            "observed_results": 0,
+            "unobserved_results": 0,
+            "weighted_tokens_observed": None,
+        },
+        "quality": {
+            "accepted": 0,
+            "failed": 0,
+            "path_blocked": 0,
+            "integration_accepted": 0,
+            "pass": 0,
+            "fail": 0,
+            "inconclusive": 0,
+        },
+        "reviews": {
+            "status": "unavailable",
+            "cumulative_snapshot_count": 0,
+            "latest_covered_leaf_results": None,
+            "unreviewed_leaf_results": 0,
+        },
+        "anomalies": _health_anomalies(),
+    }
+    if not os.path.lexists(path):
+        return empty, "unavailable"
+    values, status, anomalies = _health_parse_json_lines(path)
+    counts = dict(empty)
+    counts["anomalies"] = anomalies
+    exceptions: dict[str, int] = {}
+    valid_types = {
+        "explicit_activation_requested",
+        "explicit_activation",
+        "delegation_decision",
+        "leaf_launch_authorized",
+        "leaf_result_recorded",
+        "main_tool_denied",
+        "controller_closed",
+    }
+    for value in values:
+        if value.get("schema_version") != "1":
+            anomalies["unsupported_schema"] += 1
+            continue
+        event_type = value.get("event_type")
+        if event_type not in valid_types:
+            anomalies["invalid_records"] += 1
+            continue
+        if event_type == "explicit_activation_requested":
+            counts["activation_requests"] += 1
+        elif event_type == "explicit_activation":
+            counts["activations"] += 1
+        elif event_type == "leaf_launch_authorized":
+            counts["authorized_leaf_launches"] += 1
+        elif event_type == "main_tool_denied":
+            counts["main_tool_denials"] += 1
+        elif event_type == "controller_closed":
+            terminal_status = value.get("terminal_status")
+            if terminal_status not in {"complete", "blocked"}:
+                anomalies["invalid_records"] += 1
+                continue
+            counts["closed"][terminal_status] += 1
+        elif event_type == "leaf_result_recorded":
+            outcome = value.get("outcome")
+            assessment = value.get("route_assessment")
+            quality = value.get("quality_verdict")
+            token_observation = value.get("token_observation")
+            assessment_key = {
+                "correct": "appropriate",
+                "too-cheap": "underpowered",
+                "too-premium": "overpowered",
+                "inconclusive": "inconclusive",
+            }.get(assessment)
+            if (
+                outcome not in {"accepted", "failed", "path_blocked"}
+                or assessment_key is None
+                or quality not in {"pass", "fail", "inconclusive"}
+                or token_observation not in {"exact", "estimated", "unavailable"}
+                or (outcome == "accepted" and value.get("integration_accepted") is not True)
+                or (outcome == "accepted" and quality != "pass")
+                or (outcome != "accepted" and value.get("integration_accepted") is True)
+            ):
+                anomalies["invalid_records"] += 1
+                continue
+            weighted = value.get("weighted_tokens")
+            cost_proxy = value.get("cost_proxy")
+            if token_observation == "unavailable":
+                if weighted is not None or cost_proxy is not None:
+                    anomalies["invalid_records"] += 1
+                    continue
+            elif (
+                not isinstance(weighted, int)
+                or isinstance(weighted, bool)
+                or weighted < 0
+                or not isinstance(cost_proxy, (int, float))
+                or isinstance(cost_proxy, bool)
+                or cost_proxy < 0
+            ):
+                anomalies["invalid_records"] += 1
+                continue
+            counts["leaf_results"] += 1
+            counts["model_selection"][assessment_key] += 1
+            counts["quality"][outcome] += 1
+            counts["quality"][quality] += 1
+            counts["quality"]["integration_accepted"] += int(
+                value.get("integration_accepted") is True
+            )
+            if token_observation == "unavailable":
+                counts["cost"]["unobserved_results"] += 1
+            else:
+                counts["cost"]["observed_results"] += 1
+                current_weighted = counts["cost"]["weighted_tokens_observed"] or 0
+                counts["cost"]["weighted_tokens_observed"] = current_weighted + weighted
+        else:
+            decision = value.get("decision")
+            if decision == "leaf_required":
+                counts["leaf_required_decisions"] += 1
+            elif decision == "takeover":
+                counts["takeovers"] += 1
+            elif decision == "main_only_exception":
+                reason = value.get("exception_reason")
+                if not isinstance(reason, str) or not reason:
+                    anomalies["invalid_records"] += 1
+                    continue
+                exceptions[reason] = exceptions.get(reason, 0) + 1
+            else:
+                anomalies["invalid_records"] += 1
+    counts["pending_main_declarations"] = max(
+        0, counts["activation_requests"] - counts["activations"]
+    )
+    counts["pending_leaf_results"] = max(
+        0, counts["authorized_leaf_launches"] - counts["leaf_results"]
+    )
+    counts["open_activations"] = max(
+        0, counts["activations"] - sum(counts["closed"].values())
+    )
+    counts["main_only_exceptions"] = dict(sorted(exceptions.items()))
+    review_directory = path.parent / "reviews"
+    latest_stamp: _datetime.datetime | None = None
+    latest_covered: int | None = None
+    review_count = 0
+    review_bytes = 0
+    review_status = "unavailable"
+    if os.path.lexists(review_directory):
+        review_status = "ok"
+        try:
+            _check_existing_directory(review_directory, "controller review directory")
+            for child in review_directory.iterdir():
+                if child.suffix != ".json":
+                    continue
+                if review_count >= HEALTH_MAX_REVIEW_FILES:
+                    anomalies["invalid_records"] += 1
+                    review_status = "degraded"
+                    break
+                remaining = HEALTH_MAX_REVIEW_BYTES - review_bytes
+                if remaining <= 0:
+                    raise AuditError("controller reviews exceed cumulative byte bound")
+                raw, read_status = _health_read_bytes(
+                    child, max_bytes=min(MAX_LINE_BYTES * 16, remaining)
+                )
+                if read_status != "ok":
+                    raise AuditError("controller review is unreadable or unsafe")
+                review_bytes += len(raw)
+                value = json.loads(raw.decode("utf-8"))
+                if (
+                    not isinstance(value, dict)
+                    or value.get("schema_version") != "1"
+                    or value.get("snapshot_kind") != "cumulative"
+                    or not isinstance(value.get("covered_leaf_results"), int)
+                    or isinstance(value.get("covered_leaf_results"), bool)
+                    or value["covered_leaf_results"] < 0
+                ):
+                    raise AuditError("controller review is invalid")
+                stamp = _health_timestamp(value["generated_at"])
+                review_count += 1
+                if latest_stamp is None or stamp > latest_stamp:
+                    latest_stamp = stamp
+                    latest_covered = value["covered_leaf_results"]
+                elif stamp == latest_stamp:
+                    latest_covered = None
+                    anomalies["ambiguous_sequence"] += 1
+                    review_status = "degraded"
+        except (
+            OSError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            KeyError,
+            ValueError,
+            TypeError,
+            AuditError,
+        ):
+            anomalies["invalid_records"] += 1
+            review_status = "degraded"
+    counts["reviews"] = {
+        "status": review_status,
+        "cumulative_snapshot_count": review_count,
+        "latest_covered_leaf_results": latest_covered,
+        "unreviewed_leaf_results": (
+            max(0, counts["leaf_results"] - latest_covered)
+            if isinstance(latest_covered, int)
+            else counts["leaf_results"]
+        ),
+    }
+    degraded = status != "ok" or any(anomalies.values())
+    return counts, "degraded" if degraded else "ok"
 
 
 def _health_dispatch(path: Path) -> tuple[dict[str, Any], str]:
@@ -2823,7 +3279,13 @@ def _health_dispatch(path: Path) -> tuple[dict[str, Any], str]:
     return result, ("degraded" if status != "ok" or any(anomalies.values()) else "ok")
 
 
-def health_report(ledger: Path = DEFAULT_LEDGER, review_dir: Path = DEFAULT_REVIEW_DIR, continuity_ledger: Path | None = None, dispatch_ledger: Path | None = None) -> tuple[dict[str, Any], int]:
+def health_report(
+    ledger: Path = DEFAULT_LEDGER,
+    review_dir: Path = DEFAULT_REVIEW_DIR,
+    continuity_ledger: Path | None = None,
+    dispatch_ledger: Path | None = None,
+    controller_ledger: Path | None = None,
+) -> tuple[dict[str, Any], int]:
     """Return a sanitized read-only evidence-health report and its exit code."""
     continuity_ledger = continuity_ledger or (CODEX_HOME / "state" / "adaptive-delegation" / "continuity.jsonl")
     dispatch_ledger = dispatch_ledger or (CODEX_HOME / "state" / "adaptive-delegation" / "dispatch_attestation.jsonl")
@@ -2837,28 +3299,100 @@ def health_report(ledger: Path = DEFAULT_LEDGER, review_dir: Path = DEFAULT_REVI
     reviews, reviews_status = _health_reviews(Path(review_dir))
     continuity, continuity_status = _health_continuity(Path(continuity_ledger))
     dispatch, dispatch_status = _health_dispatch(Path(dispatch_ledger))
+    if controller_ledger is None:
+        controller = {
+            "aggregate_only": True,
+            "activation_requests": 0,
+            "activations": 0,
+            "open_activations": 0,
+            "pending_main_declarations": 0,
+            "leaf_required_decisions": 0,
+            "authorized_leaf_launches": 0,
+            "pending_leaf_results": 0,
+            "main_tool_denials": 0,
+            "takeovers": 0,
+            "main_only_exceptions": {},
+            "closed": {"complete": 0, "blocked": 0},
+            "leaf_results": 0,
+            "model_selection": {
+                "appropriate": 0,
+                "underpowered": 0,
+                "overpowered": 0,
+                "inconclusive": 0,
+            },
+            "cost": {
+                "observed_results": 0,
+                "unobserved_results": 0,
+                "weighted_tokens_observed": None,
+            },
+            "quality": {
+                "accepted": 0,
+                "failed": 0,
+                "path_blocked": 0,
+                "integration_accepted": 0,
+                "pass": 0,
+                "fail": 0,
+                "inconclusive": 0,
+            },
+            "reviews": {
+                "status": "not_requested",
+                "cumulative_snapshot_count": 0,
+                "latest_covered_leaf_results": None,
+                "unreviewed_leaf_results": 0,
+            },
+            "anomalies": _health_anomalies(),
+        }
+        controller_status = "not_requested"
+    else:
+        controller, controller_status = _health_controller(Path(controller_ledger))
     sources = {
         "policy": {"status": policy_status},
         "attempts": {"status": attempts_status},
         "reviews": {"status": reviews_status},
         "continuity": {"status": continuity_status},
         "dispatch": {"status": dispatch_status},
+        "controller": {"status": controller_status},
     }
     required_bad = policy_status != "ok" or attempts_status != "ok"
     present_bad = any(item["status"] == "degraded" for item in sources.values())
-    optional_unavailable = any(sources[key]["status"] == "unavailable" for key in ("reviews", "continuity", "dispatch"))
+    optional_unavailable = any(
+        sources[key]["status"] == "unavailable"
+        for key in ("reviews", "continuity", "dispatch", "controller")
+    )
     overall_status = "degraded" if required_bad or present_bad else "partial" if optional_unavailable else "healthy"
     current = attempts["totals"]["current_policy_paired"]
     current_accepted = attempts["totals"]["current_policy_accepted"]
     current_integrated = attempts["totals"]["current_policy_integrated"]
+    minimum_accepted = int(
+        (policy or {}).get("audit", {}).get(
+            "review_every_accepted_attempts", AUTO_REVIEW_ACCEPTED_CADENCE
+        )
+    )
+    sufficient = (
+        current_accepted >= minimum_accepted
+        and current_integrated >= minimum_accepted
+    )
     evidence = {
-        "status": "insufficient_current_policy_evidence" if current_accepted == 0 or current_integrated == 0 else "sufficient_current_policy_evidence",
+        "status": (
+            "sufficient_current_policy_sample"
+            if sufficient
+            else "insufficient_current_policy_sample"
+        ),
         "current_policy_paired": current,
         "accepted": current_accepted,
         "integrated": current_integrated,
+        "minimum_accepted": minimum_accepted,
+        "accepted_remaining": max(0, minimum_accepted - current_accepted),
+        "integrated_remaining": max(0, minimum_accepted - current_integrated),
         "terra_direct_latency": attempts["terra_observations"]["direct_latency"],
         "terra_post_luna_failure": attempts["terra_observations"]["post_luna_failure"],
     }
+    latest_covered = reviews.get("latest_covered_pairs")
+    reviews["unreviewed_paired"] = (
+        max(0, attempts["totals"]["paired"] - latest_covered)
+        if isinstance(latest_covered, int)
+        else attempts["totals"]["paired"]
+    )
     report = {
         "schema_version": HEALTH_SCHEMA_VERSION,
         "overall_status": overall_status,
@@ -2867,6 +3401,7 @@ def health_report(ledger: Path = DEFAULT_LEDGER, review_dir: Path = DEFAULT_REVI
         "reviews": reviews,
         "continuity": continuity,
         "dispatch": dispatch,
+        "controller": controller,
         "evidence_sufficiency": evidence,
     }
     return report, 2 if overall_status == "degraded" else 0
@@ -2925,6 +3460,9 @@ def _build_parser() -> argparse.ArgumentParser:
     health.add_argument("--review-dir", type=Path, default=DEFAULT_REVIEW_DIR)
     health.add_argument("--continuity-ledger", type=Path)
     health.add_argument("--dispatch-ledger", type=Path)
+    health.add_argument(
+        "--controller-ledger", type=Path, default=DEFAULT_CONTROLLER_LEDGER
+    )
     health.add_argument("--format", choices=("json", "text"), default="json")
     return parser
 
@@ -2966,6 +3504,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.review_dir,
                 args.continuity_ledger,
                 args.dispatch_ledger,
+                args.controller_ledger,
             )
             rendered = _canonical_json(report)
             if args.format == "text":

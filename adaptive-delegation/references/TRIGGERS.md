@@ -1,9 +1,9 @@
 # Trigger Examples
 
 This file documents intended activation boundaries for the
-`adaptive-delegation` skill. Explicit invocation is the deterministic choice;
-implicit activation is permitted when the request clearly matches a positive
-example. The skill is Codex-only and routes Codex native subagents.
+`adaptive-delegation` skill. Activation is explicit and opt-in: the current
+request must begin with `$adaptive-delegation`. The skill is Codex-only and
+routes Codex native subagents.
 
 ## Positive explicit examples
 
@@ -12,19 +12,20 @@ example. The skill is Codex-only and routes Codex native subagents.
 - `$adaptive-delegation use token-efficient delegation for the independent check.`
 - `$adaptive-delegation apply Luna-first delegation with effort-first escalation.`
 
-## Positive implicit English examples
+## Discovery phrases that do not activate the skill
 
 - "Use cost-efficient subagents for this bounded transformation and preserve evidence."
 - "Can you perform a model routing audit and reduce Sol usage where the oracle is strong?"
-- "Choose evidence-checked delegation and take over in the main if the leaf fails."
-- "I need token efficiency and a Luna-first route for this multi-step task."
-- "Use token effective routing, including the token-effective retry ladder."
 - "Please use adaptive delegation for this bounded verification task."
 
-## Positive implicit localized triggers
+These phrases help users discover the skill but remain scoped main-direct work
+unless the user invokes `$adaptive-delegation`.
 
-The localized trigger literals are declared in the skill frontmatter. Keep
-this reference file in English so it remains portable across environments.
+## Localized discovery vocabulary
+
+Localized vocabulary is declared in the skill frontmatter for discovery only.
+It does not activate the controller. Keep this reference file in English so it
+remains portable across environments.
 
 ## Negative boundaries
 
@@ -33,4 +34,4 @@ this reference file in English so it remains portable across environments.
 - "Show a generic example of a model routing audit." — generic reference material only.
 - "Run this entire repository audit with unrestricted parallel agents." — does not request bounded adaptive delegation and conflicts with scope control.
 - "Change the parent model or global Codex configuration automatically." — outside this skill's authority; the skill cannot mutate the parent model.
-- A product bug fix with no request for delegation, model selection, cost, evidence, or routing — direct implementation remains outside implicit activation.
+- Any product bug fix without the explicit skill token — scoped main-direct behavior remains active.

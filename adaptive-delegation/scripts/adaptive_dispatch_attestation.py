@@ -3661,6 +3661,20 @@ def _direct_typed_launch(packet: dict[str, Any]) -> RecoveryLaunch | None:
     )
 
 
+def _execution_policy_failure_class(violation: str) -> str:
+    quantitative_limits = {
+        "rollout_line_bytes_exceeded",
+        "cumulative_tool_output_bytes_exceeded",
+        "tool_calls_exceeded",
+        "max_output_tokens_per_call_exceeded",
+        "child_stdout_bytes_exceeded",
+        "token_budget_exceeded",
+    }
+    if violation in quantitative_limits:
+        return "context_ceiling"
+    return "scope_or_retrieval_overbreadth"
+
+
 def _run_recovery(
     launch: RecoveryLaunch,
     ledger: Path,
@@ -3863,10 +3877,8 @@ def _run_recovery(
     )
     if execution_policy_violation is not None:
         if execution_status is not None:
-            execution_status["failure_class"] = (
-                "context_ceiling"
-                if execution_policy_violation == "token_budget_exceeded"
-                else "scope_or_retrieval_overbreadth"
+            execution_status["failure_class"] = _execution_policy_failure_class(
+                execution_policy_violation
             )
             execution_status["failure_signal"] = (
                 "budget_exhausted"
@@ -4378,7 +4390,8 @@ def _audited_dispatch(args: argparse.Namespace, packet: Any) -> int:
     )
     if context is not None:
         awaiting_integration = (
-            bool(status.get("execution_completed"))
+            result == EXIT_SUCCESS
+            and bool(status.get("execution_completed"))
             and bool(status.get("child_succeeded"))
             and not bool(status.get("integration_accepted"))
         ) or bool(status.get("finalize_precondition_failed"))
