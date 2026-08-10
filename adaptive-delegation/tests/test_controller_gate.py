@@ -113,7 +113,10 @@ class ControllerGateTests(unittest.TestCase):
             self.prompt_payload("$adaptive-delegation implement the bounded change"),
             runtime_home=self.runtime_home,
         )
-        self.assertEqual(output, {})
+        self.assertEqual(
+            output["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit"
+        )
+        self.assertIn("preflight", output["hookSpecificOutput"]["additionalContext"])
         states = list(
             (self.runtime_home / "state" / "adaptive-delegation" / "controller").glob(
                 "state-*.json"
@@ -163,7 +166,7 @@ class ControllerGateTests(unittest.TestCase):
         )
 
         after = json.loads(state_path.read_text(encoding="utf-8"))
-        self.assertEqual(output, {})
+        self.assertIn("preflight", output["systemMessage"])
         self.assertEqual(after["activation_id"], before["activation_id"])
         self.assertEqual(after["phase"], "leaf_required")
         ledger = state_path.parent / "controller-events.jsonl"
@@ -199,7 +202,7 @@ class ControllerGateTests(unittest.TestCase):
         )
 
         after = json.loads(state_path.read_text(encoding="utf-8"))
-        self.assertEqual(output, {})
+        self.assertIn("preflight", output["systemMessage"])
         self.assertNotEqual(after["activation_id"], before["activation_id"])
         self.assertEqual(after["phase"], "explicit_active")
 
@@ -221,6 +224,7 @@ class ControllerGateTests(unittest.TestCase):
         output = gate.handle_hook(payload, runtime_home=self.runtime_home)
 
         self.assertIn("declare-main", output["systemMessage"])
+        self.assertIn("preflight", output["systemMessage"])
         self.assertIn(self.session_id, output["systemMessage"])
         self.assertIn(str(self.cwd), output["systemMessage"])
         state_path = next(
@@ -386,6 +390,156 @@ class ControllerGateTests(unittest.TestCase):
             substitution["hookSpecificOutput"]["permissionDecision"],
             "deny",
         )
+
+    def test_controller_preflight_is_the_only_allowed_main_read_lane(self) -> None:
+        self.activate()
+        controller = shlex.quote(str(Path(gate.__file__).resolve()))
+        command = (
+            f"{shlex.quote(sys.executable)} {controller} preflight "
+            f"--session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            "--surface skill"
+        )
+
+        allowed = gate.handle_hook(
+            self.tool_payload("exec_command", {"cmd": command}),
+            runtime_home=self.runtime_home,
+        )
+        extra_flag = gate.handle_hook(
+            self.tool_payload(
+                "exec_command", {"cmd": command + " --model gpt-5.6-sol"}
+            ),
+            runtime_home=self.runtime_home,
+        )
+        route_without_role = gate.handle_hook(
+            self.tool_payload(
+                "exec_command",
+                {"cmd": command.removesuffix("skill") + "route"},
+            ),
+            runtime_home=self.runtime_home,
+        )
+        exact_route = gate.handle_hook(
+            self.tool_payload(
+                "exec_command",
+                {
+                    "cmd": command.removesuffix("skill")
+                    + "route --agent-type adaptive-luna-maker-high"
+                },
+            ),
+            runtime_home=self.runtime_home,
+        )
+        direct_read = gate.handle_hook(
+            self.tool_payload(
+                "exec_command",
+                {"cmd": f"sed -n '1,9999p' {gate.SKILL_ROOT / 'SKILL.md'}"},
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(allowed, {})
+        self.assertEqual(exact_route, {})
+        self.assertEqual(
+            extra_flag["hookSpecificOutput"]["permissionDecision"], "deny"
+        )
+        self.assertEqual(
+            route_without_role["hookSpecificOutput"]["permissionDecision"], "deny"
+        )
+        self.assertEqual(
+            direct_read["hookSpecificOutput"]["permissionDecision"], "deny"
+        )
+
+    def test_preflight_returns_only_skill_or_selected_route_surfaces(self) -> None:
+        self.activate()
+        agents = self.runtime_home / "agents"
+        agents.mkdir(parents=True)
+        role_name = "adaptive-luna-maker-high"
+        role_source = gate.SKILL_ROOT / "roles" / f"{role_name}.toml"
+        (agents / f"{role_name}.toml").write_text(
+            role_source.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+        skill = gate.read_controller_preflight(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            surface="skill",
+            agent_type=None,
+        )
+        route = gate.read_controller_preflight(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            surface="route",
+            agent_type=role_name,
+        )
+
+        self.assertIn("# Adaptive Delegation", skill["content"])
+        self.assertEqual(
+            route["task_defaults"]["clear_implementation_or_transformation"],
+            "luna_high",
+        )
+        self.assertEqual(route["role_binding"]["model"], "gpt-5.6-luna")
+        self.assertIn('model = "gpt-5.6-luna"', route["role_toml"])
+        with self.assertRaisesRegex(gate.ControllerGateError, "package-declared"):
+            gate.read_controller_preflight(
+                runtime_home=self.runtime_home,
+                session_id=self.session_id,
+                workspace=self.cwd,
+                surface="route",
+                agent_type="adaptive-not-installed",
+            )
+        role_text = (agents / f"{role_name}.toml").read_text(encoding="utf-8")
+        (agents / f"{role_name}.toml").unlink()
+        agents.rmdir()
+        outside = self.runtime_home.parent / "outside-agents"
+        outside.mkdir()
+        (outside / f"{role_name}.toml").write_text(role_text, encoding="utf-8")
+        agents.symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(gate.ControllerGateError, "unavailable"):
+            gate.read_controller_preflight(
+                runtime_home=self.runtime_home,
+                session_id=self.session_id,
+                workspace=self.cwd,
+                surface="route",
+                agent_type=role_name,
+            )
+
+    def test_route_preflight_rejects_symlinked_or_oversized_policy(self) -> None:
+        self.activate()
+        agents = self.runtime_home / "agents"
+        agents.mkdir(parents=True)
+        role_name = "adaptive-luna-maker-high"
+        role_source = gate.SKILL_ROOT / "roles" / f"{role_name}.toml"
+        (agents / f"{role_name}.toml").write_text(
+            role_source.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        outside = self.runtime_home.parent / "outside-policy.json"
+        outside.write_text(gate.POLICY_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+        linked = self.runtime_home.parent / "linked-policy.json"
+        linked.symlink_to(outside)
+
+        with mock.patch.object(gate, "POLICY_PATH", linked):
+            with self.assertRaisesRegex(gate.ControllerGateError, "unavailable"):
+                gate.read_controller_preflight(
+                    runtime_home=self.runtime_home,
+                    session_id=self.session_id,
+                    workspace=self.cwd,
+                    surface="route",
+                    agent_type=role_name,
+                )
+
+        oversized = self.runtime_home.parent / "oversized-policy.json"
+        oversized.write_text(
+            " " * (gate.MAX_PREFLIGHT_FILE_BYTES + 1), encoding="utf-8"
+        )
+        with mock.patch.object(gate, "POLICY_PATH", oversized):
+            with self.assertRaisesRegex(gate.ControllerGateError, "exceeds"):
+                gate.read_controller_preflight(
+                    runtime_home=self.runtime_home,
+                    session_id=self.session_id,
+                    workspace=self.cwd,
+                    surface="route",
+                    agent_type=role_name,
+                )
 
     def test_matching_adaptive_child_is_not_blocked_by_main_controller_state(self) -> None:
         self.activate()

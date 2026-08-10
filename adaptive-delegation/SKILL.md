@@ -41,14 +41,20 @@ exact `controller_gate.py declare-main` command as model-visible context for
 the main to run. That declaration is current-session context supplied by the
 main, not cryptographic runtime proof. Task tools remain denied until the
 declaration is exactly `gpt-5.6-sol` at `high`, `xhigh`, `max`, or `ultra`.
+The hook also injects the exact `controller_gate.py preflight --surface skill`
+command. Use that bounded command to load this complete installed skill;
+direct shell reads remain denied after controller activation.
 
 Once active, the main is a controller, not a task worker. It may interpret
 intent, build and digest the Objective Lock, classify routes, launch or message
 leaves, integrate returned evidence, choose retries or escalation, ask the
 user, and make the final claim. The installed `PreToolUse` hook denies main
 task execution, including edits, shell work, repository inspection, tests, and
-network calls. Before a child launch, use the exact installed
-`controller_gate.py decision` command to record `leaf_required` with the
+network calls. Its only read lane is the controller's bounded preflight: the
+`skill` surface returns this file, while `route --agent-type <role>` returns
+only `task_defaults`, the selected package binding, and that installed role
+TOML after verifying the model and effort. Before a child launch, use the exact
+installed `controller_gate.py decision` command to record `leaf_required` with the
 Objective Lock digest and package-fixed `agent_type`, model, and effort. The
 command returns `launch_task_name`; the next spawn must use that exact
 `task_name`, match the remaining envelope, and use `fork_turns="none"`.
@@ -197,15 +203,16 @@ Record adjacent improvements as concise backlog findings instead of
 implementing them.
 
 Keep routing preflight proportional to the locked task. After loading this
-`SKILL.md` once, do not reopen it, enumerate the package, inspect dispatcher
-source, invoke `--help`, or read optional references merely to reconstruct
-package internals. For an ordinary bounded Native route, inspect the live spawn
-schema/catalog once, read only the selected entry in
-`config/model-routing.defaults.json` and its installed role TOML, then use the
-documented admission interface. For the config read, select only
-`task_defaults` plus `.role_bindings[$role]` with the exact role name; never
-fall back to printing the whole JSON object. Expand that preflight only after a
-concrete admission failure makes a specific additional read necessary.
+`SKILL.md` once through the injected `preflight --surface skill` command, do not reopen it, enumerate the package,
+inspect dispatcher source, invoke `--help`, or read optional references merely
+to reconstruct package internals.
+For an ordinary bounded Native route, inspect the live spawn schema/catalog
+once, then run `controller_gate.py preflight --surface route --agent-type
+<role>` with the exact selected role. That command returns only
+`task_defaults`, the selected policy binding, and the matching installed role
+TOML; do not replace it with direct `jq`, `sed`, or whole-policy output. Expand
+that preflight only after a concrete admission failure makes a specific
+additional read necessary.
 
 Expand scope only when direct evidence proves that the accepted path crosses a
 required public contract, shared invariant, security/auth/financial boundary,
