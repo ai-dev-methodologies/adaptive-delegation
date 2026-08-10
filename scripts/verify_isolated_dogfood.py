@@ -145,6 +145,7 @@ def preflight_violations(commands: list[str]) -> list[str]:
     """Reject optional package archaeology in the fresh bounded fixture."""
     violations: list[str] = []
     for command in commands:
+        segments = re.split(r"&&|\|\||[;|\n]", command)
         optional_internal_read = any(
             marker in command
             for marker in (
@@ -157,11 +158,14 @@ def preflight_violations(commands: list[str]) -> list[str]:
         dispatcher_archaeology = "adaptive_dispatch_attestation.py" in command and any(
             marker in command for marker in (" --help", "sed -n", "rg -n", "rg -l")
         )
-        package_enumeration = "adaptive-delegation" in command and "rg --files" in command
+        package_enumeration = any(
+            "adaptive-delegation" in segment and "rg --files" in segment
+            for segment in segments
+        )
         broad_config_dump = any(
             "model-routing.defaults.json" in segment
             and any(marker in segment for marker in ("// .", "cat ", "sed -n"))
-            for segment in re.split(r"&&|\|\||[;|\n]", command)
+            for segment in segments
         )
         if (
             optional_internal_read
