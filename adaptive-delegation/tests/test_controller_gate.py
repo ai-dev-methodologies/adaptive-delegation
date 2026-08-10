@@ -29,6 +29,8 @@ class ControllerGateTests(unittest.TestCase):
         self.cwd = Path(self.temporary.name) / "workspace"
         self.cwd.mkdir()
         self.session_id = "11111111-1111-4111-8111-111111111111"
+        self.main_turn_id = "22222222-2222-4222-8222-222222222222"
+        self.child_turn_id = "33333333-3333-4333-8333-333333333333"
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -37,6 +39,7 @@ class ControllerGateTests(unittest.TestCase):
         return {
             "hook_event_name": "UserPromptSubmit",
             "session_id": self.session_id,
+            "turn_id": self.main_turn_id,
             "cwd": str(self.cwd),
             "prompt": prompt,
             "model": "gpt-5.6-sol",
@@ -52,12 +55,58 @@ class ControllerGateTests(unittest.TestCase):
         payload: dict[str, object] = {
             "hook_event_name": "PreToolUse",
             "session_id": self.session_id,
+            "turn_id": self.main_turn_id,
             "cwd": str(self.cwd),
             "tool_name": tool_name,
             "tool_input": tool_input or {},
         }
         payload.update(overrides)
         return payload
+
+    def child_transcript(
+        self,
+        decision: dict[str, object],
+        *,
+        turn_id: str | None = None,
+        task_name: str | None = None,
+    ) -> Path:
+        planned = decision["planned_launch"]
+        self.assertIsInstance(planned, dict)
+        selected_task_name = task_name or planned["task_name"]
+        selected_turn_id = turn_id or self.child_turn_id
+        transcript = self.runtime_home / "sessions" / "child-rollout.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        rows = [
+            {
+                "type": "session_meta",
+                "payload": {
+                    "session_id": self.session_id,
+                    "parent_thread_id": self.session_id,
+                    "thread_source": "subagent",
+                    "agent_role": planned["agent_type"],
+                    "source": {
+                        "subagent": {
+                            "thread_spawn": {
+                                "parent_thread_id": self.session_id,
+                                "agent_path": f"/root/{selected_task_name}",
+                                "agent_role": planned["agent_type"],
+                            }
+                        }
+                    },
+                },
+            },
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_started",
+                    "turn_id": selected_turn_id,
+                },
+            },
+        ]
+        transcript.write_text(
+            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+        )
+        return transcript
 
     def activate(self) -> Path:
         output = gate.handle_hook(
@@ -79,6 +128,7 @@ class ControllerGateTests(unittest.TestCase):
         state = json.loads(state_path.read_text(encoding="utf-8"))
         self.assertEqual(state["phase"], "explicit_active")
         self.assertEqual(state["session_id"], self.session_id)
+        self.assertEqual(state["main_turn_id"], self.main_turn_id)
         self.assertEqual(state["workspace"], str(self.cwd.resolve()))
         self.assertNotIn("prompt", state)
         self.assertEqual(stat.S_IMODE(state_path.stat().st_mode), 0o600)
@@ -339,18 +389,94 @@ class ControllerGateTests(unittest.TestCase):
 
     def test_matching_adaptive_child_is_not_blocked_by_main_controller_state(self) -> None:
         self.activate()
-
-        output = gate.handle_hook(
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest="3" * 64,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        gate.handle_hook(
             self.tool_payload(
-                "functions.exec",
-                {"source": "await tools.exec_command({cmd: 'python3 -m unittest'});"},
+                "collaborationspawn_agent",
+                {
+                    "task_name": decision["planned_launch"]["task_name"],
+                    "message": "gAAAAABopaque-native-hook-message",
+                    "agent_type": "adaptive-luna-maker-high",
+                    "reasoning_effort": "high",
+                    "fork_turns": "none",
+                },
                 agent_type="adaptive-luna-maker-high",
                 parent_session_id=self.session_id,
             ),
             runtime_home=self.runtime_home,
         )
+        wrong_transcript = self.child_transcript(
+            decision,
+            task_name="adaptive_" + "f" * 64,
+        )
+        wrong_child = gate.handle_hook(
+            self.tool_payload(
+                "Bash",
+                {"command": "sed -n '1p' bounded.txt"},
+                turn_id=self.child_turn_id,
+                transcript_path=str(wrong_transcript),
+            ),
+            runtime_home=self.runtime_home,
+        )
+        child_transcript = self.child_transcript(decision)
 
+        output = gate.handle_hook(
+            self.tool_payload(
+                "Bash",
+                {"command": "sed -n '1p' bounded.txt"},
+                turn_id=self.child_turn_id,
+                transcript_path=str(child_transcript),
+            ),
+            runtime_home=self.runtime_home,
+        )
+        foreign_output = gate.handle_hook(
+            self.tool_payload(
+                "Bash",
+                {"command": "sed -n '1p' foreign.txt"},
+                turn_id="55555555-5555-4555-8555-555555555555",
+                transcript_path=str(child_transcript),
+            ),
+            runtime_home=self.runtime_home,
+        )
+        main_output = gate.handle_hook(
+            self.tool_payload(
+                "Bash",
+                {"command": "sed -n '1p' main-must-not-read.txt"},
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(
+            wrong_child["hookSpecificOutput"]["permissionDecision"], "deny"
+        )
         self.assertEqual(output, {})
+        self.assertEqual(
+            foreign_output["hookSpecificOutput"]["permissionDecision"], "deny"
+        )
+        self.assertEqual(
+            main_output["hookSpecificOutput"]["permissionDecision"], "deny"
+        )
+
+    def test_nonexplicit_user_prompt_refreshes_the_main_turn_identity(self) -> None:
+        state_path = self.activate()
+        next_turn_id = "44444444-4444-4444-8444-444444444444"
+        payload = self.prompt_payload("Continue with a normal main request")
+        payload["turn_id"] = next_turn_id
+
+        output = gate.handle_hook(payload, runtime_home=self.runtime_home)
+
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(output, {})
+        self.assertEqual(state["main_turn_id"], next_turn_id)
 
     def test_main_spawn_metadata_cannot_bypass_a_missing_leaf_decision(self) -> None:
         self.activate()

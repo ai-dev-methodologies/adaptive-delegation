@@ -59,6 +59,13 @@ contract still requires the full portable Objective Lock in the child message.
 The hook evaluates spawn authorization before any adaptive-child tool
 exemption because Codex also carries child role and parent metadata on the
 main's spawn request; that metadata never authorizes an unplanned launch.
+Subagent `PreToolUse` calls share the parent `session_id` and do not carry a
+role field. The controller therefore binds the main `turn_id` from
+`UserPromptSubmit`, refreshes it on later user prompts, and treats only a
+different turn whose owner-only rollout metadata matches the issued task name,
+role, parent, and `task_started` turn as the active child after the exact locked
+spawn is consumed. That one child turn is then fixed in controller state; the
+same-turn main and every foreign turn remain denied throughout leaf execution.
 The hook recognizes the fixed control-plane and spawn allowlists in both their
 separator-preserving and Codex-sanitized tool-name forms. A repeated explicit
 invocation in the same session preserves any open controller, Objective Lock,

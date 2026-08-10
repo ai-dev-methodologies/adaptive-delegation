@@ -31,7 +31,11 @@ must use it exactly. This binds the opaque native child message to the recorded
 Objective Lock decision without claiming that the hook can decrypt or inspect
 the message body. Spawn authorization takes precedence over adaptive-child
 metadata carried on the main request, so that metadata cannot bypass the
-pending locked launch.
+pending locked launch. Because Codex subagent tool hooks share the parent
+`session_id`, the controller records the main `turn_id` and, after an exact
+launch, binds the one child turn whose owner-only rollout metadata matches the
+issued task name, role, parent, and start turn. Later user prompts refresh the
+main turn binding before any task tool can run; other turns remain denied.
 Repeating an explicit invocation preserves the existing open controller rather
 than replacing its Objective Lock or pending launch.
 Each authorized Native launch must be closed with a structured controller
@@ -53,7 +57,7 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.7.4`.
+Current installable package version: `0.7.5`.
 
 ### Read-only evidence health
 
