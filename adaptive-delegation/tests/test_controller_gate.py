@@ -352,6 +352,34 @@ class ControllerGateTests(unittest.TestCase):
 
         self.assertEqual(output, {})
 
+    def test_main_spawn_metadata_cannot_bypass_a_missing_leaf_decision(self) -> None:
+        self.activate()
+
+        output = gate.handle_hook(
+            self.tool_payload(
+                "collaborationspawn_agent",
+                {
+                    "task_name": "adaptive_" + "0" * 64,
+                    "message": "gAAAAABopaque-native-hook-message",
+                    "agent_type": "adaptive-luna-maker-high",
+                    "reasoning_effort": "high",
+                    "fork_turns": "none",
+                },
+                agent_type="adaptive-luna-maker-high",
+                parent_session_id=self.session_id,
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        state_path = next(
+            (self.runtime_home / "state" / "adaptive-delegation" / "controller").glob(
+                "state-*.json"
+            )
+        )
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["phase"], "explicit_active")
+
     def test_cost_or_task_size_cannot_authorize_main_only_execution(self) -> None:
         self.activate()
 
@@ -467,6 +495,8 @@ class ControllerGateTests(unittest.TestCase):
                     "reasoning_effort": "high",
                     "fork_turns": "none",
                 },
+                agent_type="adaptive-luna-maker-high",
+                parent_session_id=self.session_id,
             ),
             runtime_home=self.runtime_home,
         )

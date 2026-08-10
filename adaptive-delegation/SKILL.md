@@ -56,6 +56,9 @@ Codex exposes the native child `message` opaquely to `PreToolUse`, so the hook
 does not pretend to decrypt or inspect it. Instead, the controller-issued task
 name binds that spawn to the recorded Objective Lock decision while the skill
 contract still requires the full portable Objective Lock in the child message.
+The hook evaluates spawn authorization before any adaptive-child tool
+exemption because Codex also carries child role and parent metadata on the
+main's spawn request; that metadata never authorizes an unplanned launch.
 The hook recognizes the fixed control-plane and spawn allowlists in both their
 separator-preserving and Codex-sanitized tool-name forms. A repeated explicit
 invocation in the same session preserves any open controller, Objective Lock,

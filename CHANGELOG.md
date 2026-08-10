@@ -14,6 +14,16 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.7.4] - 2026-08-10
+
+- Closed a native-hook ordering bypass found by the clean-main isolated
+  promotion gate. Codex includes child role and parent metadata on the main's
+  spawn request; spawn authorization now runs before the adaptive-child tool
+  exemption, so a child cannot be created without consuming the exact pending
+  locked launch and advancing controller state.
+- Added regression coverage for both a valid metadata-bearing main spawn and
+  an unplanned metadata-bearing spawn with no leaf decision.
+
 ## [0.7.3] - 2026-08-10
 
 - Replaced plaintext Objective Lock digest inspection in native spawn messages
