@@ -330,8 +330,10 @@ that created them. It also excludes repository tests, deployment-only
 documentation, maintainer references, bytecode, and caches from the installed
 skill; `scripts/package_manifest.py` defines the exact runtime allowlist.
 The isolated promotion gate is mandatory before user-level installation; it is
-a same-user quality guard, not a security boundary. See [`INSTALL.md`](INSTALL.md)
-for its temporary-auth-symlink workflow and the explicit later approval step.
+a same-user quality guard, not a security boundary. Its routing preflight
+allows bounded policy and exact role lookups while rejecting broad package
+enumeration. See [`INSTALL.md`](INSTALL.md) for its temporary-auth-symlink
+workflow and the explicit later approval step.
 For the complete install, update, rollback, and second-PC workflow, see
 [`INSTALL.md`](INSTALL.md).
 
