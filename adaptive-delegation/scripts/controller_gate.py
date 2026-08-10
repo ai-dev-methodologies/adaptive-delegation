@@ -13,6 +13,7 @@ import re
 import shlex
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,7 @@ SPAWN_TOOLS = {
 }
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 POLICY_PATH = SKILL_ROOT / "config" / "model-routing.defaults.json"
+MAX_PREFLIGHT_FILE_BYTES = 512 * 1024
 
 
 class ControllerGateError(RuntimeError):
@@ -364,18 +366,104 @@ def _evidence_references(values: list[str] | None) -> list[str]:
     return values
 
 
-def _role_binding(agent_type: str) -> dict[str, Any]:
+def _role_binding(
+    agent_type: str, *, policy: dict[str, Any] | None = None
+) -> dict[str, Any]:
     if SAFE_AGENT_TYPE.fullmatch(agent_type) is None:
         raise ControllerGateError("leaf decision requires a safe adaptive agent_type")
-    try:
-        policy = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ControllerGateError("installed routing policy is unavailable") from exc
+    if policy is None:
+        policy = _routing_policy()
     bindings = policy.get("role_bindings") if isinstance(policy, dict) else None
     binding = bindings.get(agent_type) if isinstance(bindings, dict) else None
     if not isinstance(binding, dict):
         raise ControllerGateError("leaf decision agent_type is not package-declared")
     return binding
+
+
+def _bounded_regular_file(path: Path, *, label: str) -> str:
+    try:
+        if path.is_symlink() or not path.is_file():
+            raise ControllerGateError(f"{label} is unavailable")
+        if path.stat().st_size > MAX_PREFLIGHT_FILE_BYTES:
+            raise ControllerGateError(f"{label} exceeds the preflight bound")
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ControllerGateError(f"{label} is unavailable") from exc
+
+
+def _routing_policy() -> dict[str, Any]:
+    content = _bounded_regular_file(POLICY_PATH, label="installed routing policy")
+    try:
+        policy = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise ControllerGateError("installed routing policy is invalid") from exc
+    if not isinstance(policy, dict):
+        raise ControllerGateError("installed routing policy is invalid")
+    return policy
+
+
+def read_controller_preflight(
+    *,
+    runtime_home: Path | None,
+    session_id: str,
+    workspace: str | Path,
+    surface: str,
+    agent_type: str | None,
+) -> dict[str, Any]:
+    resolved_home = _runtime_home(runtime_home)
+    resolved_workspace = _canonical_workspace(workspace)
+    state = _load_state(resolved_home, session_id, resolved_workspace)
+    if state is None or state.get("phase") == "closed":
+        raise ControllerGateError("controller preflight requires an open activation")
+    if surface == "skill":
+        if agent_type is not None:
+            raise ControllerGateError("skill preflight does not accept an agent_type")
+        return {
+            "surface": "skill",
+            "content": _bounded_regular_file(
+                SKILL_ROOT / "SKILL.md", label="installed adaptive skill"
+            ),
+        }
+    if surface != "route":
+        raise ControllerGateError("controller preflight surface is invalid")
+    if state.get("phase") not in {"explicit_active", "leaf_result_recorded"}:
+        raise ControllerGateError("route preflight requires declared main authority")
+    if not isinstance(agent_type, str):
+        raise ControllerGateError("route preflight requires an agent_type")
+    policy = _routing_policy()
+    binding = _role_binding(agent_type, policy=policy)
+    task_defaults = policy.get("task_defaults")
+    if not isinstance(task_defaults, dict):
+        raise ControllerGateError("installed routing defaults are unavailable")
+    agents_root = resolved_home / "agents"
+    role_path = agents_root / f"{agent_type}.toml"
+    try:
+        if agents_root.is_symlink():
+            raise ControllerGateError("installed role binding is unavailable")
+        resolved_role = role_path.resolve(strict=True)
+        resolved_role.relative_to(agents_root.resolve(strict=True))
+    except (OSError, ValueError) as exc:
+        raise ControllerGateError("installed role binding is unavailable") from exc
+    if role_path.is_symlink():
+        raise ControllerGateError("installed role binding is unavailable")
+    role_toml = _bounded_regular_file(resolved_role, label="installed role binding")
+    try:
+        role = tomllib.loads(role_toml)
+    except tomllib.TOMLDecodeError as exc:
+        raise ControllerGateError("installed role binding is invalid") from exc
+    if (
+        role.get("name") != agent_type
+        or role.get("model") != binding.get("model")
+        or role.get("model_reasoning_effort") != binding.get("reasoning_effort")
+    ):
+        raise ControllerGateError("installed role binding does not match policy")
+    return {
+        "surface": "route",
+        "task_defaults": task_defaults,
+        "agent_type": agent_type,
+        "role_binding": binding,
+        "role_toml": role_toml,
+    }
 
 
 def record_main_declaration(
@@ -861,6 +949,7 @@ def _authorized_controller_command(
     if controller != Path(__file__).resolve() or tokens[2] not in {
         "decision",
         "declare-main",
+        "preflight",
         "result",
         "close",
     }:
@@ -875,6 +964,7 @@ def _authorized_controller_command(
         "--agent-type",
         "--model",
         "--reasoning-effort",
+        "--surface",
         "--outcome",
         "--route-assessment",
         "--quality-verdict",
@@ -900,6 +990,8 @@ def _authorized_controller_command(
         required.update({"--decision", "--objective-lock-digest"})
     elif tokens[2] == "declare-main":
         required.update({"--model", "--reasoning-effort"})
+    elif tokens[2] == "preflight":
+        required.add("--surface")
     elif tokens[2] == "result":
         required.update(
             {
@@ -921,7 +1013,20 @@ def _authorized_controller_command(
         command_workspace = _canonical_workspace(values["--workspace"][0])
     except ControllerGateError:
         return False
-    return command_workspace == workspace
+    if command_workspace != workspace:
+        return False
+    if tokens[2] == "preflight":
+        surface = values.get("--surface")
+        if surface == ["skill"]:
+            return set(values) == {"--session-id", "--workspace", "--surface"}
+        if surface == ["route"]:
+            return (
+                set(values)
+                == {"--session-id", "--workspace", "--surface", "--agent-type"}
+                and SAFE_AGENT_TYPE.fullmatch(values["--agent-type"][0]) is not None
+            )
+        return False
+    return True
 
 
 def _resolved_transcript_path(
@@ -1180,6 +1285,19 @@ def handle_hook(
         if EXPLICIT_INVOCATION.search(prompt):
             try:
                 activated = _activate(payload, resolved_home)
+                skill_command = shlex.join(
+                    [
+                        sys.executable,
+                        str(Path(__file__).resolve()),
+                        "preflight",
+                        "--session-id",
+                        _session_from_payload(payload),
+                        "--workspace",
+                        str(_workspace_from_payload(payload)),
+                        "--surface",
+                        "skill",
+                    ]
+                )
                 if not activated:
                     command = shlex.join(
                         [
@@ -1198,7 +1316,9 @@ def handle_hook(
                     )
                     message = (
                         "Adaptive Delegation is controller-only and is waiting for a "
-                        "declared current-session main authority. Replace the final "
+                        "declared current-session main authority. First load the complete "
+                        "installed skill through the bounded controller preflight by running "
+                        f"exactly: {skill_command}. Then replace the final "
                         "effort placeholder with the actual current effort and run: "
                         f"{command}. Task tools remain denied until that bounded "
                         "gpt-5.6-sol/high-or-above declaration succeeds."
@@ -1210,6 +1330,20 @@ def handle_hook(
                             "additionalContext": message,
                         },
                     }
+                message = (
+                    "Adaptive Delegation controller authority is active. Before route "
+                    "work, if it is not already loaded for this open activation, load "
+                    "the complete installed skill through the bounded "
+                    f"controller preflight by running exactly: {skill_command}. "
+                    "Do not replace this with a direct shell read."
+                )
+                return {
+                    "systemMessage": message,
+                    "hookSpecificOutput": {
+                        "hookEventName": "UserPromptSubmit",
+                        "additionalContext": message,
+                    },
+                }
             except ControllerGateError:
                 model = _payload_string(payload, "model", "main_model", "mainModel") or "unknown"
                 effort = _payload_string(
@@ -1266,6 +1400,11 @@ def _parser() -> argparse.ArgumentParser:
     declare.add_argument("--workspace", required=True, type=Path)
     declare.add_argument("--model", required=True)
     declare.add_argument("--reasoning-effort", required=True)
+    preflight = subparsers.add_parser("preflight")
+    preflight.add_argument("--session-id", required=True)
+    preflight.add_argument("--workspace", required=True, type=Path)
+    preflight.add_argument("--surface", required=True, choices=("skill", "route"))
+    preflight.add_argument("--agent-type")
     result = subparsers.add_parser("result")
     result.add_argument("--session-id", required=True)
     result.add_argument("--workspace", required=True, type=Path)
@@ -1325,6 +1464,20 @@ def main(argv: list[str] | None = None) -> int:
                 reasoning_effort=args.reasoning_effort,
             )
             print(_canonical_json({"phase": result["phase"], "recorded": True}))
+            return 0
+        if args.command == "preflight":
+            result = read_controller_preflight(
+                runtime_home=None,
+                session_id=args.session_id,
+                workspace=args.workspace,
+                surface=args.surface,
+                agent_type=args.agent_type,
+            )
+            if args.surface == "skill":
+                ending = "" if result["content"].endswith("\n") else "\n"
+                print(result["content"], end=ending)
+            else:
+                print(_canonical_json(result))
             return 0
         if args.command == "result":
             result = record_leaf_result(

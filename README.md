@@ -26,6 +26,10 @@ evidence-backed main-only exception/takeover is recorded. Cost, task size,
 existing context, convenience, and latency never justify direct main work.
 The hook accepts only the fixed control-plane and spawn allowlists while
 matching both separator-preserving tool names and Codex's sanitized hook names.
+Controller activation injects an exact bounded `preflight` command that loads
+the complete installed skill. A second `route` preflight returns only routing
+defaults, the selected package binding, and its verified installed role TOML;
+direct main shell reads remain denied.
 Each leaf decision returns a one-time `launch_task_name`; the next native spawn
 must use it exactly. This binds the opaque native child message to the recorded
 Objective Lock decision without claiming that the hook can decrypt or inspect
@@ -57,7 +61,7 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.7.5`.
+Current installable package version: `0.7.6`.
 
 ### Read-only evidence health
 
@@ -240,10 +244,12 @@ definition does not request adaptive routing.
 
 After explicit activation:
 
-1. Validate that the current main is `gpt-5.6-sol` at `high` or above. When the
-   prompt hook omits reasoning effort, the main completes the bounded
-   controller declaration from the injected model-visible context before any
-   task tool. The skill cannot mutate a failing parent configuration.
+1. Load the complete installed skill through the exact bounded `preflight`
+   command injected by the activation hook, then validate that the current
+   main is `gpt-5.6-sol` at `high` or above. When the prompt hook omits
+   reasoning effort, the main completes the bounded controller declaration
+   from the injected model-visible context before any task tool. The skill
+   cannot mutate a failing parent configuration.
 2. Construct one portable Objective Lock before any child launch.
 3. The main classifies every bounded slice before launch. It records task
    shape, oracle strength, risk and ambiguity, latency sensitivity, execution

@@ -14,6 +14,16 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.7.6] - 2026-08-11
+
+- Added a fail-closed controller `preflight` command so an activated main can
+  load the complete installed skill and verify only the selected route binding
+  plus installed role TOML without opening a general shell-read lane.
+- Injected the exact skill-preflight command at explicit activation and kept
+  direct `sed`, `jq`, package enumeration, product inspection, and other main
+  task reads denied. Regression coverage verifies both the bounded lane and
+  the continued denial of arbitrary direct reads.
+
 ## [0.7.5] - 2026-08-10
 
 - Aligned child tool admission with the documented Codex hook wire format.
