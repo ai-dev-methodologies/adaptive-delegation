@@ -26,6 +26,10 @@ evidence-backed main-only exception/takeover is recorded. Cost, task size,
 existing context, convenience, and latency never justify direct main work.
 The hook accepts only the fixed control-plane and spawn allowlists while
 matching both separator-preserving tool names and Codex's sanitized hook names.
+Each leaf decision returns a one-time `launch_task_name`; the next native spawn
+must use it exactly. This binds the opaque native child message to the recorded
+Objective Lock decision without claiming that the hook can decrypt or inspect
+the message body.
 Repeating an explicit invocation preserves the existing open controller rather
 than replacing its Objective Lock or pending launch.
 Each authorized Native launch must be closed with a structured controller
@@ -47,7 +51,7 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.7.2`.
+Current installable package version: `0.7.3`.
 
 ### Read-only evidence health
 
@@ -97,7 +101,8 @@ policy boundary, not an operating-system security boundary.
 - The declared main session must be `gpt-5.6-sol` at `high`, `xhigh`, `max`, or
   `ultra` before a package-owned child can launch.
 - The main must record the Objective Lock digest and exact fixed
-  role/model/effort before a native leaf launch. A launch mismatch is denied.
+  role/model/effort before a native leaf launch, then use the returned
+  `launch_task_name` exactly. A task/role/model/effort mismatch is denied.
 - The main must record the leaf outcome, route fitness, quality/integration
   verdict, measurement coverage, and bounded evidence before another decision.
   Missing token usage is unavailable, never observed zero.

@@ -155,8 +155,11 @@ recoverability, and non-ambiguity. Terra has no `ultra` route.
 
 Prefer Native routing by choosing the installed fixed `agent_type` for the
 selected Luna, Terra, or Sol leaf route, verifying its TOML model/effort binding,
-passing the same effort and `fork_turns="none"`, and validating local runtime
-model/effort metadata. The role selection is an explicit model choice. The
+passing the controller decision's exact `launch_task_name` as `task_name`, the
+same effort, and `fork_turns="none"`, and validating local runtime model/effort
+metadata. Native `PreToolUse` receives an opaque child message, so this issued
+task name binds the launch to the recorded Objective Lock decision without
+claiming message decryption. The role selection is an explicit model choice. The
 selected model need not appear in the optional `model` override enum, so its
 absence there is not evidence that the fixed Native route is unsupported.
 

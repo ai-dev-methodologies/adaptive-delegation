@@ -120,6 +120,28 @@ def _timestamp() -> str:
     return _datetime.datetime.now(_datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _launch_task_name(
+    *,
+    activation_id: str,
+    objective_lock_digest: str,
+    timestamp: str,
+    agent_type: str,
+    model: str,
+    reasoning_effort: str,
+) -> str:
+    material = _canonical_json(
+        {
+            "activation_id": activation_id,
+            "agent_type": agent_type,
+            "model": model,
+            "objective_lock_digest": objective_lock_digest,
+            "reasoning_effort": reasoning_effort,
+            "timestamp": timestamp,
+        }
+    ).encode("utf-8")
+    return f"adaptive_{hashlib.sha256(material).hexdigest()}"
+
+
 def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     _ensure_private_directory(path.parent)
     if os.path.lexists(path) and path.is_symlink():
@@ -719,6 +741,14 @@ def record_decision(
             "model": model,
             "reasoning_effort": reasoning_effort,
             "fork_turns": "none",
+            "task_name": _launch_task_name(
+                activation_id=str(state["activation_id"]),
+                objective_lock_digest=objective_lock_digest,
+                timestamp=timestamp,
+                agent_type=str(agent_type),
+                model=str(model),
+                reasoning_effort=str(reasoning_effort),
+            ),
         }
     _atomic_write_json(_state_path(resolved_home, session_id, resolved_workspace), updated)
     event = {
@@ -896,17 +926,21 @@ def _authorize_spawn(
         launch.get("agent_type") == planned.get("agent_type")
         and launch.get("reasoning_effort") == planned.get("reasoning_effort")
         and launch.get("fork_turns") == "none"
+        and launch.get("task_name") == planned.get("task_name")
         and (
             launch.get("model") is None
             or launch.get("model") == planned.get("model")
         )
     )
     if not exact:
-        return _deny("Adaptive Delegation launch envelope does not match the locked role/model/effort.")
+        return _deny(
+            "Adaptive Delegation launch envelope does not match the locked "
+            "task/role/model/effort."
+        )
     message = launch.get("message")
     digest = state.get("objective_lock_digest")
-    if not isinstance(message, str) or not isinstance(digest, str) or digest not in message:
-        return _deny("Adaptive Delegation launch envelope is missing the locked Objective Lock digest.")
+    if not isinstance(message, str) or not message or not isinstance(digest, str):
+        return _deny("Adaptive Delegation launch envelope is missing its required child message.")
     timestamp = _timestamp()
     updated = dict(state)
     updated["phase"] = "leaf_launch_authorized"
@@ -1115,7 +1149,10 @@ def main(argv: list[str] | None = None) -> int:
                 model=args.model,
                 reasoning_effort=args.reasoning_effort,
             )
-            print(_canonical_json({"phase": result["phase"], "recorded": True}))
+            output: dict[str, Any] = {"phase": result["phase"], "recorded": True}
+            if result["phase"] == "leaf_required":
+                output["launch_task_name"] = result["planned_launch"]["task_name"]
+            print(_canonical_json(output))
             return 0
         if args.command == "declare-main":
             result = record_main_declaration(
