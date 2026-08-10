@@ -200,8 +200,9 @@ class IsolatedDogfoodTests(unittest.TestCase):
             ".role_bindings[\"adaptive-luna-maker-high\"]}' "
             '"$RUNTIME_HOME/skills/adaptive-delegation/config/'
             'model-routing.defaults.json"; '
-            "sed -n '1,200p' "
-            '"$RUNTIME_HOME/agents/adaptive-luna-maker-high.toml"'
+            'ROLE_FILE="$(rg --files "$RUNTIME_HOME/agents" | '
+            'rg "/adaptive-luna-maker-high\\.toml$" | head -1)"; '
+            "sed -n '1,200p' \"$ROLE_FILE\""
         )
         result = self.run_gate(
             module,
