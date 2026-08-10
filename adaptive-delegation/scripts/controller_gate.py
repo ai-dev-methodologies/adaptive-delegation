@@ -223,12 +223,17 @@ def _activate(payload: dict[str, Any], runtime_home: Path) -> bool:
         "main_reasoning_effort",
         "reasoningEffort",
     )
-    if bool(main_model) != bool(main_effort):
+    if main_effort and not main_model:
         raise ControllerGateError("main authority declaration is incomplete")
-    if main_model and (main_model != "gpt-5.6-sol" or main_effort not in MAIN_EFFORTS):
+    if main_model and main_model != "gpt-5.6-sol":
         raise ControllerGateError(
             "main authority must be gpt-5.6-sol with reasoning_effort >= high"
         )
+    if main_effort and main_effort not in MAIN_EFFORTS:
+        raise ControllerGateError(
+            "main authority must be gpt-5.6-sol with reasoning_effort >= high"
+        )
+    declared = bool(main_model and main_effort)
     activated_at = _timestamp()
     activation_id = hashlib.sha256(
         f"{session_id}\0{workspace}\0{activated_at}".encode("utf-8")
@@ -238,15 +243,15 @@ def _activate(payload: dict[str, Any], runtime_home: Path) -> bool:
         "activation_id": activation_id,
         "session_id": session_id,
         "workspace": str(workspace),
-        "phase": "explicit_active" if main_model else "awaiting_main_declaration",
+        "phase": "explicit_active" if declared else "awaiting_main_declaration",
         "activated_at": activated_at,
         "updated_at": activated_at,
     }
-    if main_model:
+    if declared:
         state["main_model"] = main_model
         state["main_reasoning_effort"] = main_effort
     _atomic_write_json(_state_path(runtime_home, session_id, workspace), state)
-    if main_model:
+    if declared:
         _append_event(runtime_home, _activation_event(state))
     else:
         _append_event(
@@ -261,7 +266,7 @@ def _activate(payload: dict[str, Any], runtime_home: Path) -> bool:
                 "phase": state["phase"],
             },
         )
-    return bool(main_model)
+    return declared
 
 
 def _load_state(runtime_home: Path, session_id: str, workspace: Path) -> dict[str, Any] | None:
@@ -989,14 +994,19 @@ def handle_hook(
                             "<high|xhigh|max|ultra>",
                         ]
                     )
+                    message = (
+                        "Adaptive Delegation is controller-only and is waiting for a "
+                        "declared current-session main authority. Replace the final "
+                        "effort placeholder with the actual current effort and run: "
+                        f"{command}. Task tools remain denied until that bounded "
+                        "gpt-5.6-sol/high-or-above declaration succeeds."
+                    )
                     return {
-                        "systemMessage": (
-                            "Adaptive Delegation is controller-only and is waiting for a "
-                            "declared current-session main authority. Replace the final "
-                            "effort placeholder with the actual current effort and run: "
-                            f"{command}. Task tools remain denied until that bounded "
-                            "gpt-5.6-sol/high-or-above declaration succeeds."
-                        )
+                        "systemMessage": message,
+                        "hookSpecificOutput": {
+                            "hookEventName": "UserPromptSubmit",
+                            "additionalContext": message,
+                        },
                     }
             except ControllerGateError:
                 model = _payload_string(payload, "model", "main_model", "mainModel") or "unknown"

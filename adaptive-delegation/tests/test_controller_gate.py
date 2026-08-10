@@ -140,6 +140,60 @@ class ControllerGateTests(unittest.TestCase):
         )
         self.assertEqual(declared["phase"], "explicit_active")
 
+    def test_codex_prompt_shape_without_effort_waits_and_injects_declaration(self) -> None:
+        payload = self.prompt_payload("$adaptive-delegation implement it")
+        payload.pop("reasoning_effort")
+
+        output = gate.handle_hook(payload, runtime_home=self.runtime_home)
+
+        context = output["hookSpecificOutput"]["additionalContext"]
+        self.assertEqual(
+            output["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit"
+        )
+        expected_command = shlex.join(
+            [
+                sys.executable,
+                str(Path(gate.__file__).resolve()),
+                "declare-main",
+                "--session-id",
+                self.session_id,
+                "--workspace",
+                str(self.cwd.resolve()),
+                "--model",
+                "gpt-5.6-sol",
+                "--reasoning-effort",
+                "<high|xhigh|max|ultra>",
+            ]
+        )
+        self.assertIn(expected_command, context)
+        state_path = next(
+            (self.runtime_home / "state" / "adaptive-delegation" / "controller").glob(
+                "state-*.json"
+            )
+        )
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["phase"], "awaiting_main_declaration")
+        self.assertNotIn("main_model", state)
+        self.assertNotIn("main_reasoning_effort", state)
+
+        denied = gate.handle_hook(
+            self.tool_payload("exec_command", {"cmd": "pwd"}),
+            runtime_home=self.runtime_home,
+        )
+        self.assertEqual(
+            denied["hookSpecificOutput"]["permissionDecision"], "deny"
+        )
+
+    def test_codex_prompt_shape_rejects_non_sol_model_without_effort(self) -> None:
+        payload = self.prompt_payload("$adaptive-delegation implement it")
+        payload["model"] = "gpt-5.6-terra"
+        payload.pop("reasoning_effort")
+
+        output = gate.handle_hook(payload, runtime_home=self.runtime_home)
+
+        self.assertIn("Adaptive Delegation blocked", output["systemMessage"])
+        self.assertFalse((self.runtime_home / "state").exists())
+
     def test_active_main_is_denied_task_tool_but_control_plane_is_allowed(self) -> None:
         self.activate()
 

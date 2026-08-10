@@ -14,6 +14,14 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.7.1] - 2026-08-10
+
+- Adapted controller activation to Codex prompt-hook payloads that provide the
+  current model but omit reasoning effort. The hook now creates an
+  owner-only pending declaration state, injects the exact bounded declaration
+  command as model-visible context, and keeps task tools denied until a valid
+  Sol/high-or-above declaration succeeds.
+
 ## [0.7.0] - 2026-08-10
 
 - Made `$adaptive-delegation` explicit and controller-only. Installed

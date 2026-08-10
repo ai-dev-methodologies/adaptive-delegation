@@ -33,14 +33,14 @@ Adaptive Delegation blocked: main authority must be gpt-5.6-sol with reasoning_e
 ```
 
 The skill cannot mutate the parent model. After printing the block, launch no
-child and stop. Do not route around this gate. Current Codex
-`UserPromptSubmit` payloads may omit model and effort. In that documented
-case, the installed hook creates an owner-only
-`awaiting_main_declaration` state and returns the exact
-`controller_gate.py declare-main` command for the main to run. That declaration
-is current-session context supplied by the main, not cryptographic runtime
-proof. Task tools remain denied until the declaration is exactly
-`gpt-5.6-sol` at `high`, `xhigh`, `max`, or `ultra`.
+child and stop. Do not route around this gate. Codex `UserPromptSubmit`
+payloads identify the current model but may omit reasoning effort; compatibility
+also permits both fields to be absent. In either undeclared shape, the installed
+hook creates an owner-only `awaiting_main_declaration` state and injects the
+exact `controller_gate.py declare-main` command as model-visible context for
+the main to run. That declaration is current-session context supplied by the
+main, not cryptographic runtime proof. Task tools remain denied until the
+declaration is exactly `gpt-5.6-sol` at `high`, `xhigh`, `max`, or `ultra`.
 
 Once active, the main is a controller, not a task worker. It may interpret
 intent, build and digest the Objective Lock, classify routes, launch or message

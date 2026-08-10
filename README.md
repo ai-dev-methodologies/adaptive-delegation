@@ -30,6 +30,12 @@ controller review. The main closes the controller as `complete` or `blocked`
 before its terminal answer, preventing stale state from restricting a later
 non-adaptive request in the same conversation.
 
+Codex prompt-hook input identifies the current model but may omit reasoning
+effort. In that case the controller validates the Sol model, creates an
+owner-only pending declaration state, and injects the exact bounded
+declaration command as model-visible context. Task tools remain denied until
+the main declares the current session at `high` or above.
+
 Its primary invariant is: delegate bounded independent work aggressively, but
 only inside one portable Objective Lock. No valid lock means no child launch;
 no external `AGENTS.md` is required to construct or enforce the packaged lock.
@@ -37,7 +43,7 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.7.0`.
+Current installable package version: `0.7.1`.
 
 ### Read-only evidence health
 
@@ -220,9 +226,9 @@ definition does not request adaptive routing.
 After explicit activation:
 
 1. Validate that the current main is `gpt-5.6-sol` at `high` or above. When the
-   documented prompt hook omits model metadata, the main completes the bounded
-   controller declaration before any task tool. The skill cannot mutate a
-   failing parent configuration.
+   prompt hook omits reasoning effort, the main completes the bounded
+   controller declaration from the injected model-visible context before any
+   task tool. The skill cannot mutate a failing parent configuration.
 2. Construct one portable Objective Lock before any child launch.
 3. The main classifies every bounded slice before launch. It records task
    shape, oracle strength, risk and ambiguity, latency sensitivity, execution
