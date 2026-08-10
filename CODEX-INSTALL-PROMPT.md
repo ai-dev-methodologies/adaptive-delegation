@@ -57,7 +57,8 @@ steps:
    existing Codex authentication file as a read-only auth source:
    python3 scripts/verify_isolated_dogfood.py --auth-source "$AUTH_SOURCE" --user-codex-home "$TARGET_CODEX_HOME"
    Never copy or display the authentication file. The gate must leave the
-   target Codex home fingerprint unchanged.
+   target installation-surface fingerprint unchanged. Normal owner-only
+   routing evidence may be appended by controller-only Native execution.
 7. If any validation or promotion check fails, do not install. Diagnose only
    within this repository and report the exact blocker.
 8. After every check passes, install with:

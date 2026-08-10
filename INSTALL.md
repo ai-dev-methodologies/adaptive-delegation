@@ -98,8 +98,12 @@ through a temporary symlink and never copies or changes credentials. The gate
 checks that only `target.py` changes, `.strip().lower()` is present, the exact
 targeted unittest passes, an adjacent intentional failure remains unchanged
 and failing, the fresh command exits zero, its output does not reference the
-user Codex home, and before/after fingerprints of managed user files/state
-match. Artifacts are removed by default; use `--keep-artifacts` only to retain
+user Codex home, and before/after fingerprints of the managed user installation
+surface match. The immutable fingerprint covers the installed skill, dispatcher,
+roles, hooks, and Codex config. Controller-only Native execution may append
+normal owner-only routing evidence under `state/`; runtime evidence is not an
+installation mutation and is evaluated by the audit tooling. Artifacts are
+removed by default; use `--keep-artifacts` only to retain
 a failed fixture and its owner-only `fresh-output.jsonl` for local
 investigation. Treat that output as private session evidence and never publish
 it.

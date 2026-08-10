@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Run an isolated, fresh-context promotion check without user-home writes.
+"""Run an isolated promotion check without user installation-surface writes.
 
 This is a release-quality gate, not a security boundary: a same-user process can
 always bypass filesystem checks. It is supported on current POSIX macOS/Linux
-systems with Python 3.11 and a working ``codex`` executable.
+systems with Python 3.11 and a working ``codex`` executable. Controller-only
+Native execution may append normal owner-only runtime audit evidence; that
+state is deliberately outside the immutable installation fingerprint.
 """
 
 from __future__ import annotations
@@ -22,12 +24,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MANAGED_RELATIVE_PATHS = (
+IMMUTABLE_USER_RELATIVE_PATHS = (
     "skills/adaptive-delegation",
     "scripts/adaptive_dispatch_attestation.py",
     "agents",
-    "state/adaptive-delegation",
-    "state/model-routing",
+    "hooks.json",
+    "config.toml",
 )
 TARGET_TEST = "test_target.TargetTests.test_normalizes_whitespace_and_case"
 ADJACENT_TEST = "test_adjacent.AdjacentTests.test_known_failure_is_preserved"
@@ -42,7 +44,7 @@ class GateResult:
 def fingerprint(root: Path) -> str:
     """Hash the selected managed surface without creating or changing it."""
     digest = hashlib.sha256()
-    for relative in MANAGED_RELATIVE_PATHS:
+    for relative in IMMUTABLE_USER_RELATIVE_PATHS:
         path = root / relative
         digest.update(relative.encode() + b"\0")
         if not path.exists() and not path.is_symlink():
@@ -203,10 +205,10 @@ def failed(diagnostic: str) -> GateResult:
 
 
 def checked_result(result: GateResult, user_codex_home: Path, before: str) -> GateResult:
-    """Make user-home immutability the final verdict on every post-snapshot path."""
+    """Make installation-surface immutability the final post-snapshot verdict."""
     if fingerprint(user_codex_home) != before:
         return failed(
-            "user-level adaptive managed-files/state fingerprint changed; "
+            "user-level adaptive installation-surface fingerprint changed; "
             f"prior result: {result.diagnostic}"
         )
     return result
