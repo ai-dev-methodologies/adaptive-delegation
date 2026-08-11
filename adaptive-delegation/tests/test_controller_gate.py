@@ -479,6 +479,34 @@ class ControllerGateTests(unittest.TestCase):
         )
         self.assertEqual(route["role_binding"]["model"], "gpt-5.6-luna")
         self.assertIn('model = "gpt-5.6-luna"', route["role_toml"])
+        commands = route["lifecycle_command_templates"]
+        decision_tokens = shlex.split(commands["decision_leaf_required"])
+        accepted_tokens = shlex.split(commands["result_accepted"])
+        close_tokens = shlex.split(commands["close_complete"])
+        self.assertEqual(
+            decision_tokens[:3],
+            [sys.executable, str(Path(gate.__file__).resolve()), "decision"],
+        )
+        self.assertEqual(
+            decision_tokens[decision_tokens.index("--agent-type") + 1], role_name
+        )
+        self.assertEqual(
+            decision_tokens[decision_tokens.index("--model") + 1],
+            "gpt-5.6-luna",
+        )
+        self.assertEqual(
+            decision_tokens[decision_tokens.index("--reasoning-effort") + 1],
+            "high",
+        )
+        self.assertIn("--integration-accepted", accepted_tokens)
+        self.assertIn("--token-observation", accepted_tokens)
+        self.assertEqual(
+            close_tokens[close_tokens.index("--terminal-status") + 1], "complete"
+        )
+        self.assertEqual(
+            route["lifecycle_allowed_values"]["quality_verdict"],
+            ["fail", "inconclusive", "pass"],
+        )
         with self.assertRaisesRegex(gate.ControllerGateError, "package-declared"):
             gate.read_controller_preflight(
                 runtime_home=self.runtime_home,
@@ -1032,6 +1060,251 @@ class ControllerGateTests(unittest.TestCase):
             ),
             {},
         )
+
+    def test_bound_leaf_transcript_promotes_unavailable_cost_to_exact(self) -> None:
+        self.activate()
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest="1" * 64,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        gate.handle_hook(
+            self.tool_payload(
+                "collaborationspawn_agent",
+                {
+                    "task_name": decision["planned_launch"]["task_name"],
+                    "message": "gAAAAABopaque-native-hook-message",
+                    "agent_type": "adaptive-luna-maker-high",
+                    "reasoning_effort": "high",
+                    "fork_turns": "none",
+                },
+            ),
+            runtime_home=self.runtime_home,
+        )
+        transcript = self.child_transcript(decision)
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload(
+                    "Bash",
+                    {"command": "python3 -m unittest -v test_target.py"},
+                    turn_id=self.child_turn_id,
+                    transcript_path=str(transcript),
+                ),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        with transcript.open("a", encoding="utf-8") as handle:
+            for index in range(6):
+                handle.write(
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {"type": "message", "index": index},
+                        }
+                    )
+                    + "\n"
+                )
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "world_state",
+                        "payload": {"opaque": "x" * (2 * 1024 * 1024)},
+                    }
+                )
+                + "\n"
+            )
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "total_token_usage": {
+                                    "input_tokens": 100,
+                                    "output_tokens": 7,
+                                    "total_tokens": 107,
+                                }
+                            },
+                        },
+                    }
+                )
+                + "\n"
+            )
+
+        gate.record_leaf_result(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            outcome="accepted",
+            route_assessment="correct",
+            quality_verdict="pass",
+            integration_accepted=True,
+            token_observation="unavailable",
+            evidence_references=["local/checker-receipt.json"],
+        )
+
+        ledger = (
+            self.runtime_home
+            / "state"
+            / "adaptive-delegation"
+            / "controller"
+            / "controller-events.jsonl"
+        )
+        result_event = next(
+            event
+            for event in reversed(
+                [json.loads(line) for line in ledger.read_text().splitlines()]
+            )
+            if event["event_type"] == "leaf_result_recorded"
+        )
+        self.assertEqual(result_event["token_observation"], "exact")
+        self.assertEqual(
+            result_event["token_observation_source"], "bound_child_transcript"
+        )
+        self.assertEqual(result_event["weighted_tokens"], 32)
+        self.assertEqual(result_event["cost_proxy"], 1.28)
+        review_path = next(
+            (
+                self.runtime_home
+                / "state"
+                / "adaptive-delegation"
+                / "controller"
+                / "reviews"
+            ).glob("controller-review-*.json")
+        )
+        review = json.loads(review_path.read_text(encoding="utf-8"))
+        self.assertEqual(review["cost"]["status"], "observed")
+        self.assertEqual(review["cost"]["weighted_tokens_observed"], 32)
+        self.assertEqual(
+            review["cost"]["observation_sources"],
+            {"bound_child_transcript": 1},
+        )
+
+    def test_unavailable_cost_records_its_source_when_usage_cannot_be_bound(self) -> None:
+        self.activate()
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest="2" * 64,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        gate.handle_hook(
+            self.tool_payload(
+                "collaborationspawn_agent",
+                {
+                    "task_name": decision["planned_launch"]["task_name"],
+                    "message": "gAAAAABopaque-native-hook-message",
+                    "agent_type": "adaptive-luna-maker-high",
+                    "reasoning_effort": "high",
+                    "fork_turns": "none",
+                },
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        gate.record_leaf_result(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            outcome="path_blocked",
+            route_assessment="inconclusive",
+            quality_verdict="inconclusive",
+            integration_accepted=False,
+            token_observation="unavailable",
+            evidence_references=["local/path-blocked.json"],
+        )
+
+        ledger = (
+            self.runtime_home
+            / "state"
+            / "adaptive-delegation"
+            / "controller"
+            / "controller-events.jsonl"
+        )
+        event = json.loads(ledger.read_text().splitlines()[-1])
+        self.assertEqual(event["token_observation"], "unavailable")
+        self.assertEqual(event["token_observation_source"], "unavailable")
+        self.assertNotIn("weighted_tokens", event)
+
+    def test_controller_review_rejects_contradictory_token_source(self) -> None:
+        with self.assertRaisesRegex(
+            gate.ControllerGateError, "token observation source does not match"
+        ):
+            gate._controller_review(
+                [
+                    {
+                        "event_type": "leaf_result_recorded",
+                        "outcome": "accepted",
+                        "route_assessment": "correct",
+                        "quality_verdict": "pass",
+                        "integration_accepted": True,
+                        "token_observation": "exact",
+                        "token_observation_source": "unavailable",
+                        "weighted_tokens": 32,
+                        "cost_proxy": 1.28,
+                        "planned_launch": {
+                            "model": "gpt-5.6-luna",
+                            "reasoning_effort": "high",
+                        },
+                    }
+                ]
+            )
+
+    def test_invalid_controller_command_reports_the_current_exact_flag_form(self) -> None:
+        self.activate()
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest="3" * 64,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        gate.handle_hook(
+            self.tool_payload(
+                "collaborationspawn_agent",
+                {
+                    "task_name": decision["planned_launch"]["task_name"],
+                    "message": "gAAAAABopaque-native-hook-message",
+                    "agent_type": "adaptive-luna-maker-high",
+                    "reasoning_effort": "high",
+                    "fork_turns": "none",
+                },
+            ),
+            runtime_home=self.runtime_home,
+        )
+        invalid = (
+            f"{shlex.quote(sys.executable)} "
+            f"{shlex.quote(str(Path(gate.__file__).resolve()))} result "
+            f"--session-id {self.session_id} "
+            f"--workspace {shlex.quote(str(self.cwd))} "
+            "--outcome accepted --route-assessment correct --quality-verdict pass "
+            "--integration-acceptance true --token-observation unavailable "
+            "--evidence-ref local/checker.json"
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload("Bash", {"command": invalid}),
+            runtime_home=self.runtime_home,
+        )
+
+        reason = output["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("--integration-accepted", reason)
+        self.assertIn("--evidence-ref", reason)
+        self.assertIn("accepted|failed|path_blocked", reason)
 
     def test_objective_lock_digest_is_immutable_across_leaf_retries(self) -> None:
         self.activate()

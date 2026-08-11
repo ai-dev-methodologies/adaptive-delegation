@@ -14,6 +14,25 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.7.7] - 2026-08-11
+
+- Added selected-route lifecycle command templates with the exact
+  `decision`, accepted/failed/path-blocked `result`, and complete/blocked
+  `close` flags. An invalid controller command now returns the exact required
+  flag form instead of only the general task-tool denial.
+- When a caller reports token usage as unavailable, the controller now checks
+  the already bound owner-local child transcript and promotes a validated
+  cumulative token observation to exact weighted tokens and the package
+  model-relative cost proxy. Unsafe, oversized, malformed, unbound, or absent
+  usage remains unavailable rather than becoming zero.
+- Controller reviews and sanitized health output now distinguish cost evidence
+  sourced from a bound child transcript, main-reported values, unavailable
+  measurements, and legacy observations without source metadata, while
+  rejecting contradictory observation/source pairs.
+- Documented that explicit prefix activation may begin any later conversation
+  turn, with a bounded scope restatement, without weakening the matcher to
+  activate quoted or discussed tokens.
+
 ## [0.7.6] - 2026-08-11
 
 - Added a fail-closed controller `preflight` command so an activated main can
