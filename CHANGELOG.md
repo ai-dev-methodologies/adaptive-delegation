@@ -14,6 +14,12 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.7.8] - 2026-08-11
+
+- Allowed goal/Ultragoal continuation and HUD status control-plane tools while
+  an adaptive controller is active, while retaining controller-only denial for
+  main product/task execution.
+
 ## [0.7.7] - 2026-08-11
 
 - Removed the first-token activation requirement. Actionable natural-language

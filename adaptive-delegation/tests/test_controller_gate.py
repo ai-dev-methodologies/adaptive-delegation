@@ -387,6 +387,32 @@ class ControllerGateTests(unittest.TestCase):
         self.assertEqual(events[-1]["tool_name"], "functions.apply_patch")
         self.assertNotIn("tool_input", events[-1])
 
+    def test_active_main_allows_goal_control_plane_continuation_but_denies_product_work(self) -> None:
+        self.activate()
+
+        for tool_name in (
+            "functions.get_goal",
+            "functions.update_goal",
+            "functions.hud",
+        ):
+            with self.subTest(tool_name=tool_name):
+                self.assertEqual(
+                    gate.handle_hook(
+                        self.tool_payload(tool_name, {}),
+                        runtime_home=self.runtime_home,
+                    ),
+                    {},
+                )
+
+        denied = gate.handle_hook(
+            self.tool_payload("functions.apply_patch", {"patch": "product"}),
+            runtime_home=self.runtime_home,
+        )
+        self.assertEqual(
+            denied["hookSpecificOutput"]["permissionDecision"],
+            "deny",
+        )
+
     def test_codex_sanitized_control_plane_tool_name_is_allowed(self) -> None:
         self.activate()
 
