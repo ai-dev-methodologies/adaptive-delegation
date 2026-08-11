@@ -18,12 +18,18 @@ strength, risk and ambiguity, latency sensitivity, execution horizon, and
 recoverability. It then selects the matching fixed path. A workflow name never
 selects a path by itself, and children cannot reroute themselves.
 
-Explicit `$adaptive-delegation` sessions are controller-only. The main owns
+The skill remains explicit and opt-in. Actionable `adaptive-delegation`
+requests may appear anywhere in a conversation;
+the Sol/high-or-above main distinguishes intent from quotation or discussion and
+explicitly activates the controller. `$adaptive-delegation` remains an optional
+deterministic shortcut, not a required first-token form. Once active, the main owns
 intent, routing, orchestration, evidence integration, and final claims, while
 delegable task work runs in package-fixed leaves. The installed hooks deny main
 task tools until an exact leaf launch is Objective-Locked or a bounded
-evidence-backed main-only exception/takeover is recorded. Cost, task size,
-existing context, convenience, and latency never justify direct main work.
+evidence-backed main-only exception/takeover is recorded. A recorded
+`context_bound_microtask` may stay with the main; generic convenience does not
+justify undeclared direct work. This is controller-only enforcement after the
+qualified main has made and recorded the routing judgment.
 The hook accepts only the fixed control-plane and spawn allowlists while
 matching both separator-preserving tool names and Codex's sanitized hook names.
 Controller activation injects an exact bounded `preflight` command that loads
@@ -125,7 +131,8 @@ policy boundary, not an operating-system security boundary.
   verdict, measurement coverage, and bounded evidence before another decision.
   Missing token usage is unavailable, never observed zero.
 - Direct main execution requires a structured `non_delegable_authority`,
-  `weak_oracle`, `high_risk_or_ambiguous`, or exhausted-ladder record with
+  `context_bound_microtask`, `weak_oracle`, `high_risk_or_ambiguous`, or
+  exhausted-ladder record with
   bounded evidence. Weak/high-risk work and takeover additionally require the
   declared main to be `ultra`; economic discretion is not an exception.
 - Every default and escalation step resolves to an installed, package-declared
@@ -223,18 +230,13 @@ final verification remains main-authoritative.
 
 ## Activate the skill
 
-Use `$adaptive-delegation` explicitly. This skill is explicit and opt-in:
-matching prose,
-bare workflow names, localized trigger literals, and old session artifacts do
-not activate it. The skill frontmatter retains search vocabulary for discovery,
-but discovery is not activation. See
+Request `adaptive-delegation` explicitly in actionable prose anywhere in the
+conversation. The Sol/high-or-above main decides whether the mention requests
+routing or merely quotes, explains, or discusses the capability. The hook does
+not activate from the mention; it supplies a bounded activation command for the
+main to run after that judgment. The `$adaptive-delegation` directive remains a
+deterministic shortcut. See
 [`adaptive-delegation/references/TRIGGERS.md`](adaptive-delegation/references/TRIGGERS.md).
-The directive may be introduced at any later conversation turn by beginning a
-new request with it, for example:
-`$adaptive-delegation: continue the preceding task; scope: <one-sentence restatement>`.
-It does not need to appear in the conversation's first message; it must begin
-the request that intentionally activates the controller so quoted or discussed
-tokens do not change execution mode.
 No additional Luna-first, stop-on-acceptance, or no-extra-review prompt is
 required; those constraints are part of the installed skill contract.
 
@@ -248,7 +250,8 @@ skill does not change the running main model or its effort, and requesting
 | --- | --- | --- |
 | `$adaptive-delegation ...` | Deterministic explicit activation. | The main-authority gate runs, an Objective Lock is created, and bounded work follows the Luna-first route. |
 | `$adaptive-delegation ... Use ultra reasoning.` | Deterministic explicit activation. | `ultra` applies to the main only if the current runtime is already configured as `gpt-5.6-sol/ultra`. Prompt text cannot upgrade the session. Leaf `ultra` remains forbidden. |
-| A matching bounded task without `$adaptive-delegation` | Does not activate this skill. | Scoped main-direct behavior and any separately invoked workflow remain unchanged. |
+| `Continue this task and use adaptive-delegation for bounded slices.` | The main recognizes actionable intent and runs the bounded activation command. | The same main-authority gate and routing policy apply. |
+| A quotation or explanation containing `adaptive-delegation` | The hook offers context but creates no state; the main declines activation. | Scoped main-direct behavior remains unchanged. |
 | A localized token-efficiency request, with or without `Use ultra reasoning.` | Does not activate this skill. | Search vocabulary cannot activate routing or upgrade the session. |
 | `Use ultra reasoning.` | Does not activate this skill by itself. | Normal session-level model and effort rules apply. |
 
@@ -281,8 +284,8 @@ After explicit activation:
 6. Keep weak-oracle, ambiguous, high-risk, or long-contract work with the main
    at `gpt-5.6-sol/ultra`, or return exhausted leaf work to that main takeover.
 7. Keep the main on control-plane operations throughout delegated work. It may
-   execute directly only through an evidence-backed main-only exception or an
-   exhausted-ladder takeover; cost and convenience cannot open that lane.
+   execute directly through an evidence-backed main-only exception, including
+   a recorded context-bound microtask judgment, or an exhausted-ladder takeover.
 8. Stop as soon as the locked acceptance evidence passes. Do not add another
    review or broader verification merely because the main has `ultra` effort.
 

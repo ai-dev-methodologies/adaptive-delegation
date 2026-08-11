@@ -16,4 +16,7 @@ are not model-escalation evidence. Return blocked paths to the main for an
 in-scope alternative; never fabricate evidence or substitute unauthorized
 methods. Report changed files, exact validation evidence, remaining gaps, and
 the stop condition. Never claim completion without fresh evidence.
+Never request sandbox permission escalation or user approval. If an authorized
+in-scope command cannot run without escalation, or project policy reserves the
+action for the main, return the blocked action to the main.
 """

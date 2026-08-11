@@ -146,6 +146,49 @@ class ControllerGateTests(unittest.TestCase):
         self.assertEqual(output, {})
         self.assertFalse((self.runtime_home / "state").exists())
 
+    def test_actionable_mid_prompt_defers_activation_to_main_judgment(self) -> None:
+        output = gate.handle_hook(
+            self.prompt_payload(
+                "Continue the current work and use adaptive-delegation for the bounded slices."
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        context = output["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Decide from the user's actionable intent", context)
+        self.assertIn(" activate ", context)
+        self.assertFalse((self.runtime_home / "state").exists())
+
+    def test_main_can_activate_after_semantic_judgment_without_prefix(self) -> None:
+        state = gate.activate_controller(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            main_turn_id=self.main_turn_id,
+            model="gpt-5.6-sol",
+            reasoning_effort="high",
+        )
+
+        self.assertEqual(state["phase"], "explicit_active")
+        self.assertEqual(state["main_model"], "gpt-5.6-sol")
+        self.assertEqual(state["main_turn_id"], self.main_turn_id)
+
+    def test_natural_mention_preserves_an_open_controller_without_reactivation(self) -> None:
+        state_path = self.activate()
+        before = json.loads(state_path.read_text(encoding="utf-8"))
+        payload = self.prompt_payload(
+            "Continue using adaptive-delegation for the already active task."
+        )
+        payload["turn_id"] = "77777777-7777-4777-8777-777777777777"
+
+        output = gate.handle_hook(payload, runtime_home=self.runtime_home)
+
+        after = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertIn("already active", output["systemMessage"])
+        self.assertNotIn(" activate ", output["systemMessage"])
+        self.assertEqual(after["activation_id"], before["activation_id"])
+        self.assertEqual(after["main_turn_id"], payload["turn_id"])
+
     def test_repeated_explicit_invocation_preserves_open_controller(self) -> None:
         state_path = self.activate()
         gate.record_decision(
@@ -648,6 +691,61 @@ class ControllerGateTests(unittest.TestCase):
             main_output["hookSpecificOutput"]["permissionDecision"], "deny"
         )
 
+    def test_adaptive_child_permission_escalation_is_denied_without_user_prompt(self) -> None:
+        self.activate()
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest="4" * 64,
+            agent_type="adaptive-luna-maker-max",
+            model="gpt-5.6-luna",
+            reasoning_effort="max",
+        )
+        gate.handle_hook(
+            self.tool_payload(
+                "collaborationspawn_agent",
+                {
+                    "task_name": decision["planned_launch"]["task_name"],
+                    "message": "locked",
+                    "agent_type": "adaptive-luna-maker-max",
+                    "reasoning_effort": "max",
+                    "fork_turns": "none",
+                },
+                agent_type="adaptive-luna-maker-max",
+                parent_session_id=self.session_id,
+            ),
+            runtime_home=self.runtime_home,
+        )
+        transcript = self.child_transcript(decision)
+
+        output = gate.handle_hook(
+            self.tool_payload(
+                "functions.exec",
+                {
+                    "code": 'tools.exec_command({cmd:"mv old new", sandbox_permissions:"require_escalated"})'
+                },
+                turn_id=self.child_turn_id,
+                transcript_path=str(transcript),
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        decision_output = output["hookSpecificOutput"]
+        self.assertEqual(decision_output["permissionDecision"], "deny")
+        self.assertIn("without permission escalation", decision_output["permissionDecisionReason"])
+        self.assertNotIn("ask the user", decision_output["permissionDecisionReason"].lower())
+        ledger = (
+            self.runtime_home
+            / "state"
+            / "adaptive-delegation"
+            / "controller"
+            / "controller-events.jsonl"
+        )
+        events = [json.loads(line) for line in ledger.read_text().splitlines()]
+        self.assertEqual(events[-1]["event_type"], "child_permission_escalation_denied")
+
     def test_nonexplicit_user_prompt_refreshes_the_main_turn_identity(self) -> None:
         state_path = self.activate()
         next_turn_id = "44444444-4444-4444-8444-444444444444"
@@ -722,6 +820,21 @@ class ControllerGateTests(unittest.TestCase):
                         objective_lock_digest="8" * 64,
                         evidence_references=["local/evidence.json"],
                     )
+
+    def test_main_may_keep_a_context_bound_microtask_with_recorded_judgment(self) -> None:
+        self.activate()
+
+        state = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="main_only_exception",
+            exception_reason="context_bound_microtask",
+            objective_lock_digest="c" * 64,
+            evidence_references=["local/main-routing-judgment.json"],
+        )
+
+        self.assertEqual(state["phase"], "main_only_exception")
 
     def test_evidence_backed_non_delegable_exception_allows_main_tool(self) -> None:
         self.activate()

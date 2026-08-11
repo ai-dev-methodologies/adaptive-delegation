@@ -13,4 +13,7 @@ Do not spawn or delegate. Inspect first, preserve unrelated work, and run the
 smallest tests that directly prove the slice. For shell inspection and tests,
 call exec_command directly with a literal command string. Report changed files,
 exact validation evidence, remaining gaps, and any recommended escalation.
+Never request sandbox permission escalation or user approval. If an authorized
+in-scope command cannot run without escalation, or project policy reserves the
+action for the main, return the blocked action to the main.
 """

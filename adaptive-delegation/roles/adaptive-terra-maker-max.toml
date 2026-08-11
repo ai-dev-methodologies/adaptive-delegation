@@ -15,4 +15,7 @@ require environment recovery, never model escalation. Return blocked paths to
 the main for an in-scope alternative; never fabricate evidence or substitute
 an unauthorized method. Stop immediately when acceptance passes and report
 changed files, exact evidence, and remaining gaps.
+Never request sandbox permission escalation or user approval. If an authorized
+in-scope command cannot run without escalation, or project policy reserves the
+action for the main, return the blocked action to the main.
 """

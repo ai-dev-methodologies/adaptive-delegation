@@ -9,14 +9,16 @@ description: Codex-only skill for Codex native subagents. Use when routing bound
 is unsupported, and this package does not provide a general external runtime
 integration.
 
-This skill is explicit and opt-in. It activates only when the current user
-request begins with `$adaptive-delegation`. Matching prose, a bare workflow
-name, old session state, or a localized token-efficiency phrase does not
-activate it. The request may be a later turn in an existing conversation; begin
-that new request with
-`$adaptive-delegation: continue the preceding task; scope: <one-sentence restatement>`.
-The prefix requirement applies to the activating request, not to the first
-message of the conversation.
+This skill is explicit and opt-in, but it does not require a first-token command.
+At any conversation turn, an actionable request to use `adaptive-delegation`
+activates it after the main interprets the user's intent. A quotation,
+explanation request, incidental mention, old session state, or localized
+token-efficiency phrase is not actionable activation. The prompt hook only
+offers the exact bounded `controller_gate.py activate` command when the name is
+mentioned; it does not create controller state. The `gpt-5.6-sol/high`-or-above
+main decides whether the user requested the capability and runs that command.
+The legacy `$adaptive-delegation` prefix remains a deterministic shortcut, not
+a required position or a special first-message form.
 
 The invocation is sufficient by itself. Do not require the user to append a
 separate Luna-first, stop-on-acceptance, or no-extra-review prompt. This skill
@@ -85,25 +87,28 @@ The hook recognizes the fixed control-plane and spawn allowlists in both their
 separator-preserving and Codex-sanitized tool-name forms. A repeated explicit
 invocation in the same session preserves any open controller, Objective Lock,
 and pending launch; it does not start a second activation or reset progress.
+An admitted child must never request sandbox permission escalation or user
+approval. The hook denies `require_escalated` before Codex can display an
+approval prompt. The child retries an authorized in-scope command without
+escalation or returns the blocked action to the main when the sandbox or a
+project policy reserves that action for the main.
 
 Direct main execution is allowed only after the controller records one of
 these evidence-backed states:
 
-- `main_only_exception` with `non_delegable_authority`, `weak_oracle`, or
-  `high_risk_or_ambiguous`, plus one or more bounded local evidence references;
+- `main_only_exception` with `non_delegable_authority`,
+  `context_bound_microtask`, `weak_oracle`, or `high_risk_or_ambiguous`, plus
+  one or more bounded local evidence references;
 - `takeover` with `ladder_exhausted`, plus bounded local evidence references.
 
 `weak_oracle`, `high_risk_or_ambiguous`, and `ladder_exhausted` execution also
 require the declared main effort to be `ultra`; the controller does not pretend
 that a `high`, `xhigh`, or `max` session was upgraded. A narrowly
 `non_delegable_authority` action may use the already-admitted Sol/high-or-above
-main because its exception is authority shape, not capability escalation.
-
-Estimated cost, task size, existing main context, convenience, and latency are
-never main-only exception reasons. A more capable main does not convert a
-delegable slice into direct work. This closes the economic-discretion hole:
-the Sol/high-or-above requirement gives the controller enough authority to
-classify and integrate, while leaves still perform delegable task work.
+main because its exception is authority shape, not capability escalation. A
+bounded `context_bound_microtask` may also stay with that main when it records
+the local routing judgment and evidence. Generic convenience or an unrecorded
+claim that the main is cheaper remains insufficient.
 
 Every authorized Native launch must be closed before another decision. After
 the leaf returns, run the exact installed `controller_gate.py result` command
