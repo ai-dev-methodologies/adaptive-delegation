@@ -17,4 +17,7 @@ exec wrapper, generated JavaScript, or dynamic command construction. Run the
 smallest tests that prove the slice, then report changed files, exact evidence,
 remaining gaps, and any recommended escalation. Never claim completion without
 fresh evidence.
+Never request sandbox permission escalation or user approval. If an authorized
+in-scope command cannot run without escalation, or project policy reserves the
+action for the main, return the blocked action to the main.
 """

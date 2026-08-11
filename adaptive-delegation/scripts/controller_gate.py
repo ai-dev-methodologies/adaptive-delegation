@@ -29,6 +29,7 @@ MAX_TOKEN_COUNT = 1_000_000_000_000
 MAX_EVIDENCE_REFERENCES = 8
 MAX_EVIDENCE_REFERENCE_LENGTH = 256
 EXPLICIT_INVOCATION = re.compile(r"^\s*\$adaptive-delegation(?:\s|:|$)", re.I)
+ACTIVATION_MENTION = re.compile(r"\badaptive-delegation\b", re.I)
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SAFE_AGENT_TYPE = re.compile(r"^adaptive-[a-z0-9-]+$")
 SAFE_EVIDENCE_REFERENCE = re.compile(
@@ -37,6 +38,7 @@ SAFE_EVIDENCE_REFERENCE = re.compile(
 )
 MAIN_ONLY_REASONS = {
     "non_delegable_authority",
+    "context_bound_microtask",
     "weak_oracle",
     "high_risk_or_ambiguous",
 }
@@ -316,6 +318,32 @@ def _activate(payload: dict[str, Any], runtime_home: Path) -> bool:
             },
         )
     return declared
+
+
+def activate_controller(
+    *,
+    runtime_home: Path | None,
+    session_id: str,
+    workspace: str | Path,
+    main_turn_id: str | None,
+    model: str,
+    reasoning_effort: str,
+) -> dict[str, Any]:
+    resolved_home = _runtime_home(runtime_home)
+    payload: dict[str, Any] = {
+        "session_id": session_id,
+        "cwd": str(_canonical_workspace(workspace)),
+        "model": model,
+        "reasoning_effort": reasoning_effort,
+    }
+    if main_turn_id:
+        payload["turn_id"] = main_turn_id
+    if not _activate(payload, resolved_home):
+        raise ControllerGateError("main authority declaration is still pending")
+    state = _load_state(resolved_home, session_id, _canonical_workspace(workspace))
+    if state is None:
+        raise ControllerGateError("controller activation did not create state")
+    return state
 
 
 def _load_state(runtime_home: Path, session_id: str, workspace: Path) -> dict[str, Any] | None:
@@ -653,6 +681,10 @@ def _controller_observation_source(event: dict[str, Any]) -> str:
 
 def _controller_review(events: list[dict[str, Any]]) -> dict[str, Any]:
     results = [event for event in events if event.get("event_type") == "leaf_result_recorded"]
+    permission_escalation_denials = sum(
+        event.get("event_type") == "child_permission_escalation_denied"
+        for event in events
+    )
     assessment_counts = {
         "appropriate": 0,
         "underpowered": 0,
@@ -732,6 +764,9 @@ def _controller_review(events: list[dict[str, Any]]) -> dict[str, Any]:
             **assessment_counts,
         },
         "routes": dict(sorted(routes.items())),
+        "enforcement": {
+            "child_permission_escalation_denials": permission_escalation_denials,
+        },
         "cost": {
             "status": (
                 "unavailable"
@@ -1464,6 +1499,25 @@ def _spawn_input(payload: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _requests_permission_escalation(payload: dict[str, Any]) -> bool:
+    stack: list[Any] = [_spawn_input(payload)]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key == "sandbox_permissions" and item == "require_escalated":
+                    return True
+                stack.append(item)
+        elif isinstance(value, list):
+            stack.extend(value)
+        elif isinstance(value, str) and re.search(
+            r"sandbox_permissions\s*[:=]\s*[\\\"']require_escalated[\\\"']",
+            value,
+        ):
+            return True
+    return False
+
+
 def _tool_matches(tool_name: str, allowed: set[str]) -> bool:
     return tool_name in allowed or tool_name in {
         candidate.replace(".", "") for candidate in allowed
@@ -1561,6 +1615,26 @@ def _handle_pre_tool_use(payload: dict[str, Any], runtime_home: Path) -> dict[st
             runtime_home=runtime_home,
         )
     if _adaptive_child(payload, session_id, state, runtime_home, state_path):
+        if _requests_permission_escalation(payload):
+            _append_event(
+                runtime_home,
+                {
+                    "schema_version": EVENT_SCHEMA_VERSION,
+                    "event_type": "child_permission_escalation_denied",
+                    "timestamp": _timestamp(),
+                    "activation_id": state["activation_id"],
+                    "session_id": state["session_id"],
+                    "workspace": state["workspace"],
+                    "phase": state.get("phase"),
+                    "tool_name": tool_name or "unknown",
+                },
+            )
+            return _deny(
+                "Adaptive Delegation denied a child permission-escalation request. "
+                "Retry an authorized in-scope command without permission escalation; "
+                "if the sandbox or project policy blocks it, return the blocked action "
+                "to the main."
+            )
         return {}
     if _tool_matches(tool_name, CONTROL_PLANE_TOOLS):
         return {}
@@ -1679,6 +1753,65 @@ def handle_hook(
                         "$adaptive-delegation again."
                     )
                 }
+        elif ACTIVATION_MENTION.search(prompt):
+            existing = _load_state(
+                resolved_home,
+                _session_from_payload(payload),
+                _workspace_from_payload(payload),
+            )
+            if existing is not None and existing.get("phase") != "closed":
+                _refresh_main_turn(payload, resolved_home)
+                message = (
+                    "Adaptive Delegation is already active for this session and "
+                    "workspace. Preserve the existing Objective Lock and continue "
+                    "the open controller lifecycle; do not reactivate it."
+                )
+                return {
+                    "systemMessage": message,
+                    "hookSpecificOutput": {
+                        "hookEventName": "UserPromptSubmit",
+                        "additionalContext": message,
+                    },
+                }
+            model = _payload_string(payload, "model", "main_model", "mainModel")
+            effort = _payload_string(
+                payload,
+                "reasoning_effort",
+                "model_reasoning_effort",
+                "main_reasoning_effort",
+                "reasoningEffort",
+            )
+            command = shlex.join(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "activate",
+                    "--session-id",
+                    _session_from_payload(payload),
+                    "--workspace",
+                    str(_workspace_from_payload(payload)),
+                    "--main-turn-id",
+                    _payload_string(payload, "turn_id", "turnId") or "<current-turn-id>",
+                    "--model",
+                    model or "<current-main-model>",
+                    "--reasoning-effort",
+                    effort or "<high|xhigh|max|ultra>",
+                ]
+            )
+            message = (
+                "This request mentions adaptive-delegation, but no controller state "
+                "was activated automatically. Decide from the user's actionable intent. "
+                "If adaptive routing is requested, activate it by running exactly: "
+                f"{command}. If this is quotation, explanation, or incidental mention, "
+                "continue normally."
+            )
+            return {
+                "systemMessage": message,
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": message,
+                },
+            }
         else:
             try:
                 _refresh_main_turn(payload, resolved_home)
@@ -1702,6 +1835,12 @@ def handle_hook(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command")
+    activate = subparsers.add_parser("activate")
+    activate.add_argument("--session-id", required=True)
+    activate.add_argument("--workspace", required=True, type=Path)
+    activate.add_argument("--main-turn-id")
+    activate.add_argument("--model", required=True)
+    activate.add_argument("--reasoning-effort", required=True)
     decision = subparsers.add_parser("decision")
     decision.add_argument("--session-id", required=True)
     decision.add_argument("--workspace", required=True, type=Path)
@@ -1754,6 +1893,17 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command == "activate":
+            result = activate_controller(
+                runtime_home=None,
+                session_id=args.session_id,
+                workspace=args.workspace,
+                main_turn_id=args.main_turn_id,
+                model=args.model,
+                reasoning_effort=args.reasoning_effort,
+            )
+            print(_canonical_json({"phase": result["phase"], "recorded": True}))
+            return 0
         if args.command == "decision":
             result = record_decision(
                 runtime_home=None,

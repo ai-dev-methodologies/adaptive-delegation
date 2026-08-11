@@ -1217,6 +1217,11 @@ class ModelRoutingAuditTests(unittest.TestCase):
                 {**base, "event_type": "main_tool_denied", "tool_name": "apply_patch"},
                 {
                     **base,
+                    "event_type": "child_permission_escalation_denied",
+                    "tool_name": "functions.exec",
+                },
+                {
+                    **base,
                     "event_type": "delegation_decision",
                     "decision": "main_only_exception",
                     "exception_reason": "weak_oracle",
@@ -1264,6 +1269,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertEqual(result["leaf_required_decisions"], 1)
         self.assertEqual(result["authorized_leaf_launches"], 1)
         self.assertEqual(result["main_tool_denials"], 1)
+        self.assertEqual(result["child_permission_escalation_denials"], 1)
         self.assertEqual(result["main_only_exceptions"], {"weak_oracle": 1})
         self.assertEqual(result["leaf_results"], 1)
         self.assertEqual(result["pending_leaf_results"], 0)

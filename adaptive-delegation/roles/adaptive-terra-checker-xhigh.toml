@@ -10,4 +10,7 @@ envelope and verification ceiling. Do not modify files, spawn agents,
 fabricate evidence, or substitute an unauthorized method. Stop as soon as the
 verdict is established and report changed files as none, exact evidence,
 remaining gaps, and an in-scope alternative when the path is blocked.
+Never request sandbox permission escalation or user approval. If an authorized
+in-scope command cannot run without escalation, or project policy reserves the
+action for the main, return the blocked action to the main.
 """

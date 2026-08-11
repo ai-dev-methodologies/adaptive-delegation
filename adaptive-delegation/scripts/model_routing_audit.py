@@ -3021,6 +3021,7 @@ def _health_controller(path: Path) -> tuple[dict[str, Any], str]:
         "authorized_leaf_launches": 0,
         "pending_leaf_results": 0,
         "main_tool_denials": 0,
+        "child_permission_escalation_denials": 0,
         "takeovers": 0,
         "main_only_exceptions": {},
         "closed": {"complete": 0, "blocked": 0},
@@ -3067,6 +3068,7 @@ def _health_controller(path: Path) -> tuple[dict[str, Any], str]:
         "leaf_launch_authorized",
         "leaf_result_recorded",
         "main_tool_denied",
+        "child_permission_escalation_denied",
         "controller_closed",
     }
     for value in values:
@@ -3085,6 +3087,8 @@ def _health_controller(path: Path) -> tuple[dict[str, Any], str]:
             counts["authorized_leaf_launches"] += 1
         elif event_type == "main_tool_denied":
             counts["main_tool_denials"] += 1
+        elif event_type == "child_permission_escalation_denied":
+            counts["child_permission_escalation_denials"] += 1
         elif event_type == "controller_closed":
             terminal_status = value.get("terminal_status")
             if terminal_status not in {"complete", "blocked"}:

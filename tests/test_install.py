@@ -419,6 +419,14 @@ class InstallerTests(unittest.TestCase):
             self.assertNotIn("under the user's current AGENTS.md", role_text)
             self.assertIn("portable adaptive-delegation", normalized_role)
             self.assertIn("If no valid lock is supplied, do not act.", normalized_role)
+            self.assertIn(
+                "Never request sandbox permission escalation or user approval.",
+                normalized_role,
+            )
+            self.assertIn(
+                "return the blocked action to the main",
+                normalized_role,
+            )
 
         owned_paths = {
             "AGENTS.md",

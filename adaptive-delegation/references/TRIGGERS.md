@@ -1,31 +1,33 @@
 # Trigger Examples
 
 This file documents intended activation boundaries for the
-`adaptive-delegation` skill. Activation is explicit and opt-in: the current
-request must begin with `$adaptive-delegation`. The skill is Codex-only and
-routes Codex native subagents.
+`adaptive-delegation` skill. Activation is explicit and opt-in, but the request
+does not need to begin with a command. The Sol/high-or-above main interprets an
+actionable request anywhere in the current turn and explicitly starts the
+controller. The skill is Codex-only and routes Codex native subagents.
 
-## Positive explicit examples
+## Positive actionable examples
 
 - `$adaptive-delegation: route this bounded implementation with evidence.`
 - `$adaptive-delegation validate model selection and report the audit trail.`
 - `$adaptive-delegation use token-efficient delegation for the independent check.`
 - `$adaptive-delegation apply Luna-first delegation with effort-first escalation.`
 - `$adaptive-delegation: continue the preceding task; scope: update the bounded parser and run its targeted tests.`
+- `Continue the current task and use adaptive-delegation for the independent implementation slices.`
+- `For the remaining review, apply adaptive-delegation and report model cost evidence.`
 
-The final form is the safe mid-conversation opt-in. The directive need not be
-present in the conversation's first message; it must begin the later request
-that activates the controller. Restating the bounded scope avoids deriving a
-new Objective Lock from ambiguous earlier discussion.
+All forms are valid mid-conversation opt-ins. The `$` directive is a
+deterministic shortcut, while natural prose is activated only after the main
+judges that it is an actionable request. Restating the bounded scope remains
+useful but is not a syntactic requirement.
 
-## Discovery phrases that do not activate the skill
+## Actionable natural-language requests
 
-- "Use cost-efficient subagents for this bounded transformation and preserve evidence."
-- "Can you perform a model routing audit and reduce Sol usage where the oracle is strong?"
-- "Please use adaptive delegation for this bounded verification task."
+- "Use adaptive-delegation for this bounded transformation and preserve evidence."
+- "Please apply adaptive-delegation to the remaining verification task."
 
-These phrases help users discover the skill but remain scoped main-direct work
-unless the user invokes `$adaptive-delegation`.
+These activate after main judgment. Generic cost-efficiency vocabulary without
+the capability name remains discovery-only.
 
 ## Localized discovery vocabulary
 

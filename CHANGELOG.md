@@ -16,6 +16,17 @@ and this changelog. Release tags should use `v<version>`.
 
 ## [0.7.7] - 2026-08-11
 
+- Removed the first-token activation requirement. Actionable natural-language
+  mentions at any conversation point now let the Sol/high-or-above main decide
+  whether to run a bounded explicit activation command; discussion and
+  quotation create no controller state. The `$adaptive-delegation` prefix
+  remains an optional deterministic shortcut.
+- Denied adaptive-child `require_escalated` requests before they can display a
+  user approval prompt. Every fixed role now retries authorized in-scope work
+  without escalation or returns sandbox/project-policy conflicts to the main.
+- Added the recorded `context_bound_microtask` main judgment so the qualified
+  main can retain genuinely context-bound micro work without reopening an
+  unlogged generic-convenience bypass.
 - Added selected-route lifecycle command templates with the exact
   `decision`, accepted/failed/path-blocked `result`, and complete/blocked
   `close` flags. An invalid controller command now returns the exact required
@@ -29,9 +40,6 @@ and this changelog. Release tags should use `v<version>`.
   sourced from a bound child transcript, main-reported values, unavailable
   measurements, and legacy observations without source metadata, while
   rejecting contradictory observation/source pairs.
-- Documented that explicit prefix activation may begin any later conversation
-  turn, with a bounded scope restatement, without weakening the matcher to
-  activate quoted or discussed tokens.
 
 ## [0.7.6] - 2026-08-11
 
