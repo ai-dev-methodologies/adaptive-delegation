@@ -1269,6 +1269,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertEqual(result["pending_leaf_results"], 0)
         self.assertEqual(result["model_selection"]["appropriate"], 1)
         self.assertEqual(result["cost"]["unobserved_results"], 1)
+        self.assertEqual(result["cost"]["observation_sources"], {"unavailable": 1})
         self.assertEqual(result["quality"]["accepted"], 1)
         self.assertEqual(result["closed"], {"complete": 1, "blocked": 0})
         self.assertEqual(result["open_activations"], 0)
@@ -1315,6 +1316,37 @@ class ModelRoutingAuditTests(unittest.TestCase):
 
         self.assertEqual(status, "degraded")
         self.assertEqual(result["leaf_results"], 0)
+        self.assertEqual(result["anomalies"]["invalid_records"], 1)
+
+    def test_controller_health_rejects_contradictory_token_source(self):
+        controller = self.root / "controller" / "controller-events.jsonl"
+        self.write_jsonl(
+            controller,
+            [
+                {
+                    "schema_version": "1",
+                    "timestamp": "2026-08-10T00:00:00Z",
+                    "activation_id": "a" * 64,
+                    "session_id": "session-1",
+                    "workspace": "/workspace/project",
+                    "event_type": "leaf_result_recorded",
+                    "outcome": "accepted",
+                    "route_assessment": "correct",
+                    "quality_verdict": "pass",
+                    "integration_accepted": True,
+                    "token_observation": "exact",
+                    "token_observation_source": "unavailable",
+                    "weighted_tokens": 32,
+                    "cost_proxy": 1.28,
+                }
+            ],
+        )
+
+        result, status = audit._health_controller(controller)
+
+        self.assertEqual(status, "degraded")
+        self.assertEqual(result["leaf_results"], 0)
+        self.assertEqual(result["cost"]["observation_sources"], {})
         self.assertEqual(result["anomalies"]["invalid_records"], 1)
 
     def test_review_counts_actual_route_transitions(self):

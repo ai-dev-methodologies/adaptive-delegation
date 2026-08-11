@@ -23,6 +23,9 @@ EVENT_SCHEMA_VERSION = "1"
 MAX_INPUT_BYTES = 1024 * 1024
 MAX_TRANSCRIPT_BINDING_BYTES = 256 * 1024
 MAX_TRANSCRIPT_BINDING_LINES = 8
+MAX_TRANSCRIPT_USAGE_BYTES = 64 * 1024 * 1024
+MAX_TRANSCRIPT_USAGE_LINE_BYTES = 4 * 1024 * 1024
+MAX_TOKEN_COUNT = 1_000_000_000_000
 MAX_EVIDENCE_REFERENCES = 8
 MAX_EVIDENCE_REFERENCE_LENGTH = 256
 EXPLICIT_INVOCATION = re.compile(r"^\s*\$adaptive-delegation(?:\s|:|$)", re.I)
@@ -402,6 +405,96 @@ def _routing_policy() -> dict[str, Any]:
     return policy
 
 
+def _lifecycle_command_templates(
+    *,
+    session_id: str,
+    workspace: Path,
+    agent_type: str,
+    binding: dict[str, Any],
+) -> dict[str, str]:
+    prefix = [sys.executable, str(Path(__file__).resolve())]
+    scope = ["--session-id", session_id, "--workspace", str(workspace)]
+    evidence = "LOCAL_EVIDENCE_REF"
+
+    def command(name: str, *arguments: str) -> str:
+        return shlex.join([*prefix, name, *scope, *arguments])
+
+    return {
+        "decision_leaf_required": command(
+            "decision",
+            "--decision",
+            "leaf_required",
+            "--objective-lock-digest",
+            "OBJECTIVE_LOCK_SHA256",
+            "--agent-type",
+            agent_type,
+            "--model",
+            str(binding["model"]),
+            "--reasoning-effort",
+            str(binding["reasoning_effort"]),
+        ),
+        "result_accepted": command(
+            "result",
+            "--outcome",
+            "accepted",
+            "--route-assessment",
+            "correct",
+            "--quality-verdict",
+            "pass",
+            "--integration-accepted",
+            "true",
+            "--token-observation",
+            "unavailable",
+            "--evidence-ref",
+            evidence,
+        ),
+        "result_failed": command(
+            "result",
+            "--outcome",
+            "failed",
+            "--route-assessment",
+            "ROUTE_ASSESSMENT",
+            "--quality-verdict",
+            "fail",
+            "--integration-accepted",
+            "false",
+            "--token-observation",
+            "unavailable",
+            "--evidence-ref",
+            evidence,
+        ),
+        "result_path_blocked": command(
+            "result",
+            "--outcome",
+            "path_blocked",
+            "--route-assessment",
+            "inconclusive",
+            "--quality-verdict",
+            "inconclusive",
+            "--integration-accepted",
+            "false",
+            "--token-observation",
+            "unavailable",
+            "--evidence-ref",
+            evidence,
+        ),
+        "close_complete": command(
+            "close",
+            "--terminal-status",
+            "complete",
+            "--evidence-ref",
+            evidence,
+        ),
+        "close_blocked": command(
+            "close",
+            "--terminal-status",
+            "blocked",
+            "--evidence-ref",
+            evidence,
+        ),
+    }
+
+
 def read_controller_preflight(
     *,
     runtime_home: Path | None,
@@ -463,6 +556,23 @@ def read_controller_preflight(
         "agent_type": agent_type,
         "role_binding": binding,
         "role_toml": role_toml,
+        "lifecycle_command_templates": _lifecycle_command_templates(
+            session_id=session_id,
+            workspace=resolved_workspace,
+            agent_type=agent_type,
+            binding=binding,
+        ),
+        "lifecycle_allowed_values": {
+            "outcome": sorted(LEAF_OUTCOMES),
+            "route_assessment": sorted(ROUTE_ASSESSMENTS),
+            "quality_verdict": sorted(QUALITY_VERDICTS),
+            "integration_accepted": ["false", "true"],
+            "terminal_status": sorted(TERMINAL_STATUSES),
+        },
+        "evidence_reference_rule": (
+            "Use one to eight bounded local paths or stable IDs; exclude ? # @ : "
+            "and URI schemes. Replace every uppercase placeholder before execution."
+        ),
     }
 
 
@@ -520,6 +630,27 @@ def _controller_events(runtime_home: Path) -> list[dict[str, Any]]:
     return events
 
 
+def _controller_observation_source(event: dict[str, Any]) -> str:
+    observation = event.get("token_observation")
+    source = event.get("token_observation_source")
+    if source is None:
+        if observation == "unavailable":
+            return "unavailable"
+        if observation in {"exact", "estimated"}:
+            return "legacy_unspecified"
+    valid_sources = {
+        "unavailable": {"unavailable"},
+        "estimated": {"main_reported"},
+        "exact": {"main_reported", "bound_child_transcript"},
+    }
+    if (
+        not isinstance(source, str)
+        or source not in valid_sources.get(observation, set())
+    ):
+        raise ControllerGateError("token observation source does not match observation")
+    return source
+
+
 def _controller_review(events: list[dict[str, Any]]) -> dict[str, Any]:
     results = [event for event in events if event.get("event_type") == "leaf_result_recorded"]
     assessment_counts = {
@@ -540,6 +671,7 @@ def _controller_review(events: list[dict[str, Any]]) -> dict[str, Any]:
     observed = 0
     weighted_tokens = 0
     cost_by_route: dict[str, float] = {}
+    observation_sources: dict[str, int] = {}
     integration_accepted = 0
     for event in results:
         assessment = assessment_names.get(event.get("route_assessment"), "inconclusive")
@@ -564,6 +696,8 @@ def _controller_review(events: list[dict[str, Any]]) -> dict[str, Any]:
                 cost_by_route.get(route, 0.0) + float(event.get("cost_proxy", 0.0)),
                 6,
             )
+        source = _controller_observation_source(event)
+        observation_sources[source] = observation_sources.get(source, 0) + 1
     total = len(results)
     conclusive = (
         assessment_counts["appropriate"]
@@ -610,6 +744,7 @@ def _controller_review(events: list[dict[str, Any]]) -> dict[str, Any]:
             "unobserved_results": total - observed,
             "weighted_tokens_observed": weighted_tokens if observed else None,
             "cost_proxy_observed_by_model_effort": dict(sorted(cost_by_route.items())),
+            "observation_sources": dict(sorted(observation_sources.items())),
             "cross_model_cost_comparison": "not_comparable_without_price_table",
         },
         "quality": {
@@ -678,9 +813,16 @@ def record_leaf_result(
     if outcome != "accepted" and integration_accepted:
         raise ControllerGateError("nonaccepted leaf result cannot be integration accepted")
     references = _evidence_references(evidence_references)
+    token_observation_source = "unavailable"
     if token_observation == "unavailable":
         if weighted_tokens is not None or cost_proxy is not None:
             raise ControllerGateError("unavailable token observation cannot carry cost values")
+        recovered = _bound_child_token_cost(state, resolved_home)
+        if recovered is not None:
+            token_observation = "exact"
+            token_observation_source = "bound_child_transcript"
+            weighted_tokens = recovered["weighted_tokens"]
+            cost_proxy = recovered["cost_proxy"]
     elif (
         not isinstance(weighted_tokens, int)
         or isinstance(weighted_tokens, bool)
@@ -690,6 +832,8 @@ def record_leaf_result(
         or cost_proxy < 0
     ):
         raise ControllerGateError("observed token result requires nonnegative cost values")
+    else:
+        token_observation_source = "main_reported"
     timestamp = _timestamp()
     updated = dict(state)
     updated["phase"] = "leaf_result_recorded"
@@ -710,6 +854,7 @@ def record_leaf_result(
         "quality_verdict": quality_verdict,
         "integration_accepted": integration_accepted,
         "token_observation": token_observation,
+        "token_observation_source": token_observation_source,
         "evidence_references": references,
     }
     if token_observation != "unavailable":
@@ -1106,6 +1251,169 @@ def _transcript_binds_planned_child(
     return metadata_matches and task_started
 
 
+def _bound_child_token_cost(
+    state: dict[str, Any], runtime_home: Path
+) -> dict[str, int | float] | None:
+    transcript_value = state.get("child_transcript_path")
+    child_turn_id = state.get("child_turn_id")
+    planned = state.get("planned_launch")
+    if (
+        not isinstance(transcript_value, str)
+        or not transcript_value
+        or not isinstance(child_turn_id, str)
+        or not child_turn_id
+        or not isinstance(planned, dict)
+    ):
+        return None
+    transcript = Path(transcript_value)
+    try:
+        if not transcript.is_absolute() or transcript.is_symlink():
+            return None
+        resolved = transcript.resolve(strict=True)
+        resolved.relative_to((runtime_home / "sessions").resolve(strict=True))
+        if resolved != transcript or not resolved.is_file():
+            return None
+        size = resolved.stat().st_size
+        if size > MAX_TRANSCRIPT_USAGE_BYTES:
+            return None
+    except (OSError, ValueError):
+        return None
+    if not _transcript_binds_planned_child(
+        transcript=resolved,
+        session_id=str(state.get("session_id", "")),
+        turn_id=child_turn_id,
+        planned=planned,
+    ):
+        return None
+
+    latest_usage: tuple[int, int] | None = None
+    consumed = 0
+    try:
+        with resolved.open("r", encoding="utf-8") as handle:
+            while True:
+                line = handle.readline(MAX_TRANSCRIPT_USAGE_LINE_BYTES + 1)
+                if not line:
+                    break
+                encoded_size = len(line.encode("utf-8"))
+                consumed += encoded_size
+                if (
+                    encoded_size > MAX_TRANSCRIPT_USAGE_LINE_BYTES
+                    or consumed > MAX_TRANSCRIPT_USAGE_BYTES
+                    or not line.endswith("\n")
+                ):
+                    return None
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    return None
+                payload = row.get("payload")
+                if (
+                    row.get("type") != "event_msg"
+                    or not isinstance(payload, dict)
+                    or payload.get("type") != "token_count"
+                ):
+                    continue
+                info = payload.get("info")
+                usage = info.get("total_token_usage") if isinstance(info, dict) else None
+                if not isinstance(usage, dict):
+                    continue
+                input_tokens = usage.get("input_tokens")
+                output_tokens = usage.get("output_tokens")
+                if not all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and 0 <= value <= MAX_TOKEN_COUNT
+                    for value in (input_tokens, output_tokens)
+                ):
+                    return None
+                latest_usage = (input_tokens, output_tokens)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if latest_usage is None:
+        return None
+
+    model = planned.get("model")
+    try:
+        policy = _routing_policy()
+        price = policy.get("price_evidence")
+        fractions = (
+            price.get("sol_equivalent_price_fraction")
+            if isinstance(price, dict)
+            else None
+        )
+        fraction = fractions.get(model) if isinstance(fractions, dict) else None
+        if (
+            not isinstance(fraction, (int, float))
+            or isinstance(fraction, bool)
+            or not 0 <= float(fraction) <= 1
+        ):
+            return None
+    except ControllerGateError:
+        return None
+    input_tokens, output_tokens = latest_usage
+    weighted_tokens = (input_tokens + 3) // 4 + output_tokens
+    return {
+        "weighted_tokens": weighted_tokens,
+        "cost_proxy": round(weighted_tokens * float(fraction), 6),
+    }
+
+
+def _controller_command_attempt(payload: dict[str, Any]) -> str | None:
+    tool_input = _spawn_input(payload)
+    command = tool_input.get("cmd") or tool_input.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return None
+    try:
+        tokens = shlex.split(command)
+        controller = Path(tokens[1]).expanduser().resolve()
+    except (IndexError, OSError, RuntimeError, ValueError):
+        return None
+    if controller != Path(__file__).resolve() or len(tokens) < 3:
+        return None
+    controller_commands = {"decision", "declare-main", "preflight", "result", "close"}
+    return tokens[2] if tokens[2] in controller_commands else None
+
+
+def _controller_command_correction(
+    command_name: str, state: dict[str, Any], workspace: Path
+) -> str:
+    prefix = shlex.join(
+        [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            command_name,
+            "--session-id",
+            state["session_id"],
+            "--workspace",
+            str(workspace),
+        ]
+    )
+    forms = {
+        "decision": (
+            "--decision <leaf_required|main_only_exception|takeover> "
+            "--objective-lock-digest <64-lowercase-hex> followed by the exact "
+            "role flags or evidence-backed exception flags"
+        ),
+        "declare-main": "--model gpt-5.6-sol --reasoning-effort <high|xhigh|max|ultra>",
+        "preflight": "--surface <skill|route> and --agent-type <role> only for route",
+        "result": (
+            "--outcome <accepted|failed|path_blocked> "
+            "--route-assessment <correct|too-cheap|too-premium|inconclusive> "
+            "--quality-verdict <pass|fail|inconclusive> "
+            "--integration-accepted <true|false> --token-observation unavailable "
+            "--evidence-ref <local-safe-ref>"
+        ),
+        "close": (
+            "--terminal-status <complete|blocked> "
+            "--evidence-ref <local-safe-ref>"
+        ),
+    }
+    return (
+        f"Adaptive Delegation rejected an invalid controller {command_name} command. "
+        f"Use this exact flag form: {prefix} {forms[command_name]}. "
+        "Evidence references must exclude ? # @ : and URI schemes."
+    )
+
+
 def _adaptive_child(
     payload: dict[str, Any],
     main_session_id: str,
@@ -1261,6 +1569,15 @@ def _handle_pre_tool_use(payload: dict[str, Any], runtime_home: Path) -> dict[st
         and _authorized_controller_command(payload, state, workspace)
     ):
         return {}
+    if _tool_matches(tool_name, CONTROLLER_EXEC_TOOLS):
+        command_name = _controller_command_attempt(payload)
+        if command_name is not None:
+            return _denied(
+                reason=_controller_command_correction(command_name, state, workspace),
+                tool_name=tool_name,
+                state=state,
+                runtime_home=runtime_home,
+            )
     return _denied(
         reason=(
             "Adaptive Delegation controller-only enforcement denied main task execution. "

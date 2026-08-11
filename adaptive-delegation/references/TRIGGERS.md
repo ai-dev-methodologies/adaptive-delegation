@@ -11,6 +11,12 @@ routes Codex native subagents.
 - `$adaptive-delegation validate model selection and report the audit trail.`
 - `$adaptive-delegation use token-efficient delegation for the independent check.`
 - `$adaptive-delegation apply Luna-first delegation with effort-first escalation.`
+- `$adaptive-delegation: continue the preceding task; scope: update the bounded parser and run its targeted tests.`
+
+The final form is the safe mid-conversation opt-in. The directive need not be
+present in the conversation's first message; it must begin the later request
+that activates the controller. Restating the bounded scope avoids deriving a
+new Objective Lock from ambiguous earlier discussion.
 
 ## Discovery phrases that do not activate the skill
 

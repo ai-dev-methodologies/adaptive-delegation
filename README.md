@@ -29,7 +29,10 @@ matching both separator-preserving tool names and Codex's sanitized hook names.
 Controller activation injects an exact bounded `preflight` command that loads
 the complete installed skill. A second `route` preflight returns only routing
 defaults, the selected package binding, and its verified installed role TOML;
-direct main shell reads remain denied.
+direct main shell reads remain denied. That selected-route response also gives
+the exact lifecycle command templates and finite allowed values for controller
+`decision`, `result`, and `close`; invalid variants receive the exact required
+flag form rather than a generic denial alone.
 Each leaf decision returns a one-time `launch_task_name`; the next native spawn
 must use it exactly. This binds the opaque native child message to the recorded
 Objective Lock decision without claiming that the hook can decrypt or inspect
@@ -44,9 +47,14 @@ Repeating an explicit invocation preserves the existing open controller rather
 than replacing its Objective Lock or pending launch.
 Each authorized Native launch must be closed with a structured controller
 result before another route decision; that result creates a cumulative local
-controller review. The main closes the controller as `complete` or `blocked`
-before its terminal answer, preventing stale state from restricting a later
-non-adaptive request in the same conversation.
+controller review. When main-visible usage is unavailable, the controller
+tries to recover only the validated cumulative token event from the already
+bound owner-local child transcript. Successful recovery is recorded as exact
+weighted tokens and model-relative cost with an explicit source; absent,
+malformed, unsafe, oversized, or unbound usage remains unavailable. The main
+closes the controller as `complete` or `blocked` before its terminal answer,
+preventing stale state from restricting a later non-adaptive request in the
+same conversation.
 
 Codex prompt-hook input identifies the current model but may omit reasoning
 effort. In that case the controller validates the Sol model, creates an
@@ -61,7 +69,7 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.7.6`.
+Current installable package version: `0.7.7`.
 
 ### Read-only evidence health
 
@@ -221,6 +229,12 @@ bare workflow names, localized trigger literals, and old session artifacts do
 not activate it. The skill frontmatter retains search vocabulary for discovery,
 but discovery is not activation. See
 [`adaptive-delegation/references/TRIGGERS.md`](adaptive-delegation/references/TRIGGERS.md).
+The directive may be introduced at any later conversation turn by beginning a
+new request with it, for example:
+`$adaptive-delegation: continue the preceding task; scope: <one-sentence restatement>`.
+It does not need to appear in the conversation's first message; it must begin
+the request that intentionally activates the controller so quoted or discussed
+tokens do not change execution mode.
 No additional Luna-first, stop-on-acceptance, or no-extra-review prompt is
 required; those constraints are part of the installed skill contract.
 

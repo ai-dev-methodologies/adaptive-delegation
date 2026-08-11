@@ -12,7 +12,11 @@ integration.
 This skill is explicit and opt-in. It activates only when the current user
 request begins with `$adaptive-delegation`. Matching prose, a bare workflow
 name, old session state, or a localized token-efficiency phrase does not
-activate it.
+activate it. The request may be a later turn in an existing conversation; begin
+that new request with
+`$adaptive-delegation: continue the preceding task; scope: <one-sentence restatement>`.
+The prefix requirement applies to the activating request, not to the first
+message of the conversation.
 
 The invocation is sufficient by itself. Do not require the user to append a
 separate Luna-first, stop-on-acceptance, or no-extra-review prompt. This skill
@@ -53,11 +57,16 @@ task execution, including edits, shell work, repository inspection, tests, and
 network calls. Its only read lane is the controller's bounded preflight: the
 `skill` surface returns this file, while `route --agent-type <role>` returns
 only `task_defaults`, the selected package binding, and that installed role
-TOML after verifying the model and effort. Before a child launch, use the exact
-installed `controller_gate.py decision` command to record `leaf_required` with the
-Objective Lock digest and package-fixed `agent_type`, model, and effort. The
-command returns `launch_task_name`; the next spawn must use that exact
-`task_name`, match the remaining envelope, and use `fork_turns="none"`.
+TOML after verifying the model and effort. The route response also provides
+selected-role lifecycle command templates and the finite allowed values for
+`decision`, `result`, and `close`; replace every uppercase placeholder and use
+the exact flag names. A malformed controller command is denied with its
+phase-specific exact flag form instead of a generic retry hint. Before a child
+launch, use the exact installed `controller_gate.py decision` command to record
+`leaf_required` with the Objective Lock digest and package-fixed `agent_type`,
+model, and effort. The command returns `launch_task_name`; the next spawn must
+use that exact `task_name`, match the remaining envelope, and use
+`fork_turns="none"`.
 Codex exposes the native child `message` opaquely to `PreToolUse`, so the hook
 does not pretend to decrypt or inspect it. Instead, the controller-issued task
 name binds that spawn to the recorded Objective Lock decision while the skill
@@ -101,11 +110,18 @@ the leaf returns, run the exact installed `controller_gate.py result` command
 with `accepted`, `failed`, or `path_blocked`; the route assessment (`correct`,
 `too-cheap`, `too-premium`, or `inconclusive`); the quality verdict;
 integration acceptance; bounded evidence references; and token observation.
-Use `token_observation=unavailable` when provider usage is absent and omit
-token/cost values—never encode missing measurement as observed zero. An exact
-or estimated observation must include nonnegative weighted tokens and the
-route-relative cost proxy. The controller denies a new route decision until
-this result is recorded, then writes a cumulative owner-only controller review.
+Use `token_observation=unavailable` when provider usage is not visible to the
+main and omit token/cost values—never encode missing measurement as observed
+zero. The controller then checks only the already bound owner-local child
+transcript. If its cumulative token event, child identity, size, JSON shape,
+and package price factor validate, the controller records an exact observation
+using `ceil(input_tokens / 4) + output_tokens`; otherwise it preserves
+`unavailable`. An exact or estimated main-reported observation must include
+nonnegative weighted tokens and the route-relative cost proxy. Controller
+reviews label the observation source so bound transcript evidence is not
+confused with main-reported or unavailable data. The controller denies a new
+route decision until this result is recorded, then writes a cumulative
+owner-only controller review.
 Before the terminal user-facing answer, run `controller_gate.py close` with
 `complete` or `blocked` and bounded evidence. `complete` after a leaf requires
 an accepted integrated result. A closed state releases the session's task-tool

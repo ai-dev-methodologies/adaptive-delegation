@@ -56,6 +56,13 @@ Dispatcher-owned paths keep their existing `pre_decision`/`post_result`
 lifecycle; controller-native paths use launch/result events and cumulative
 controller reviews.
 
+Controller cost summaries also include `observation_sources`. New records use
+`bound_child_transcript` when the controller recovered validated cumulative
+usage from the exact bound child, `main_reported` for caller-supplied observed
+values, and `unavailable` when no safe measurement exists. Older observed
+records without source metadata are grouped as `legacy_unspecified`; they are
+not silently presented as transcript-derived evidence.
+
 ## Durable local artifacts
 
 | Artifact | Owner | Created or updated when | What it means | User handling |

@@ -3035,6 +3035,7 @@ def _health_controller(path: Path) -> tuple[dict[str, Any], str]:
             "observed_results": 0,
             "unobserved_results": 0,
             "weighted_tokens_observed": None,
+            "observation_sources": {},
         },
         "quality": {
             "accepted": 0,
@@ -3114,6 +3115,28 @@ def _health_controller(path: Path) -> tuple[dict[str, Any], str]:
                 continue
             weighted = value.get("weighted_tokens")
             cost_proxy = value.get("cost_proxy")
+            observation_source = value.get("token_observation_source")
+            if observation_source is None:
+                observation_source = (
+                    "unavailable"
+                    if token_observation == "unavailable"
+                    else "legacy_unspecified"
+                )
+            valid_sources = {
+                "unavailable": {"unavailable"},
+                "estimated": {"main_reported", "legacy_unspecified"},
+                "exact": {
+                    "bound_child_transcript",
+                    "main_reported",
+                    "legacy_unspecified",
+                },
+            }
+            if (
+                not isinstance(observation_source, str)
+                or observation_source not in valid_sources[token_observation]
+            ):
+                anomalies["invalid_records"] += 1
+                continue
             if token_observation == "unavailable":
                 if weighted is not None or cost_proxy is not None:
                     anomalies["invalid_records"] += 1
@@ -3141,6 +3164,8 @@ def _health_controller(path: Path) -> tuple[dict[str, Any], str]:
                 counts["cost"]["observed_results"] += 1
                 current_weighted = counts["cost"]["weighted_tokens_observed"] or 0
                 counts["cost"]["weighted_tokens_observed"] = current_weighted + weighted
+            sources = counts["cost"]["observation_sources"]
+            sources[observation_source] = sources.get(observation_source, 0) + 1
         else:
             decision = value.get("decision")
             if decision == "leaf_required":
