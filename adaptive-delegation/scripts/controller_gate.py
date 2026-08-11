@@ -49,10 +49,16 @@ QUALITY_VERDICTS = {"pass", "fail", "inconclusive"}
 TOKEN_OBSERVATIONS = {"exact", "estimated", "unavailable"}
 TERMINAL_STATUSES = {"complete", "blocked"}
 CONTROL_PLANE_TOOLS = {
+    "functions.get_goal",
+    "get_goal",
     "functions.request_user_input",
     "request_user_input",
+    "functions.hud",
+    "hud",
     "functions.update_plan",
     "update_plan",
+    "functions.update_goal",
+    "update_goal",
     "collaboration.list_agents",
     "collaboration.wait_agent",
     "collaboration.send_message",

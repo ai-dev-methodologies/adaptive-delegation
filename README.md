@@ -32,6 +32,9 @@ justify undeclared direct work. This is controller-only enforcement after the
 qualified main has made and recorded the routing judgment.
 The hook accepts only the fixed control-plane and spawn allowlists while
 matching both separator-preserving tool names and Codex's sanitized hook names.
+Goal/Ultragoal continuation and HUD status operations remain in that control
+plane while an adaptive controller is active; main product/task tools remain
+denied until an authorized lane is recorded.
 Controller activation injects an exact bounded `preflight` command that loads
 the complete installed skill. A second `route` preflight returns only routing
 defaults, the selected package binding, and its verified installed role TOML;
@@ -75,7 +78,7 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.7.7`.
+Current installable package version: `0.7.8`.
 
 ### Read-only evidence health
 
