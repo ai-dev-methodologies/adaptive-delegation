@@ -23,6 +23,7 @@ EVENT_SCHEMA_VERSION = "1"
 MAX_INPUT_BYTES = 1024 * 1024
 MAX_TRANSCRIPT_BINDING_BYTES = 256 * 1024
 MAX_TRANSCRIPT_BINDING_LINES = 8
+MAX_TRANSCRIPT_BINDING_FILES = 64
 MAX_TRANSCRIPT_USAGE_BYTES = 64 * 1024 * 1024
 MAX_TRANSCRIPT_USAGE_LINE_BYTES = 4 * 1024 * 1024
 MAX_TOKEN_COUNT = 1_000_000_000_000
@@ -512,6 +513,11 @@ def _lifecycle_command_templates(
             "--evidence-ref",
             evidence,
         ),
+        "admission_failure": command(
+            "admission-failure",
+            "--evidence-ref",
+            evidence,
+        ),
         "close_complete": command(
             "close",
             "--terminal-status",
@@ -909,6 +915,75 @@ def record_leaf_result(
     return updated
 
 
+def record_launch_admission_failure(
+    *,
+    runtime_home: Path | None,
+    session_id: str,
+    workspace: str | Path,
+    evidence_references: list[str] | None,
+) -> dict[str, Any]:
+    """Release a native launch rejected before a child was created."""
+    resolved_home = _runtime_home(runtime_home)
+    resolved_workspace = _canonical_workspace(workspace)
+    state = _load_state(resolved_home, session_id, resolved_workspace)
+    if state is None or state.get("phase") not in {
+        "leaf_required",
+        "leaf_launch_authorized",
+    }:
+        raise ControllerGateError("launch admission failure requires one pending leaf decision")
+    planned = state.get("planned_launch")
+    matches = (
+        _matching_rollout_transcripts(
+            resolved_home,
+            session_id,
+            planned,
+            None,
+            state.get("updated_at"),
+        )
+        if isinstance(planned, dict)
+        else None
+    )
+    if not isinstance(planned, dict) or matches is None or matches:
+        raise ControllerGateError("launch admission failure requires no created child rollout")
+    if state.get("child_turn_id") is not None or state.get("child_transcript_path") is not None:
+        raise ControllerGateError("launch admission failure requires no child binding")
+    references = _evidence_references(evidence_references)
+    timestamp = _timestamp()
+    updated = dict(state)
+    updated.update(
+        {
+            "phase": "leaf_result_recorded",
+            "last_outcome": "path_blocked",
+            "last_integration_accepted": False,
+            "updated_at": timestamp,
+        }
+    )
+    _append_event(
+        resolved_home,
+        {
+            "schema_version": EVENT_SCHEMA_VERSION,
+            "event_type": "leaf_result_recorded",
+            "timestamp": timestamp,
+            "activation_id": state["activation_id"],
+            "session_id": session_id,
+            "workspace": str(resolved_workspace),
+            "objective_lock_digest": state["objective_lock_digest"],
+            "planned_launch": planned,
+            "outcome": "path_blocked",
+            "route_assessment": "inconclusive",
+            "quality_verdict": "inconclusive",
+            "integration_accepted": False,
+            "token_observation": "unavailable",
+            "token_observation_source": "unavailable",
+            "launch_status": "not_created",
+            "evidence_references": references,
+        },
+    )
+    _atomic_write_json(_state_path(resolved_home, session_id, resolved_workspace), updated)
+    _write_controller_review(resolved_home)
+    return updated
+
+
 def close_controller(
     *,
     runtime_home: Path | None,
@@ -1115,6 +1190,8 @@ def _denied(
 def _authorized_controller_command(
     payload: dict[str, Any], state: dict[str, Any], workspace: Path
 ) -> bool:
+    if _payload_string(payload, "turn_id", "turnId") != state.get("main_turn_id"):
+        return False
     tool_input = _spawn_input(payload)
     command = tool_input.get("cmd") or tool_input.get("command")
     if not isinstance(command, str) or not command.strip():
@@ -1139,6 +1216,7 @@ def _authorized_controller_command(
         "declare-main",
         "preflight",
         "result",
+        "admission-failure",
         "close",
     }:
         return False
@@ -1191,6 +1269,8 @@ def _authorized_controller_command(
                 "--evidence-ref",
             }
         )
+    elif tokens[2] == "admission-failure":
+        required.add("--evidence-ref")
     else:
         required.update({"--terminal-status", "--evidence-ref"})
     if not required.issubset(values):
@@ -1240,7 +1320,7 @@ def _transcript_binds_planned_child(
     *,
     transcript: Path,
     session_id: str,
-    turn_id: str,
+    turn_id: str | None,
     planned: dict[str, Any],
 ) -> bool:
     rows: list[dict[str, Any]] = []
@@ -1288,10 +1368,164 @@ def _transcript_binds_planned_child(
         row.get("type") == "event_msg"
         and isinstance(row.get("payload"), dict)
         and row["payload"].get("type") == "task_started"
-        and row["payload"].get("turn_id") == turn_id
+        and (turn_id is None or row["payload"].get("turn_id") == turn_id)
         for row in rows[1:]
     )
     return metadata_matches and task_started
+
+
+def _matching_rollout_transcripts(
+    runtime_home: Path,
+    session_id: str,
+    planned: dict[str, Any],
+    turn_id: str | None,
+    launch_at: Any,
+) -> list[Path] | None:
+    sessions = runtime_home / "sessions"
+    if not os.path.lexists(sessions):
+        return []
+    if os.path.lexists(sessions) and sessions.is_symlink():
+        return None
+    try:
+        root = sessions.resolve(strict=True)
+        if not isinstance(launch_at, str):
+            return None
+        cutoff = (
+            _datetime.datetime.fromisoformat(
+                launch_at.replace("Z", "+00:00")
+            ).timestamp()
+            - 5
+        )
+        now = _datetime.datetime.now(_datetime.timezone.utc)
+        launched = _datetime.datetime.fromisoformat(
+            launch_at.replace("Z", "+00:00")
+        )
+        dates = list(
+            dict.fromkeys(
+                (
+                    now.date(),
+                    now.astimezone().date(),
+                    launched.date(),
+                    launched.astimezone().date(),
+                )
+            )
+        )
+    except (OSError, ValueError):
+        return None
+    matches: list[Path] = []
+    candidates = 0
+
+    def inspect(candidate: Path) -> bool:
+        nonlocal candidates
+        try:
+            if candidate.is_symlink() or not candidate.is_file():
+                if candidate.is_symlink():
+                    raise ControllerGateError("unsafe rollout candidate")
+                return True
+            if candidate.stat().st_mtime < cutoff:
+                return True
+            candidates += 1
+            if candidates > MAX_TRANSCRIPT_BINDING_FILES:
+                raise ControllerGateError("too many recent rollout candidates")
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(root)
+            if resolved != candidate or candidate.stat().st_size > MAX_TRANSCRIPT_USAGE_BYTES:
+                raise ControllerGateError("unsafe rollout candidate")
+        except (OSError, ValueError):
+            raise ControllerGateError("unsafe rollout candidate")
+        if _transcript_binds_planned_child(
+            transcript=candidate, session_id=session_id, turn_id=turn_id, planned=planned
+        ):
+            matches.append(resolved)
+        return True
+
+    try:
+        for date in dates:
+            directory = root
+            missing = False
+            for component in (f"{date:%Y}", f"{date:%m}", f"{date:%d}"):
+                directory = directory / component
+                if not os.path.lexists(directory):
+                    missing = True
+                    break
+                if directory.is_symlink() or not directory.is_dir():
+                    return None
+            if missing:
+                continue
+            with os.scandir(directory) as scanner:
+                for entry in scanner:
+                    if entry.is_symlink():
+                        return None
+                    if entry.name.endswith(".jsonl") and entry.is_file(
+                        follow_symlinks=False
+                    ):
+                        inspect(Path(entry.path))
+        with os.scandir(root) as scanner:
+            for entry in scanner:
+                if entry.is_symlink():
+                    return None
+                if entry.name.endswith(".jsonl") and entry.is_file(
+                    follow_symlinks=False
+                ):
+                    inspect(Path(entry.path))
+    except (ControllerGateError, OSError):
+        return None
+    return matches
+
+
+def _bound_transcript_has_turn(
+    transcript: Path,
+    runtime_home: Path,
+    session_id: str,
+    turn_id: str,
+    planned: dict[str, Any],
+) -> bool:
+    try:
+        sessions = runtime_home / "sessions"
+        if sessions.is_symlink() or transcript.is_symlink() or not transcript.is_absolute():
+            return False
+        root = sessions.resolve(strict=True)
+        resolved = transcript.resolve(strict=True)
+        resolved.relative_to(root)
+        if (
+            resolved != transcript
+            or not resolved.is_file()
+            or resolved.stat().st_size > MAX_TRANSCRIPT_USAGE_BYTES
+        ):
+            return False
+    except (OSError, ValueError):
+        return False
+    if not _transcript_binds_planned_child(
+        transcript=resolved,
+        session_id=session_id,
+        turn_id=None,
+        planned=planned,
+    ):
+        return False
+    consumed = 0
+    try:
+        with resolved.open("r", encoding="utf-8") as handle:
+            while line := handle.readline(MAX_TRANSCRIPT_USAGE_LINE_BYTES + 1):
+                size = len(line.encode("utf-8"))
+                consumed += size
+                if (
+                    size > MAX_TRANSCRIPT_USAGE_LINE_BYTES
+                    or consumed > MAX_TRANSCRIPT_USAGE_BYTES
+                    or not line.endswith("\n")
+                ):
+                    return False
+                row = json.loads(line)
+                if (
+                    isinstance(row, dict)
+                    and row.get("type") == "event_msg"
+                    and isinstance(row.get("payload"), dict)
+                    and row["payload"].get("type") == "task_started"
+                    and row["payload"].get("turn_id") == turn_id
+                ):
+                    return True
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return False
 
 
 def _bound_child_token_cost(
@@ -1412,7 +1646,7 @@ def _controller_command_attempt(payload: dict[str, Any]) -> str | None:
         return None
     if controller != Path(__file__).resolve() or len(tokens) < 3:
         return None
-    controller_commands = {"decision", "declare-main", "preflight", "result", "close"}
+    controller_commands = {"decision", "declare-main", "preflight", "result", "admission-failure", "close"}
     return tokens[2] if tokens[2] in controller_commands else None
 
 
@@ -1445,6 +1679,7 @@ def _controller_command_correction(
             "--integration-accepted <true|false> --token-observation unavailable "
             "--evidence-ref <local-safe-ref>"
         ),
+        "admission-failure": "--evidence-ref <local-safe-ref>",
         "close": (
             "--terminal-status <complete|blocked> "
             "--evidence-ref <local-safe-ref>"
@@ -1472,23 +1707,53 @@ def _adaptive_child(
         if turn_id == main_turn_id:
             return False
         transcript = _resolved_transcript_path(payload, runtime_home)
-        if transcript is None:
-            return False
         child_turn_id = state.get("child_turn_id")
         child_transcript_path = state.get("child_transcript_path")
-        if isinstance(child_turn_id, str) or isinstance(child_transcript_path, str):
-            return (
-                turn_id == child_turn_id
-                and str(transcript) == child_transcript_path
-            )
         planned = state.get("planned_launch")
-        if not isinstance(planned, dict) or not _transcript_binds_planned_child(
+        if not isinstance(planned, dict):
+            return False
+        if isinstance(child_turn_id, str) and isinstance(child_transcript_path, str):
+            bound = Path(child_transcript_path)
+            if turn_id == child_turn_id:
+                return transcript == bound
+            if transcript is None:
+                transcript = bound
+            if transcript == bound and _bound_transcript_has_turn(
+                bound, runtime_home, main_session_id, turn_id, planned
+            ):
+                updated = dict(state)
+                updated["child_turn_id"] = turn_id
+                updated["updated_at"] = _timestamp()
+                _atomic_write_json(state_path, updated)
+                return True
+            return False
+        if transcript is None or not _transcript_binds_planned_child(
             transcript=transcript,
             session_id=main_session_id,
             turn_id=turn_id,
             planned=planned,
         ):
-            return False
+            matches = _matching_rollout_transcripts(
+                runtime_home,
+                main_session_id,
+                planned,
+                turn_id,
+                state.get("updated_at"),
+            )
+            if matches is None or len(matches) != 1:
+                return False
+            transcript = matches[0]
+        if isinstance(child_turn_id, str) or isinstance(child_transcript_path, str):
+            if str(transcript) != child_transcript_path:
+                return False
+            if turn_id == child_turn_id:
+                return True
+            # A resumed child may start a new turn in the already-bound rollout.
+            updated = dict(state)
+            updated["child_turn_id"] = turn_id
+            updated["updated_at"] = _timestamp()
+            _atomic_write_json(state_path, updated)
+            return True
         updated = dict(state)
         updated["child_turn_id"] = turn_id
         updated["child_transcript_path"] = str(transcript)
@@ -1888,6 +2153,10 @@ def _parser() -> argparse.ArgumentParser:
     result.add_argument("--weighted-tokens", type=int)
     result.add_argument("--cost-proxy", type=float)
     result.add_argument("--evidence-ref", action="append", default=[])
+    admission_failure = subparsers.add_parser("admission-failure")
+    admission_failure.add_argument("--session-id", required=True)
+    admission_failure.add_argument("--workspace", required=True, type=Path)
+    admission_failure.add_argument("--evidence-ref", action="append", default=[])
     close = subparsers.add_parser("close")
     close.add_argument("--session-id", required=True)
     close.add_argument("--workspace", required=True, type=Path)
@@ -1967,6 +2236,13 @@ def main(argv: list[str] | None = None) -> int:
                 evidence_references=args.evidence_ref,
                 weighted_tokens=args.weighted_tokens,
                 cost_proxy=args.cost_proxy,
+            )
+            print(_canonical_json({"phase": result["phase"], "recorded": True}))
+            return 0
+        if args.command == "admission-failure":
+            result = record_launch_admission_failure(
+                runtime_home=None, session_id=args.session_id, workspace=args.workspace,
+                evidence_references=args.evidence_ref,
             )
             print(_canonical_json({"phase": result["phase"], "recorded": True}))
             return 0

@@ -74,7 +74,8 @@ class ControllerGateTests(unittest.TestCase):
         self.assertIsInstance(planned, dict)
         selected_task_name = task_name or planned["task_name"]
         selected_turn_id = turn_id or self.child_turn_id
-        transcript = self.runtime_home / "sessions" / "child-rollout.jsonl"
+        today = gate._datetime.datetime.now(gate._datetime.timezone.utc)
+        transcript = self.runtime_home / "sessions" / f"{today:%Y}" / f"{today:%m}" / f"{today:%d}" / "child-rollout.jsonl"
         transcript.parent.mkdir(parents=True, exist_ok=True)
         rows = [
             {
@@ -551,6 +552,7 @@ class ControllerGateTests(unittest.TestCase):
         commands = route["lifecycle_command_templates"]
         decision_tokens = shlex.split(commands["decision_leaf_required"])
         accepted_tokens = shlex.split(commands["result_accepted"])
+        admission_failure_tokens = shlex.split(commands["admission_failure"])
         close_tokens = shlex.split(commands["close_complete"])
         self.assertEqual(
             decision_tokens[:3],
@@ -569,6 +571,8 @@ class ControllerGateTests(unittest.TestCase):
         )
         self.assertIn("--integration-accepted", accepted_tokens)
         self.assertIn("--token-observation", accepted_tokens)
+        self.assertEqual(admission_failure_tokens[2], "admission-failure")
+        self.assertIn("--evidence-ref", admission_failure_tokens)
         self.assertEqual(
             close_tokens[close_tokens.index("--terminal-status") + 1], "complete"
         )
@@ -716,6 +720,201 @@ class ControllerGateTests(unittest.TestCase):
         self.assertEqual(
             main_output["hookSpecificOutput"]["permissionDecision"], "deny"
         )
+
+    def test_child_without_payload_transcript_binds_unique_exact_rollout(self) -> None:
+        self.activate()
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home, session_id=self.session_id, workspace=self.cwd,
+            decision="leaf_required", objective_lock_digest="a" * 64,
+            agent_type="adaptive-luna-maker-high", model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        self.assertEqual(gate.handle_hook(self.tool_payload("spawn_agent", {
+            "task_name": decision["planned_launch"]["task_name"], "message": "locked",
+            "agent_type": "adaptive-luna-maker-high", "reasoning_effort": "high",
+            "fork_turns": "none",
+        }), runtime_home=self.runtime_home), {})
+        self.child_transcript(decision)
+        self.assertEqual(gate.handle_hook(self.tool_payload(
+            "Bash", {"command": "true"}, turn_id=self.child_turn_id,
+        ), runtime_home=self.runtime_home), {})
+
+    def test_child_fallback_ignores_many_old_unrelated_rollouts(self) -> None:
+        self.activate()
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home, session_id=self.session_id, workspace=self.cwd,
+            decision="leaf_required", objective_lock_digest="0" * 64,
+            agent_type="adaptive-luna-maker-high", model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        self.assertEqual(gate.handle_hook(self.tool_payload("spawn_agent", {
+            "task_name": decision["planned_launch"]["task_name"], "message": "locked",
+            "agent_type": "adaptive-luna-maker-high", "reasoning_effort": "high",
+            "fork_turns": "none",
+        }), runtime_home=self.runtime_home), {})
+        old_root = self.runtime_home / "sessions" / "old"
+        old_root.mkdir(parents=True)
+        for index in range(gate.MAX_TRANSCRIPT_BINDING_FILES + 1):
+            old = old_root / f"{index}.jsonl"
+            old.write_text("{}\n", encoding="utf-8")
+            os.utime(old, (1, 1))
+        self.child_transcript(decision)
+        self.assertEqual(gate.handle_hook(self.tool_payload(
+            "Bash", {"command": "true"}, turn_id=self.child_turn_id,
+        ), runtime_home=self.runtime_home), {})
+
+    def test_child_fallback_rejects_ambiguous_or_unsafe_rollouts(self) -> None:
+        self.activate()
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home, session_id=self.session_id, workspace=self.cwd,
+            decision="leaf_required", objective_lock_digest="b" * 64,
+            agent_type="adaptive-luna-maker-high", model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        self.assertEqual(gate.handle_hook(self.tool_payload("spawn_agent", {
+            "task_name": decision["planned_launch"]["task_name"], "message": "locked",
+            "agent_type": "adaptive-luna-maker-high", "reasoning_effort": "high",
+            "fork_turns": "none",
+        }), runtime_home=self.runtime_home), {})
+        first = self.child_transcript(decision)
+        second = first.with_name("second-rollout.jsonl")
+        second.write_text(first.read_text(encoding="utf-8"), encoding="utf-8")
+        denied = gate.handle_hook(self.tool_payload(
+            "Bash", {"command": "true"}, turn_id=self.child_turn_id,
+        ), runtime_home=self.runtime_home)
+        self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
+        second.unlink()
+        first.unlink()
+        first.symlink_to(self.cwd / "missing-rollout.jsonl")
+        denied = gate.handle_hook(self.tool_payload(
+            "Bash", {"command": "true"}, turn_id=self.child_turn_id,
+        ), runtime_home=self.runtime_home)
+        self.assertEqual(denied["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_admission_failure_releases_pending_leaf_for_next_decision(self) -> None:
+        self.activate()
+        digest = "c" * 64
+        gate.record_decision(
+            runtime_home=self.runtime_home, session_id=self.session_id, workspace=self.cwd,
+            decision="leaf_required", objective_lock_digest=digest,
+            agent_type="adaptive-luna-maker-high", model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        state = gate.record_launch_admission_failure(
+            runtime_home=self.runtime_home, session_id=self.session_id, workspace=self.cwd,
+            evidence_references=["local/native-rejection.json"],
+        )
+        self.assertEqual(state["phase"], "leaf_result_recorded")
+        self.assertEqual(state["last_outcome"], "path_blocked")
+        retry = gate.record_decision(
+            runtime_home=self.runtime_home, session_id=self.session_id, workspace=self.cwd,
+            decision="leaf_required", objective_lock_digest=digest,
+            agent_type="adaptive-luna-maker-high", model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        self.assertEqual(retry["phase"], "leaf_required")
+
+    def test_admission_failure_releases_authorized_leaf_without_created_child(self) -> None:
+        self.activate()
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home, session_id=self.session_id, workspace=self.cwd,
+            decision="leaf_required", objective_lock_digest="f" * 64,
+            agent_type="adaptive-luna-maker-high", model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        self.assertEqual(gate.handle_hook(self.tool_payload("spawn_agent", {
+            "task_name": decision["planned_launch"]["task_name"], "message": "locked",
+            "agent_type": "adaptive-luna-maker-high", "reasoning_effort": "high",
+            "fork_turns": "none",
+        }), runtime_home=self.runtime_home), {})
+        state = gate.record_launch_admission_failure(
+            runtime_home=self.runtime_home, session_id=self.session_id, workspace=self.cwd,
+            evidence_references=["local/native-rejection.json"],
+        )
+        self.assertEqual(state["phase"], "leaf_result_recorded")
+
+    def test_admission_failure_rejects_authorized_or_completed_child_phases(self) -> None:
+        self.activate()
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home, session_id=self.session_id, workspace=self.cwd,
+            decision="leaf_required", objective_lock_digest="d" * 64,
+            agent_type="adaptive-luna-maker-high", model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        self.assertEqual(gate.handle_hook(self.tool_payload("spawn_agent", {
+            "task_name": decision["planned_launch"]["task_name"], "message": "locked",
+            "agent_type": "adaptive-luna-maker-high", "reasoning_effort": "high",
+            "fork_turns": "none",
+        }), runtime_home=self.runtime_home), {})
+        self.child_transcript(decision)
+        with self.assertRaisesRegex(gate.ControllerGateError, "no created child"):
+            gate.record_launch_admission_failure(
+                runtime_home=self.runtime_home, session_id=self.session_id, workspace=self.cwd,
+                evidence_references=["local/native-rejection.json"],
+            )
+
+    def test_child_restart_rebinds_only_same_bound_transcript(self) -> None:
+        self.activate()
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home, session_id=self.session_id, workspace=self.cwd,
+            decision="leaf_required", objective_lock_digest="e" * 64,
+            agent_type="adaptive-luna-maker-high", model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        self.assertEqual(gate.handle_hook(self.tool_payload("spawn_agent", {
+            "task_name": decision["planned_launch"]["task_name"], "message": "locked",
+            "agent_type": "adaptive-luna-maker-high", "reasoning_effort": "high",
+            "fork_turns": "none",
+        }), runtime_home=self.runtime_home), {})
+        transcript = self.child_transcript(decision)
+        self.assertEqual(gate.handle_hook(self.tool_payload(
+            "Bash", {"command": "true"}, turn_id=self.child_turn_id,
+            transcript_path=str(transcript),
+        ), runtime_home=self.runtime_home), {})
+        restart_turn = "77777777-7777-4777-8777-777777777777"
+        with transcript.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"type": "event_msg", "payload": {
+                "type": "task_started", "turn_id": restart_turn,
+            }}) + "\n")
+        self.assertEqual(gate.handle_hook(self.tool_payload(
+            "Bash", {"command": "true"}, turn_id=restart_turn,
+        ), runtime_home=self.runtime_home), {})
+
+    def test_child_restart_finds_late_task_started_in_bound_transcript(self) -> None:
+        self.activate()
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home, session_id=self.session_id, workspace=self.cwd,
+            decision="leaf_required", objective_lock_digest="1" * 64,
+            agent_type="adaptive-luna-maker-high", model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        gate.handle_hook(self.tool_payload("spawn_agent", {
+            "task_name": decision["planned_launch"]["task_name"], "message": "locked",
+            "agent_type": "adaptive-luna-maker-high", "reasoning_effort": "high", "fork_turns": "none",
+        }), runtime_home=self.runtime_home)
+        transcript = self.child_transcript(decision)
+        gate.handle_hook(self.tool_payload("Bash", {"command": "true"}, turn_id=self.child_turn_id,
+            transcript_path=str(transcript)), runtime_home=self.runtime_home)
+        restart_turn = "88888888-8888-4888-8888-888888888888"
+        with transcript.open("a", encoding="utf-8") as handle:
+            for _ in range(gate.MAX_TRANSCRIPT_BINDING_LINES + 1):
+                handle.write(json.dumps({"type": "event_msg", "payload": {"type": "noise"}}) + "\n")
+            handle.write(json.dumps({"type": "event_msg", "payload": {
+                "type": "task_started", "turn_id": restart_turn,
+            }}) + "\n")
+        self.assertEqual(gate.handle_hook(self.tool_payload("Bash", {"command": "true"}, turn_id=restart_turn),
+            runtime_home=self.runtime_home), {})
+
+    def test_foreign_turn_cannot_run_exact_controller_command(self) -> None:
+        self.activate()
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"admission-failure --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            "--evidence-ref local/native-rejection.json"
+        )
+        output = gate.handle_hook(self.tool_payload("Bash", {"command": command},
+            turn_id=self.child_turn_id), runtime_home=self.runtime_home)
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_adaptive_child_permission_escalation_is_denied_without_user_prompt(self) -> None:
         self.activate()

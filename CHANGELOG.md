@@ -14,6 +14,15 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.7.10] - 2026-08-12
+
+- Recovered the exact authorized child from bounded, owner-local rollout
+  evidence when a child hook omits or misreports its transcript path, including
+  same-transcript turn rebinding after a restart.
+- Added an evidence-bound `admission-failure` transition that releases a
+  pending or authorized launch only when no matching child rollout or binding
+  exists, preventing never-created leaves from deadlocking the controller.
+
 ## [0.7.9] - 2026-08-11
 
 - Rebound child turn and transcript state for freshly authorized retries after
