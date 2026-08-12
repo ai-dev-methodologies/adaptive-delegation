@@ -127,6 +127,12 @@ reviews label the observation source so bound transcript evidence is not
 confused with main-reported or unavailable data. The controller denies a new
 route decision until this result is recorded, then writes a cumulative
 owner-only controller review.
+If native admission rejects before creating a child, run the exact installed
+`controller_gate.py admission-failure` command with a bounded local evidence
+reference. It is admitted only while a leaf is pending or launch-authorized
+and only when bounded owner-local rollout discovery finds no matching child
+and controller state has no child binding; it records `path_blocked` without
+claiming child execution and releases the controller for the next decision.
 Before the terminal user-facing answer, run `controller_gate.py close` with
 `complete` or `blocked` and bounded evidence. `complete` after a leaf requires
 an accepted integrated result. A closed state releases the session's task-tool

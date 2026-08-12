@@ -40,7 +40,8 @@ the complete installed skill. A second `route` preflight returns only routing
 defaults, the selected package binding, and its verified installed role TOML;
 direct main shell reads remain denied. That selected-route response also gives
 the exact lifecycle command templates and finite allowed values for controller
-`decision`, `result`, and `close`; invalid variants receive the exact required
+`decision`, `result`, `admission-failure`, and `close`; invalid variants receive
+the exact required
 flag form rather than a generic denial alone.
 Each leaf decision returns a one-time `launch_task_name`; the next native spawn
 must use it exactly. This binds the opaque native child message to the recorded
@@ -52,6 +53,12 @@ pending locked launch. Because Codex subagent tool hooks share the parent
 launch, binds the one child turn whose owner-only rollout metadata matches the
 issued task name, role, parent, and start turn. Later user prompts refresh the
 main turn binding before any task tool can run; other turns remain denied.
+When the hook payload lacks a usable child transcript path, the controller
+searches only a bounded recent owner-local rollout set and requires one exact
+match; a resumed child may rebind a new turn only in its already bound
+transcript. If native admission creates no child, the evidence-bound
+`admission-failure` transition releases the pending launch only after proving
+that no matching rollout or child binding exists.
 Repeating an explicit invocation preserves the existing open controller rather
 than replacing its Objective Lock or pending launch.
 Each authorized Native launch must be closed with a structured controller
@@ -78,7 +85,7 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.7.9`.
+Current installable package version: `0.7.10`.
 
 ### Read-only evidence health
 

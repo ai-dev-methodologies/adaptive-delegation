@@ -162,7 +162,13 @@ task name binds the launch to the recorded Objective Lock decision without
 claiming message decryption. Child tool hooks reuse the parent session id; the
 controller binds the one child turn whose private rollout metadata matches the
 issued task name, role, parent, and start turn after that exact spawn while
-continuing to deny the main and foreign turns. The role selection is an
+continuing to deny the main and foreign turns. A missing or unusable hook
+transcript path triggers only a bounded recent owner-local rollout search and
+requires one exact match. A resumed child may rebind a new turn only within
+the already bound transcript. If native admission creates no child, the
+evidence-bound `admission-failure` transition records `path_blocked` and
+releases the launch only when no matching rollout or child binding exists.
+The role selection is an
 explicit model choice. The selected model need not appear in the optional
 `model` override enum, so its absence there is not evidence that the fixed
 Native route is unsupported.
