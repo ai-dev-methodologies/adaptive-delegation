@@ -40,9 +40,10 @@ the complete installed skill. A second `route` preflight returns only routing
 defaults, the selected package binding, and its verified installed role TOML;
 direct main shell reads remain denied. That selected-route response also gives
 the exact lifecycle command templates and finite allowed values for controller
-`decision`, `result`, `admission-failure`, and `close`; invalid variants receive
-the exact required
-flag form rather than a generic denial alone.
+`decision`, `result`, `admission-failure`, `cancel`, and `close`; invalid
+variants receive the exact required flag form rather than a generic denial
+alone. A recognizable exact command from a stale or foreign main turn instead
+reports the turn-binding mismatch and remains denied.
 Each leaf decision returns a one-time `launch_task_name`; the next native spawn
 must use it exactly. This binds the opaque native child message to the recorded
 Objective Lock decision without claiming that the hook can decrypt or inspect
@@ -60,10 +61,15 @@ transcript. If native admission creates no child, the evidence-bound
 `admission-failure` transition releases the pending launch only after proving
 that no matching rollout or child binding exists.
 Repeating an explicit invocation preserves the existing open controller rather
-than replacing its Objective Lock or pending launch.
-Each authorized Native launch must be closed with a structured controller
-result before another route decision; that result creates a cumulative local
-controller review. When main-visible usage is unavailable, the controller
+than replacing its Objective Lock or pending launch. Before any Objective Lock
+decision, `cancel` may close an accidental activation without recording a
+terminal task status; it is unavailable after work evidence exists.
+Each authorized Native launch must receive a structured controller result
+before another route decision; that result creates a cumulative local
+controller review. The next Maker, Checker, or evidence-backed main-only lane
+for the same terminal outcome stays in the same activation and preserves the
+Objective Lock digest, including after an accepted leaf. When main-visible
+usage is unavailable, the controller
 tries to recover only the validated cumulative token event from the already
 bound owner-local child transcript. Successful recovery is recorded as exact
 weighted tokens and model-relative cost with an explicit source; absent,
@@ -85,7 +91,7 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.7.10`.
+Current installable package version: `0.7.11`.
 
 ### Read-only evidence health
 
@@ -97,7 +103,8 @@ controller-enforcement, and current-policy evidence. The command accepts
 returns schema `0.1.0`, exits `0` for `healthy` or `partial`, and exits `2`
 for `degraded` while still emitting the report. Required policy and attempt
 sources are fail-closed; review, continuity, dispatch, and controller sources
-are optional.
+are optional. Controller health counts pre-decision cancellations separately
+and does not misclassify them as terminal completion, blockage, or open work.
 Rows that fail validation are excluded from aggregates and represented only by
 fixed diagnostic counts. Continuity scanning is aggregate-only and the command
 does not append, rewrite, backfill, finalize, or create any runtime state.

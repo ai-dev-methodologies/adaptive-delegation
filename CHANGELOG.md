@@ -14,6 +14,19 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.7.11] - 2026-08-13
+
+- Kept one activation and immutable Objective Lock across accepted Maker,
+  Checker, and evidence-backed main-only lanes instead of forcing a
+  close/reactivate cycle between lanes of the same terminal outcome.
+- Added a pre-decision `cancel` transition that releases an accidental open
+  activation without fabricating `complete` or `blocked` terminal evidence;
+  sanitized health counts cancellations separately and excludes them from
+  pending/open activation totals.
+- Distinguished stale main-turn binding from malformed lifecycle flags so an
+  exact command from the wrong turn receives actionable recovery guidance
+  while foreign-turn execution remains denied.
+
 ## [0.7.10] - 2026-08-12
 
 - Recovered the exact authorized child from bounded, owner-local rollout

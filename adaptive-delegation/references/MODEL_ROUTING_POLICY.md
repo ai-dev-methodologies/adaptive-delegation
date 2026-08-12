@@ -168,6 +168,14 @@ requires one exact match. A resumed child may rebind a new turn only within
 the already bound transcript. If native admission creates no child, the
 evidence-bound `admission-failure` transition records `path_blocked` and
 releases the launch only when no matching rollout or child binding exists.
+An accepted leaf result does not end the Objective Lock by itself. Required
+Maker, Checker, and evidence-backed main-only lanes for the same terminal
+outcome continue under the same activation ID and immutable digest; only the
+path-local launch binding is replaced by the next decision. Before any
+decision, an accidental activation may use the pre-decision `cancel`
+transition, which closes enforcement without claiming terminal completion or
+blockage. Controller CLI calls from a non-current main turn remain denied and
+are diagnosed as turn-binding failures rather than malformed flag shapes.
 The role selection is an
 explicit model choice. The selected model need not appear in the optional
 `model` override enum, so its absence there is not evidence that the fixed

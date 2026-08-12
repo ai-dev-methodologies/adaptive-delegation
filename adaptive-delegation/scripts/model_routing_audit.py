@@ -3022,6 +3022,10 @@ def _health_controller(path: Path) -> tuple[dict[str, Any], str]:
         "pending_leaf_results": 0,
         "main_tool_denials": 0,
         "child_permission_escalation_denials": 0,
+        "cancelled": {
+            "awaiting_main_declaration": 0,
+            "explicit_active": 0,
+        },
         "takeovers": 0,
         "main_only_exceptions": {},
         "closed": {"complete": 0, "blocked": 0},
@@ -3070,6 +3074,7 @@ def _health_controller(path: Path) -> tuple[dict[str, Any], str]:
         "main_tool_denied",
         "child_permission_escalation_denied",
         "controller_closed",
+        "controller_cancelled",
     }
     for value in values:
         if value.get("schema_version") != "1":
@@ -3095,6 +3100,12 @@ def _health_controller(path: Path) -> tuple[dict[str, Any], str]:
                 anomalies["invalid_records"] += 1
                 continue
             counts["closed"][terminal_status] += 1
+        elif event_type == "controller_cancelled":
+            phase = value.get("phase")
+            if phase not in counts["cancelled"] or "terminal_status" in value:
+                anomalies["invalid_records"] += 1
+                continue
+            counts["cancelled"][phase] += 1
         elif event_type == "leaf_result_recorded":
             outcome = value.get("outcome")
             assessment = value.get("route_assessment")
@@ -3185,13 +3196,19 @@ def _health_controller(path: Path) -> tuple[dict[str, Any], str]:
             else:
                 anomalies["invalid_records"] += 1
     counts["pending_main_declarations"] = max(
-        0, counts["activation_requests"] - counts["activations"]
+        0,
+        counts["activation_requests"]
+        - counts["activations"]
+        - counts["cancelled"]["awaiting_main_declaration"],
     )
     counts["pending_leaf_results"] = max(
         0, counts["authorized_leaf_launches"] - counts["leaf_results"]
     )
     counts["open_activations"] = max(
-        0, counts["activations"] - sum(counts["closed"].values())
+        0,
+        counts["activations"]
+        - sum(counts["closed"].values())
+        - counts["cancelled"]["explicit_active"],
     )
     counts["main_only_exceptions"] = dict(sorted(exceptions.items()))
     review_directory = path.parent / "reviews"
