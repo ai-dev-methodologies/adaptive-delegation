@@ -14,6 +14,14 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.7.9] - 2026-08-11
+
+- Rebound child turn and transcript state for freshly authorized retries after
+  a failed or path-blocked leaf result.
+- Hardened the isolated promotion gate to load the candidate hook trust and
+  require the exact closed controller lifecycle plus one matching Luna child
+  rollout with the declared unittest evidence.
+
 ## [0.7.8] - 2026-08-11
 
 - Allowed goal/Ultragoal continuation and HUD status control-plane tools while

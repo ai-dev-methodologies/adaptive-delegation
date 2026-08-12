@@ -1041,6 +1041,8 @@ def record_decision(
         updated["exception_reason"] = exception_reason
         updated["evidence_references"] = references
     if decision == "leaf_required":
+        updated.pop("child_turn_id", None)
+        updated.pop("child_transcript_path", None)
         updated["planned_launch"] = {
             "agent_type": agent_type,
             "model": model,

@@ -15,7 +15,9 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -33,6 +35,7 @@ IMMUTABLE_USER_RELATIVE_PATHS = (
 )
 TARGET_TEST = "test_target.TargetTests.test_normalizes_whitespace_and_case"
 ADJACENT_TEST = "test_adjacent.AdjacentTests.test_known_failure_is_preserved"
+MAX_ROLLOUT_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -95,33 +98,249 @@ def write_fixture(fixture: Path) -> None:
     )
 
 
-def write_python_trace_wrapper(directory: Path, trace: Path) -> None:
-    """Trace fresh-child python3 argv, then execute the real interpreter."""
-    directory.mkdir(mode=0o700)
-    wrapper = directory / "python3"
-    interpreter = str(Path(sys.executable).resolve())
-    wrapper.write_text(
-        f"#!{interpreter}\n"
-        "import json, os, pathlib, sys\n"
-        f"trace = pathlib.Path({str(trace)!r})\n"
-        "with trace.open('a', encoding='utf-8') as handle:\n"
-        "    handle.write(json.dumps(sys.argv[1:]) + '\\n')\n"
-        f"os.execv({interpreter!r}, [{interpreter!r}, *sys.argv[1:]])\n",
-        encoding="utf-8",
-    )
-    wrapper.chmod(0o700)
-
-
-def read_python_trace(trace: Path) -> list[list[str]]:
-    if not trace.is_file():
-        return []
-    commands: list[list[str]] = []
-    for line in trace.read_text(encoding="utf-8").splitlines():
+def read_jsonl(path: Path, *, maximum_bytes: int = MAX_ROLLOUT_BYTES) -> list[dict]:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"JSONL evidence is not a regular file: {path}")
+    metadata = path.stat()
+    if metadata.st_size <= 0 or metadata.st_size > maximum_bytes:
+        raise ValueError(f"JSONL evidence has invalid size: {path}")
+    if stat.S_IMODE(metadata.st_mode) & 0o022:
+        raise ValueError(f"JSONL evidence is group/world writable: {path}")
+    payload = path.read_bytes()
+    if not payload.endswith(b"\n"):
+        raise ValueError(f"JSONL evidence is not newline terminated: {path}")
+    rows: list[dict] = []
+    for line in payload.splitlines():
         value = json.loads(line)
-        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-            raise ValueError("python trace entry is not a string list")
-        commands.append(value)
-    return commands
+        if not isinstance(value, dict):
+            raise ValueError(f"JSONL evidence row is not an object: {path}")
+        rows.append(value)
+    return rows
+
+
+def read_json_object(path: Path, *, maximum_bytes: int = 1024 * 1024) -> dict:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"JSON evidence is not a regular file: {path}")
+    metadata = path.stat()
+    if metadata.st_size <= 0 or metadata.st_size > maximum_bytes:
+        raise ValueError(f"JSON evidence has invalid size: {path}")
+    if stat.S_IMODE(metadata.st_mode) & 0o022:
+        raise ValueError(f"JSON evidence is group/world writable: {path}")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"JSON evidence is not an object: {path}")
+    return value
+
+
+def derive_parent_session_id(output: str) -> str:
+    sessions: list[str] = []
+    for line in output.splitlines():
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(value, dict):
+            raise ValueError("fresh output JSON row is not an object")
+        if value.get("type") == "thread.started" and isinstance(
+            value.get("thread_id"), str
+        ):
+            sessions.append(value["thread_id"])
+    if len(sessions) != 1 or not sessions[0]:
+        raise ValueError(f"expected one fresh parent session, observed {sessions!r}")
+    return sessions[0]
+
+
+def controller_state_path(candidate_home: Path, session_id: str, fixture: Path) -> Path:
+    material = f"{session_id}\0{fixture.resolve()}".encode("utf-8")
+    key = hashlib.sha256(material).hexdigest()
+    return (
+        candidate_home
+        / "state"
+        / "adaptive-delegation"
+        / "controller"
+        / f"state-{key}.json"
+    )
+
+
+def validate_controller_lifecycle(
+    candidate_home: Path, fixture: Path, session_id: str
+) -> dict:
+    state_path = controller_state_path(candidate_home, session_id, fixture)
+    try:
+        state = read_json_object(state_path)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"controller state is unavailable or invalid: {exc}") from exc
+    workspace = str(fixture.resolve())
+    planned = state.get("planned_launch")
+    exact_planned = {
+        "agent_type": "adaptive-luna-maker-high",
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "high",
+        "fork_turns": "none",
+    }
+    if not isinstance(planned, dict) or any(
+        planned.get(key) != expected for key, expected in exact_planned.items()
+    ) or not isinstance(planned.get("task_name"), str) or re.fullmatch(
+        r"adaptive_[0-9a-f]{64}", planned["task_name"]
+    ) is None:
+        raise ValueError(f"controller planned launch is not exact: {planned!r}")
+    if not (
+        state.get("schema_version") == "1"
+        and state.get("session_id") == session_id
+        and state.get("workspace") == workspace
+        and state.get("phase") == "closed"
+        and state.get("terminal_status") == "complete"
+        and state.get("last_outcome") == "accepted"
+        and state.get("last_integration_accepted") is True
+    ):
+        raise ValueError("controller did not close with an accepted integrated leaf result")
+    digest = state.get("objective_lock_digest")
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise ValueError("controller Objective Lock digest is invalid")
+    activation_id = state.get("activation_id")
+    if not isinstance(activation_id, str) or re.fullmatch(
+        r"[0-9a-f]{64}", activation_id
+    ) is None:
+        raise ValueError("controller activation identity is invalid")
+    ledger = state_path.parent / "controller-events.jsonl"
+    ledger_rows = read_jsonl(ledger)
+    if any(
+        row.get("schema_version") != "1"
+        or row.get("session_id") != session_id
+        or row.get("workspace") != workspace
+        or row.get("activation_id") != activation_id
+        for row in ledger_rows
+    ):
+        raise ValueError("controller ledger contains foreign or malformed lifecycle evidence")
+    rows = ledger_rows
+    required = ["delegation_decision", "leaf_launch_authorized", "leaf_result_recorded", "controller_closed"]
+    selected = [row for row in rows if row.get("event_type") in required]
+    if [row.get("event_type") for row in selected] != required:
+        raise ValueError("controller lifecycle is incomplete or duplicated")
+    decision, launch, result, close = selected
+    if not (
+        decision.get("decision") == "leaf_required"
+        and decision.get("planned_launch") == planned
+        and launch.get("planned_launch") == planned
+        and result.get("planned_launch") == planned
+        and all(row.get("objective_lock_digest") == digest for row in selected)
+        and result.get("outcome") == "accepted"
+        and result.get("quality_verdict") == "pass"
+        and result.get("integration_accepted") is True
+        and close.get("terminal_status") == "complete"
+    ):
+        raise ValueError("controller lifecycle evidence does not match the closed state")
+    return planned
+
+
+def _exec_command_from_input(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    match = re.search(r'(?:"cmd"|cmd)\s*:\s*("(?:\\.|[^"\\])*")', value)
+    if match is None:
+        return None
+    command = json.loads(match.group(1))
+    return command if isinstance(command, str) else None
+
+
+def validate_child_rollout(
+    candidate_home: Path, fixture: Path, session_id: str, planned: dict
+) -> None:
+    sessions = candidate_home / "sessions"
+    if sessions.is_symlink() or not sessions.is_dir():
+        raise ValueError("candidate sessions directory is unavailable or unsafe")
+    transcripts = sorted(sessions.rglob("*.jsonl"))
+    if len(transcripts) != 1:
+        raise ValueError(f"expected one isolated child rollout, observed {len(transcripts)}")
+    transcript = transcripts[0]
+    resolved = transcript.resolve(strict=True)
+    try:
+        resolved.relative_to(sessions.resolve(strict=True))
+    except ValueError as exc:
+        raise ValueError("child rollout escapes the candidate sessions directory") from exc
+    rows = read_jsonl(transcript)
+    if not rows or rows[0].get("type") != "session_meta":
+        raise ValueError("child rollout is missing session metadata")
+    metadata = rows[0].get("payload")
+    source = metadata.get("source") if isinstance(metadata, dict) else None
+    subagent = source.get("subagent") if isinstance(source, dict) else None
+    spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
+    expected_path = f"/root/{planned['task_name']}"
+    if not (
+        isinstance(metadata, dict)
+        and isinstance(spawn, dict)
+        and metadata.get("session_id") == session_id
+        and metadata.get("parent_thread_id") == session_id
+        and metadata.get("cwd") == str(fixture.resolve())
+        and metadata.get("thread_source") == "subagent"
+        and metadata.get("agent_role") == planned["agent_type"]
+        and metadata.get("agent_path") == expected_path
+        and spawn.get("parent_thread_id") == session_id
+        and spawn.get("agent_role") == planned["agent_type"]
+        and spawn.get("agent_path") == expected_path
+    ):
+        raise ValueError("child rollout metadata does not match the authorized launch")
+    task_rows = [
+        (index, row["payload"].get("turn_id"))
+        for index, row in enumerate(rows)
+        if row.get("type") == "event_msg"
+        and isinstance(row.get("payload"), dict)
+        and row["payload"].get("type") == "task_started"
+    ]
+    contexts = [
+        row.get("payload") for row in rows if row.get("type") == "turn_context"
+    ]
+    if len(task_rows) != 1 or not isinstance(task_rows[0][1], str) or not task_rows[0][1]:
+        raise ValueError("child rollout has no unique task turn")
+    task_index, task_turn = task_rows[0]
+    if not any(
+        isinstance(context, dict)
+        and context.get("turn_id") == task_turn
+        and context.get("model") == planned["model"]
+        and context.get("effort") == planned["reasoning_effort"]
+        for context in contexts
+    ):
+        raise ValueError("child rollout model or effort does not match the authorized launch")
+    state = read_json_object(controller_state_path(candidate_home, session_id, fixture))
+    bound_turn = state.get("child_turn_id")
+    bound_transcript = state.get("child_transcript_path")
+    if bound_turn is not None or bound_transcript is not None:
+        if bound_turn != task_turn or bound_transcript != str(resolved):
+            raise ValueError("controller child binding does not match the rollout")
+    calls: dict[str, str] = {}
+    outputs: dict[str, object] = {}
+    all_unittests: list[str] = []
+    for row in rows[task_index + 1 :]:
+        payload = row.get("payload")
+        if row.get("type") != "response_item" or not isinstance(payload, dict):
+            continue
+        if payload.get("type") == "custom_tool_call" and payload.get("name") == "exec":
+            command = _exec_command_from_input(payload.get("input"))
+            call_id = payload.get("call_id")
+            if command is not None and "-m unittest" in command and isinstance(call_id, str):
+                if call_id in calls:
+                    raise ValueError("child rollout duplicates a verification call identity")
+                all_unittests.append(command)
+                calls[call_id] = command
+        elif payload.get("type") == "custom_tool_call_output" and isinstance(
+            payload.get("call_id"), str
+        ):
+            call_id = payload["call_id"]
+            if call_id in outputs:
+                raise ValueError("child rollout duplicates a tool output identity")
+            outputs[call_id] = payload.get("output")
+    expected = f"python3 -m unittest -v {TARGET_TEST}"
+    if all_unittests != [expected]:
+        raise ValueError(
+            "child must run exactly the declared targeted Python verification once; "
+            f"observed {all_unittests!r}"
+        )
+    call_id = next(iter(calls))
+    if call_id not in outputs:
+        raise ValueError("child targeted verification has no matching tool output")
+    rendered = json.dumps(outputs.get(call_id), ensure_ascii=False)
+    if "Ran 1 test" not in rendered or re.search(r"(?:^|\\n)OK(?:\\n|$)", rendered) is None:
+        raise ValueError("child targeted verification does not contain Ran 1 test and OK")
 
 
 def read_completed_commands(output: str) -> list[str]:
@@ -179,21 +398,65 @@ def preflight_violations(commands: list[str]) -> list[str]:
     return violations
 
 
-def reported_targeted_evidence(output: str) -> bool:
-    normalized = output.lower()
-    named_target = (
-        TARGET_TEST.lower() in normalized
-        or "exact requested unittest passed" in normalized
-        or "exact targeted test passed" in normalized
-    )
-    scoped_diff = (
-        "git diff -- target.py" in normalized
-        or "scoped diff contains only the requested change" in normalized
-    )
-    one_test = "ran 1 test" in normalized or re.search(
-        r"\b1 test\b[\s\S]{0,16}\bok\b", normalized
-    ) is not None
-    return named_target and one_test and scoped_diff
+def _split_simple_shell_command(command: str) -> list[str] | None:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    shell_names = {"bash", "sh", "zsh"}
+    if tokens and Path(tokens[0]).name in shell_names:
+        if len(tokens) != 3 or tokens[1] != "-lc":
+            return None
+        try:
+            tokens = shlex.split(tokens[2])
+        except ValueError:
+            return None
+        if (
+            len(tokens) >= 2
+            and Path(tokens[0]).name in shell_names
+            and tokens[1] in {"-c", "-lc"}
+        ):
+            return None
+    return tokens
+
+
+def product_work_violations(commands: list[str]) -> list[str]:
+    """Reject main-session commands that edit or verify the fixture product."""
+    markers = ("target.py", TARGET_TEST.lower())
+    violations: list[str] = []
+    for command in commands:
+        normalized = command.lower()
+        if not any(marker in normalized for marker in markers):
+            continue
+        tokens = _split_simple_shell_command(command)
+        if tokens is None:
+            violations.append(command)
+            continue
+        if any(token in {"&&", "||", ";", "|"} for token in tokens):
+            violations.append(command)
+            continue
+        controller_index = next(
+            (
+                index
+                for index, token in enumerate(tokens)
+                if token.endswith("controller_gate.py")
+            ),
+            None,
+        )
+        if (
+            controller_index is None
+            or controller_index + 1 >= len(tokens)
+            or tokens[controller_index + 1] not in {"result", "close"}
+        ):
+            violations.append(command)
+            continue
+        if any(
+            any(marker in token.lower() for marker in markers)
+            and (index == 0 or tokens[index - 1] != "--evidence-ref")
+            for index, token in enumerate(tokens)
+        ):
+            violations.append(command)
+    return violations
 
 
 def run(command: list[str], cwd: Path, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -231,11 +494,8 @@ def run_gate(
     try:
         candidate_home = root / "candidate-codex-home"
         fixture = root / "fixture"
-        trace_bin = root / "trace-bin"
-        python_trace = root / "fresh-python-commands.jsonl"
         fixture.mkdir()
         write_fixture(fixture)
-        write_python_trace_wrapper(trace_bin, python_trace)
         installed = run(
             [sys.executable, str(repo_root / "scripts" / "install.py"), "--codex-home", str(candidate_home)],
             repo_root,
@@ -256,9 +516,6 @@ def run_gate(
         }
         gate_environment["CODEX_HOME"] = str(candidate_home)
         gate_environment["HOME"] = str(candidate_home)
-        gate_environment["PATH"] = (
-            str(trace_bin) + os.pathsep + gate_environment.get("PATH", "")
-        )
         if extra_codex_args and extra_codex_args[0] == "--test-expose-user-home":
             gate_environment["USER_CODEX_HOME"] = str(user_codex_home)
             extra_codex_args = extra_codex_args[1:]
@@ -277,7 +534,7 @@ Stop condition: when that exact command passes and `git diff -- target.py` shows
 Final evidence line (required exactly): The exact requested unittest passed (Ran 1 test — OK), and git diff -- target.py showed only the requested change.
 """
         invocation = [
-            "codex", "exec", "--ephemeral", "--json", "--ignore-user-config",
+            "codex", "exec", "--ephemeral", "--json",
             "--disable", "apps", "--disable", "plugins", "--sandbox",
             "workspace-write", "--model", "gpt-5.6-sol", "--config",
             'model_reasoning_effort="high"', "--config", 'approval_policy="never"',
@@ -310,7 +567,8 @@ Final evidence line (required exactly): The exact requested unittest passed (Ran
                 user_codex_home,
                 before,
             )
-        violations = preflight_violations(read_completed_commands(output))
+        completed_commands = read_completed_commands(output)
+        violations = preflight_violations(completed_commands)
         if violations:
             return checked_result(
                 failed(
@@ -320,35 +578,23 @@ Final evidence line (required exactly): The exact requested unittest passed (Ran
                 user_codex_home,
                 before,
             )
-        expected_python_commands = [["-m", "unittest", "-v", TARGET_TEST]]
+        product_violations = product_work_violations(completed_commands)
+        if product_violations:
+            return checked_result(
+                failed(
+                    "fresh main performed product edit or verification activity: "
+                    + repr(product_violations)
+                ),
+                user_codex_home,
+                before,
+            )
         try:
-            observed_python_commands = read_python_trace(python_trace)
+            session_id = derive_parent_session_id(output)
+            planned = validate_controller_lifecycle(candidate_home, fixture, session_id)
+            validate_child_rollout(candidate_home, fixture, session_id, planned)
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
             return checked_result(
-                failed(f"fresh verification trace is invalid: {exc}"),
-                user_codex_home,
-                before,
-            )
-        observed_unittests = [
-            command
-            for command in observed_python_commands
-            if len(command) >= 2 and command[:2] == ["-m", "unittest"]
-        ]
-        if observed_unittests and observed_unittests != expected_python_commands:
-            return checked_result(
-                failed(
-                    "fresh child must run exactly the declared targeted Python "
-                    f"verification once; observed {observed_unittests!r}"
-                ),
-                user_codex_home,
-                before,
-            )
-        if not observed_unittests and not reported_targeted_evidence(output):
-            return checked_result(
-                failed(
-                    "native child verification was not visible in the Python trace "
-                    "and the fresh result did not report the exact targeted evidence"
-                ),
+                failed(f"fresh controller/child evidence is invalid: {exc}"),
                 user_codex_home,
                 before,
             )
