@@ -536,7 +536,12 @@ class ControllerGateTests(unittest.TestCase):
 
         self.assertEqual(
             gate.handle_hook(
-                self.tool_payload("exec_command", {"cmd": command}),
+                self.tool_payload(
+                    "exec_command",
+                    {"cmd": command},
+                    model="gpt-5.6-sol",
+                    reasoning_effort="high",
+                ),
                 runtime_home=self.runtime_home,
             ),
             {},
@@ -544,11 +549,74 @@ class ControllerGateTests(unittest.TestCase):
         self.assertFalse((self.runtime_home / "state").exists())
 
         extra = gate.handle_hook(
-            self.tool_payload("exec_command", {"cmd": command + " --extra value"}),
+            self.tool_payload(
+                "exec_command",
+                {"cmd": command + " --extra value"},
+                model="gpt-5.6-sol",
+                reasoning_effort="high",
+            ),
             runtime_home=self.runtime_home,
         )
         self.assertEqual(extra["hookSpecificOutput"]["permissionDecision"], "deny")
         self.assertIn("activation", extra["hookSpecificOutput"]["permissionDecisionReason"].lower())
+        self.assertFalse((self.runtime_home / "state").exists())
+
+    def test_exact_current_turn_activation_without_pretool_context_remains_allowed(self) -> None:
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"activate --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            f"--main-turn-id {self.main_turn_id} --model gpt-5.6-sol --reasoning-effort high"
+        )
+
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload("Bash", {"command": command}),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        self.assertFalse((self.runtime_home / "state").exists())
+
+    def test_activation_claim_cannot_upgrade_declared_hook_model(self) -> None:
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"activate --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            f"--main-turn-id {self.main_turn_id} --model gpt-5.6-sol --reasoning-effort high"
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload(
+                "Bash",
+                {"command": command},
+                model="gpt-5.6-luna",
+                reasoning_effort="high",
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("activation", output["hookSpecificOutput"]["permissionDecisionReason"].lower())
+        self.assertFalse((self.runtime_home / "state").exists())
+
+    def test_activation_claim_cannot_upgrade_declared_hook_effort(self) -> None:
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"activate --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            f"--main-turn-id {self.main_turn_id} --model gpt-5.6-sol --reasoning-effort high"
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload(
+                "Bash",
+                {"command": command},
+                model="gpt-5.6-sol",
+                reasoning_effort="low",
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("activation", output["hookSpecificOutput"]["permissionDecisionReason"].lower())
         self.assertFalse((self.runtime_home / "state").exists())
 
     def test_controller_preflight_is_the_only_allowed_main_read_lane(self) -> None:

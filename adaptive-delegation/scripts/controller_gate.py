@@ -1768,6 +1768,14 @@ def _authorized_activation_command(payload: dict[str, Any]) -> bool:
         command_workspace = _canonical_workspace(values["--workspace"])
     except ControllerGateError:
         return False
+    current_model = _payload_string(payload, "model", "main_model", "mainModel")
+    current_effort = _payload_string(
+        payload,
+        "reasoning_effort",
+        "model_reasoning_effort",
+        "main_reasoning_effort",
+        "reasoningEffort",
+    )
     current_turn_id = _payload_string(payload, "turn_id", "turnId")
     return (
         values["--session-id"] == session_id
@@ -1775,6 +1783,8 @@ def _authorized_activation_command(payload: dict[str, Any]) -> bool:
         and values["--main-turn-id"] == current_turn_id
         and values["--model"] == "gpt-5.6-sol"
         and values["--reasoning-effort"] in MAIN_EFFORTS
+        and (not current_model or values["--model"] == current_model)
+        and (not current_effort or values["--reasoning-effort"] == current_effort)
     )
 
 

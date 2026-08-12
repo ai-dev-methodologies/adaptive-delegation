@@ -47,7 +47,9 @@ reports the turn-binding mismatch and remains denied.
 Before a new or previously closed state accepts `activate`, the hook also
 requires the command's session, workspace, model, effort, and `main-turn-id` to
 match the exact current hook context; a stale activation cannot create or
-replace controller state.
+replace controller state. When `PreToolUse` omits model or effort, the exact
+Sol/high-or-above command value remains declared current-session context rather
+than cryptographic runtime proof; every nonempty payload value must match it.
 Each leaf decision returns a one-time `launch_task_name`; the next native spawn
 must use it exactly. This binds the opaque native child message to the recorded
 Objective Lock decision without claiming that the hook can decrypt or inspect

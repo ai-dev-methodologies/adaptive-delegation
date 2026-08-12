@@ -69,7 +69,10 @@ current main turn remains denied and reports the turn-binding mismatch instead
 of falsely reporting malformed flags. Before a new or previously closed state
 accepts `activate`, the hook requires the exact command session, workspace,
 model, effort, and `main-turn-id` to match the current hook context; stale or
-malformed activation is denied before it can create or replace state. Before a child
+malformed activation is denied before it can create or replace state. When
+`PreToolUse` omits model or effort, the exact Sol/high-or-above command value
+remains declared current-session context rather than runtime proof; every
+nonempty payload value must match it. Before a child
 launch, use the exact installed `controller_gate.py decision` command to record
 `leaf_required` with the Objective Lock digest and package-fixed `agent_type`,
 model, and effort. The command returns `launch_task_name`; the next spawn must

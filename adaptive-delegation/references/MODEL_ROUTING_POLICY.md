@@ -178,7 +178,10 @@ blockage. Controller CLI calls from a non-current main turn remain denied and
 are diagnosed as turn-binding failures rather than malformed flag shapes. A
 new or previously closed controller accepts `activate` only when its exact
 session, workspace, model, effort, and main-turn binding match the current hook
-context, so stale activation cannot create or replace state.
+context, so stale activation cannot create or replace state. A nonempty
+`PreToolUse` model or effort must equal the command declaration. When the hook
+omits either field, the exact Sol/high-or-above command value remains declared
+current-session context rather than cryptographic runtime proof.
 The role selection is an
 explicit model choice. The selected model need not appear in the optional
 `model` override enum, so its absence there is not evidence that the fixed
