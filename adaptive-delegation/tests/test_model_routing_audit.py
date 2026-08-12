@@ -1297,6 +1297,53 @@ class ModelRoutingAuditTests(unittest.TestCase):
         self.assertEqual(report["sources"]["controller"]["status"], "ok")
         self.assertEqual(report["controller"]["authorized_leaf_launches"], 1)
 
+    def test_controller_health_counts_predecision_cancellation_as_closed(self):
+        controller = self.root / "controller" / "controller-events.jsonl"
+        base = {
+            "schema_version": "1",
+            "timestamp": "2026-08-13T00:00:00Z",
+            "session_id": "session-1",
+            "workspace": "/workspace/project",
+        }
+        self.write_jsonl(
+            controller,
+            [
+                {
+                    **base,
+                    "activation_id": "a" * 64,
+                    "event_type": "explicit_activation_requested",
+                },
+                {
+                    **base,
+                    "activation_id": "a" * 64,
+                    "event_type": "controller_cancelled",
+                    "phase": "awaiting_main_declaration",
+                },
+                {
+                    **base,
+                    "activation_id": "b" * 64,
+                    "event_type": "explicit_activation",
+                },
+                {
+                    **base,
+                    "activation_id": "b" * 64,
+                    "event_type": "controller_cancelled",
+                    "phase": "explicit_active",
+                },
+            ],
+        )
+
+        result, status = audit._health_controller(controller)
+
+        self.assertEqual(status, "ok")
+        self.assertEqual(
+            result["cancelled"],
+            {"awaiting_main_declaration": 1, "explicit_active": 1},
+        )
+        self.assertEqual(result["pending_main_declarations"], 0)
+        self.assertEqual(result["open_activations"], 0)
+        self.assertEqual(result["anomalies"]["invalid_records"], 0)
+
     def test_controller_health_rejects_accepted_result_without_passing_quality(self):
         controller = self.root / "controller" / "controller-events.jsonl"
         self.write_jsonl(

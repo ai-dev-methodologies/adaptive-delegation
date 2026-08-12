@@ -532,6 +532,7 @@ def _lifecycle_command_templates(
             "--evidence-ref",
             evidence,
         ),
+        "cancel": command("cancel"),
     }
 
 
@@ -1042,6 +1043,44 @@ def close_controller(
     return updated
 
 
+def cancel_controller(
+    *,
+    runtime_home: Path | None,
+    session_id: str,
+    workspace: str | Path,
+) -> dict[str, Any]:
+    resolved_home = _runtime_home(runtime_home)
+    resolved_workspace = _canonical_workspace(workspace)
+    state = _load_state(resolved_home, session_id, resolved_workspace)
+    if state is None or state.get("phase") not in {
+        "awaiting_main_declaration",
+        "explicit_active",
+    }:
+        raise ControllerGateError(
+            "controller can cancel only before a decision or terminal evidence"
+        )
+    timestamp = _timestamp()
+    updated = dict(state)
+    updated.pop("terminal_status", None)
+    updated.update({"phase": "closed", "updated_at": timestamp})
+    _append_event(
+        resolved_home,
+        {
+            "schema_version": EVENT_SCHEMA_VERSION,
+            "event_type": "controller_cancelled",
+            "timestamp": timestamp,
+            "activation_id": state["activation_id"],
+            "session_id": session_id,
+            "workspace": str(resolved_workspace),
+            "phase": state["phase"],
+        },
+    )
+    _atomic_write_json(
+        _state_path(resolved_home, session_id, resolved_workspace), updated
+    )
+    return updated
+
+
 def record_decision(
     *,
     runtime_home: Path | None,
@@ -1067,8 +1106,6 @@ def record_decision(
         raise ControllerGateError("leaf result must be recorded before another decision")
     if current_phase not in {"explicit_active", "leaf_result_recorded"}:
         raise ControllerGateError("controller phase does not admit another decision")
-    if current_phase == "leaf_result_recorded" and state.get("last_outcome") == "accepted":
-        raise ControllerGateError("accepted leaf result must close the controller")
     if decision not in DECISIONS:
         raise ControllerGateError("delegation decision is unsupported")
     if SHA256.fullmatch(objective_lock_digest) is None:
@@ -1112,6 +1149,9 @@ def record_decision(
             "updated_at": timestamp,
         }
     )
+    if current_phase == "leaf_result_recorded":
+        for key in ("planned_launch", "child_turn_id", "child_transcript_path"):
+            updated.pop(key, None)
     if exception_reason is not None:
         updated["exception_reason"] = exception_reason
         updated["evidence_references"] = references
@@ -1218,6 +1258,7 @@ def _authorized_controller_command(
         "result",
         "admission-failure",
         "close",
+        "cancel",
     }:
         return False
     allowed_flags = {
@@ -1271,6 +1312,9 @@ def _authorized_controller_command(
         )
     elif tokens[2] == "admission-failure":
         required.add("--evidence-ref")
+    elif tokens[2] == "cancel":
+        if set(values) != required:
+            return False
     else:
         required.update({"--terminal-status", "--evidence-ref"})
     if not required.issubset(values):
@@ -1646,8 +1690,128 @@ def _controller_command_attempt(payload: dict[str, Any]) -> str | None:
         return None
     if controller != Path(__file__).resolve() or len(tokens) < 3:
         return None
-    controller_commands = {"decision", "declare-main", "preflight", "result", "admission-failure", "close"}
+    controller_commands = {
+        "decision",
+        "declare-main",
+        "preflight",
+        "result",
+        "admission-failure",
+        "close",
+        "cancel",
+    }
     return tokens[2] if tokens[2] in controller_commands else None
+
+
+def _activation_command_tokens(payload: dict[str, Any]) -> list[str] | None:
+    tool_input = _spawn_input(payload)
+    command = tool_input.get("cmd") or tool_input.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return None
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    if len(tokens) < 3 or tokens[2] != "activate":
+        return None
+    try:
+        interpreter = Path(tokens[0]).expanduser().resolve()
+        controller = Path(tokens[1]).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+    if interpreter != Path(sys.executable).resolve() or controller != Path(__file__).resolve():
+        return None
+    return tokens
+
+
+def _authorized_activation_command(payload: dict[str, Any]) -> bool:
+    tokens = _activation_command_tokens(payload)
+    if tokens is None:
+        return False
+    tool_input = _spawn_input(payload)
+    command = tool_input.get("cmd") or tool_input.get("command")
+    if not isinstance(command, str) or any(
+        token in command for token in ("$", "`", "\n", "\r", ";", "&", "|", "<", ">")
+    ):
+        return False
+    if len(tokens) != 13:
+        return False
+    try:
+        interpreter = Path(tokens[0]).expanduser().resolve()
+        controller = Path(tokens[1]).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return False
+    if interpreter != Path(sys.executable).resolve() or controller != Path(__file__).resolve():
+        return False
+    allowed_flags = {
+        "--session-id",
+        "--workspace",
+        "--main-turn-id",
+        "--model",
+        "--reasoning-effort",
+    }
+    values: dict[str, str] = {}
+    index = 3
+    while index < len(tokens):
+        flag = tokens[index]
+        if flag not in allowed_flags or index + 1 >= len(tokens):
+            return False
+        value = tokens[index + 1]
+        if not value or value.startswith("--") or flag in values:
+            return False
+        values[flag] = value
+        index += 2
+    if set(values) != allowed_flags:
+        return False
+    try:
+        session_id = _session_from_payload(payload)
+        workspace = _workspace_from_payload(payload)
+        command_workspace = _canonical_workspace(values["--workspace"])
+    except ControllerGateError:
+        return False
+    current_model = _payload_string(payload, "model", "main_model", "mainModel")
+    current_effort = _payload_string(
+        payload,
+        "reasoning_effort",
+        "model_reasoning_effort",
+        "main_reasoning_effort",
+        "reasoningEffort",
+    )
+    current_turn_id = _payload_string(payload, "turn_id", "turnId")
+    return (
+        values["--session-id"] == session_id
+        and command_workspace == workspace
+        and values["--main-turn-id"] == current_turn_id
+        and values["--model"] == "gpt-5.6-sol"
+        and values["--reasoning-effort"] in MAIN_EFFORTS
+        and (not current_model or values["--model"] == current_model)
+        and (not current_effort or values["--reasoning-effort"] == current_effort)
+    )
+
+
+def _activation_command_correction(payload: dict[str, Any]) -> str:
+    session_id = _payload_string(payload, "session_id", "sessionId") or "<session-id>"
+    workspace = _payload_string(payload, "cwd", "working_directory", "workingDirectory")
+    workspace = workspace or "<workspace>"
+    turn_id = _payload_string(payload, "turn_id", "turnId") or "<current-turn-id>"
+    prefix = shlex.join(
+        [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "activate",
+            "--session-id",
+            session_id,
+            "--workspace",
+            workspace,
+            "--main-turn-id",
+            turn_id,
+        ]
+    )
+    return (
+        "Adaptive Delegation denied an activation command before controller state "
+        "creation. Activation turn binding must match the current hook turn; use "
+        f"the exact current-turn form: {prefix} --model gpt-5.6-sol "
+        "--reasoning-effort <high|xhigh|max|ultra>, with no extra or duplicate flags."
+    )
 
 
 def _controller_command_correction(
@@ -1684,11 +1848,34 @@ def _controller_command_correction(
             "--terminal-status <complete|blocked> "
             "--evidence-ref <local-safe-ref>"
         ),
+        "cancel": "with no additional flags",
     }
     return (
         f"Adaptive Delegation rejected an invalid controller {command_name} command. "
         f"Use this exact flag form: {prefix} {forms[command_name]}. "
         "Evidence references must exclude ? # @ : and URI schemes."
+    )
+
+
+def _controller_command_turn_binding_failure(
+    state: dict[str, Any], workspace: Path
+) -> str:
+    prefix = shlex.join(
+        [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "<controller-command>",
+            "--session-id",
+            state["session_id"],
+            "--workspace",
+            str(workspace),
+        ]
+    )
+    return (
+        "Adaptive Delegation rejected the controller command because its turn "
+        "binding does not match the current main turn. This is a stale or foreign "
+        f"turn, not an invalid flag form; reissue the command from the current main "
+        f"turn: {prefix}."
     )
 
 
@@ -1852,12 +2039,53 @@ def _handle_pre_tool_use(payload: dict[str, Any], runtime_home: Path) -> dict[st
     workspace = _workspace_from_payload(payload)
     state_path = _state_path(runtime_home, session_id, workspace)
     state = _load_state(runtime_home, session_id, workspace)
-    if state is None:
+    tool_name = _payload_string(payload, "tool_name", "toolName")
+    if state is None or state.get("phase") == "closed":
+        if _activation_command_tokens(payload) is not None:
+            reason = _activation_command_correction(payload)
+            if _authorized_activation_command(payload):
+                return {}
+            if state is None:
+                return _deny(reason)
+            return _denied(
+                reason=reason,
+                tool_name=tool_name,
+                state=state,
+                runtime_home=runtime_home,
+            )
         return {}
     phase = state.get("phase")
-    if phase == "closed":
-        return {}
-    tool_name = _payload_string(payload, "tool_name", "toolName")
+    if _tool_matches(tool_name, CONTROLLER_EXEC_TOOLS):
+        command_name = _controller_command_attempt(payload)
+        if command_name is not None:
+            if _payload_string(payload, "turn_id", "turnId") != state.get("main_turn_id"):
+                return _denied(
+                    reason=_controller_command_turn_binding_failure(state, workspace),
+                    tool_name=tool_name,
+                    state=state,
+                    runtime_home=runtime_home,
+                )
+            if command_name == "cancel" and phase not in {
+                "awaiting_main_declaration",
+                "explicit_active",
+            }:
+                return _denied(
+                    reason=(
+                        "Adaptive Delegation cancel is admitted only before a "
+                        "decision or terminal evidence."
+                    ),
+                    tool_name=tool_name,
+                    state=state,
+                    runtime_home=runtime_home,
+                )
+            if _authorized_controller_command(payload, state, workspace):
+                return {}
+            return _denied(
+                reason=_controller_command_correction(command_name, state, workspace),
+                tool_name=tool_name,
+                state=state,
+                runtime_home=runtime_home,
+            )
     if phase in {"main_only_exception", "takeover"}:
         if _tool_matches(tool_name, SPAWN_TOOLS):
             return _denied(
@@ -1911,20 +2139,6 @@ def _handle_pre_tool_use(payload: dict[str, Any], runtime_home: Path) -> dict[st
         return {}
     if _tool_matches(tool_name, CONTROL_PLANE_TOOLS):
         return {}
-    if (
-        _tool_matches(tool_name, CONTROLLER_EXEC_TOOLS)
-        and _authorized_controller_command(payload, state, workspace)
-    ):
-        return {}
-    if _tool_matches(tool_name, CONTROLLER_EXEC_TOOLS):
-        command_name = _controller_command_attempt(payload)
-        if command_name is not None:
-            return _denied(
-                reason=_controller_command_correction(command_name, state, workspace),
-                tool_name=tool_name,
-                state=state,
-                runtime_home=runtime_home,
-            )
     return _denied(
         reason=(
             "Adaptive Delegation controller-only enforcement denied main task execution. "
@@ -2164,6 +2378,9 @@ def _parser() -> argparse.ArgumentParser:
         "--terminal-status", required=True, choices=sorted(TERMINAL_STATUSES)
     )
     close.add_argument("--evidence-ref", action="append", default=[])
+    cancel = subparsers.add_parser("cancel")
+    cancel.add_argument("--session-id", required=True)
+    cancel.add_argument("--workspace", required=True, type=Path)
     return parser
 
 
@@ -2253,6 +2470,14 @@ def main(argv: list[str] | None = None) -> int:
                 workspace=args.workspace,
                 terminal_status=args.terminal_status,
                 evidence_references=args.evidence_ref,
+            )
+            print(_canonical_json({"phase": result["phase"], "recorded": True}))
+            return 0
+        if args.command == "cancel":
+            result = cancel_controller(
+                runtime_home=None,
+                session_id=args.session_id,
+                workspace=args.workspace,
             )
             print(_canonical_json({"phase": result["phase"], "recorded": True}))
             return 0

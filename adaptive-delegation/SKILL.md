@@ -61,9 +61,18 @@ network calls. Its only read lane is the controller's bounded preflight: the
 only `task_defaults`, the selected package binding, and that installed role
 TOML after verifying the model and effort. The route response also provides
 selected-role lifecycle command templates and the finite allowed values for
-`decision`, `result`, and `close`; replace every uppercase placeholder and use
-the exact flag names. A malformed controller command is denied with its
-phase-specific exact flag form instead of a generic retry hint. Before a child
+`decision`, `result`, `admission-failure`, `cancel`, and `close`; replace every
+uppercase placeholder and use the exact flag names. A malformed controller
+command is denied with its phase-specific exact flag form instead of a generic
+retry hint. A recognizable controller command from a turn other than the bound
+current main turn remains denied and reports the turn-binding mismatch instead
+of falsely reporting malformed flags. Before a new or previously closed state
+accepts `activate`, the hook requires the exact command session, workspace,
+model, effort, and `main-turn-id` to match the current hook context; stale or
+malformed activation is denied before it can create or replace state. When
+`PreToolUse` omits model or effort, the exact Sol/high-or-above command value
+remains declared current-session context rather than runtime proof; every
+nonempty payload value must match it. Before a child
 launch, use the exact installed `controller_gate.py decision` command to record
 `leaf_required` with the Objective Lock digest and package-fixed `agent_type`,
 model, and effort. The command returns `launch_task_name`; the next spawn must
@@ -110,7 +119,7 @@ bounded `context_bound_microtask` may also stay with that main when it records
 the local routing judgment and evidence. Generic convenience or an unrecorded
 claim that the main is cheaper remains insufficient.
 
-Every authorized Native launch must be closed before another decision. After
+Every authorized Native launch must receive a result before another decision. After
 the leaf returns, run the exact installed `controller_gate.py result` command
 with `accepted`, `failed`, or `path_blocked`; the route assessment (`correct`,
 `too-cheap`, `too-premium`, or `inconclusive`); the quality verdict;
@@ -126,13 +135,23 @@ nonnegative weighted tokens and the route-relative cost proxy. Controller
 reviews label the observation source so bound transcript evidence is not
 confused with main-reported or unavailable data. The controller denies a new
 route decision until this result is recorded, then writes a cumulative
-owner-only controller review.
+owner-only controller review. If the same terminal outcome still requires a
+Checker, another Maker lane, or evidence-backed main-only action, record that
+next decision in the same activation with the exact same Objective Lock digest,
+including after an accepted leaf. Do not close and reactivate between lanes of
+one locked outcome.
 If native admission rejects before creating a child, run the exact installed
 `controller_gate.py admission-failure` command with a bounded local evidence
 reference. It is admitted only while a leaf is pending or launch-authorized
 and only when bounded owner-local rollout discovery finds no matching child
 and controller state has no child binding; it records `path_blocked` without
 claiming child execution and releases the controller for the next decision.
+Before any Objective Lock decision, an accidental activation may run the exact
+installed `controller_gate.py cancel` command.
+Cancellation is admitted only from `awaiting_main_declaration` or
+`explicit_active`, records no `complete` or `blocked` terminal status, and
+releases the session restriction; once work evidence exists, use the normal
+result and terminal-close lifecycle.
 Before the terminal user-facing answer, run `controller_gate.py close` with
 `complete` or `blocked` and bounded evidence. `complete` after a leaf requires
 an accepted integrated result. A closed state releases the session's task-tool

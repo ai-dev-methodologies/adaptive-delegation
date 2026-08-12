@@ -461,6 +461,164 @@ class ControllerGateTests(unittest.TestCase):
             "deny",
         )
 
+    def test_no_state_stale_activation_turn_is_denied_before_state_creation(self) -> None:
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"activate --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            f"--main-turn-id {self.child_turn_id} --model gpt-5.6-sol --reasoning-effort high"
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload("Bash", {"command": command}),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        reason = output["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("activation", reason.lower())
+        self.assertIn("turn binding", reason.lower())
+        self.assertFalse((self.runtime_home / "state").exists())
+
+    def test_no_state_unrelated_third_token_activate_is_not_captured(self) -> None:
+        output = gate.handle_hook(
+            self.tool_payload(
+                "exec_command",
+                {"cmd": "/bin/echo /tmp/not-controller.py activate"},
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output, {})
+        self.assertFalse((self.runtime_home / "state").exists())
+
+    def test_closed_state_stale_activation_turn_does_not_replace_activation(self) -> None:
+        state_path = self.activate()
+        gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="main_only_exception",
+            exception_reason="context_bound_microtask",
+            objective_lock_digest="e" * 64,
+            evidence_references=["local/main-routing.json"],
+        )
+        gate.close_controller(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            terminal_status="complete",
+            evidence_references=["local/main-routing.json"],
+        )
+        before = json.loads(state_path.read_text())
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"activate --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            f"--main-turn-id {self.child_turn_id} --model gpt-5.6-sol --reasoning-effort high"
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload("Bash", {"command": command}),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("turn binding", output["hookSpecificOutput"]["permissionDecisionReason"].lower())
+        after = json.loads(state_path.read_text())
+        self.assertEqual(after["phase"], "closed")
+        self.assertEqual(after["activation_id"], before["activation_id"])
+
+    def test_exact_current_turn_activation_is_allowed_and_extra_flag_is_denied(self) -> None:
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"activate --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            f"--main-turn-id {self.main_turn_id} --model gpt-5.6-sol --reasoning-effort high"
+        )
+
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload(
+                    "exec_command",
+                    {"cmd": command},
+                    model="gpt-5.6-sol",
+                    reasoning_effort="high",
+                ),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        self.assertFalse((self.runtime_home / "state").exists())
+
+        extra = gate.handle_hook(
+            self.tool_payload(
+                "exec_command",
+                {"cmd": command + " --extra value"},
+                model="gpt-5.6-sol",
+                reasoning_effort="high",
+            ),
+            runtime_home=self.runtime_home,
+        )
+        self.assertEqual(extra["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("activation", extra["hookSpecificOutput"]["permissionDecisionReason"].lower())
+        self.assertFalse((self.runtime_home / "state").exists())
+
+    def test_exact_current_turn_activation_without_pretool_context_remains_allowed(self) -> None:
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"activate --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            f"--main-turn-id {self.main_turn_id} --model gpt-5.6-sol --reasoning-effort high"
+        )
+
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload("Bash", {"command": command}),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        self.assertFalse((self.runtime_home / "state").exists())
+
+    def test_activation_claim_cannot_upgrade_declared_hook_model(self) -> None:
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"activate --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            f"--main-turn-id {self.main_turn_id} --model gpt-5.6-sol --reasoning-effort high"
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload(
+                "Bash",
+                {"command": command},
+                model="gpt-5.6-luna",
+                reasoning_effort="high",
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("activation", output["hookSpecificOutput"]["permissionDecisionReason"].lower())
+        self.assertFalse((self.runtime_home / "state").exists())
+
+    def test_activation_claim_cannot_upgrade_declared_hook_effort(self) -> None:
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"activate --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            f"--main-turn-id {self.main_turn_id} --model gpt-5.6-sol --reasoning-effort high"
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload(
+                "Bash",
+                {"command": command},
+                model="gpt-5.6-sol",
+                reasoning_effort="low",
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("activation", output["hookSpecificOutput"]["permissionDecisionReason"].lower())
+        self.assertFalse((self.runtime_home / "state").exists())
+
     def test_controller_preflight_is_the_only_allowed_main_read_lane(self) -> None:
         self.activate()
         controller = shlex.quote(str(Path(gate.__file__).resolve()))
@@ -1398,6 +1556,312 @@ class ControllerGateTests(unittest.TestCase):
             ),
             {},
         )
+
+    def test_accepted_maker_can_continue_to_checker_with_immutable_lock(self) -> None:
+        self.activate()
+        digest = "a" * 64
+        maker = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest=digest,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        gate.handle_hook(
+            self.tool_payload(
+                "spawn_agent",
+                {
+                    "task_name": maker["planned_launch"]["task_name"],
+                    "message": f"OBJECTIVE LOCK: {digest}",
+                    "agent_type": "adaptive-luna-maker-high",
+                    "reasoning_effort": "high",
+                    "fork_turns": "none",
+                },
+            ),
+            runtime_home=self.runtime_home,
+        )
+        gate.record_leaf_result(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            outcome="accepted",
+            route_assessment="correct",
+            quality_verdict="pass",
+            integration_accepted=True,
+            token_observation="unavailable",
+            evidence_references=["local/maker-receipt.json"],
+        )
+
+        checker = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest=digest,
+            agent_type="adaptive-luna-checker-xhigh",
+            model="gpt-5.6-luna",
+            reasoning_effort="xhigh",
+        )
+
+        self.assertEqual(checker["phase"], "leaf_required")
+        self.assertEqual(checker["objective_lock_digest"], digest)
+        self.assertEqual(
+            checker["planned_launch"]["agent_type"], "adaptive-luna-checker-xhigh"
+        )
+
+    def test_next_main_only_decision_clears_prior_leaf_bindings(self) -> None:
+        self.activate()
+        digest = "b" * 64
+        maker = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest=digest,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        gate.handle_hook(
+            self.tool_payload(
+                "spawn_agent",
+                {
+                    "task_name": maker["planned_launch"]["task_name"],
+                    "message": f"OBJECTIVE LOCK: {digest}",
+                    "agent_type": "adaptive-luna-maker-high",
+                    "reasoning_effort": "high",
+                    "fork_turns": "none",
+                },
+            ),
+            runtime_home=self.runtime_home,
+        )
+        transcript = self.child_transcript(maker)
+        gate.handle_hook(
+            self.tool_payload(
+                "Bash",
+                {"command": "true"},
+                turn_id=self.child_turn_id,
+                transcript_path=str(transcript),
+            ),
+            runtime_home=self.runtime_home,
+        )
+        gate.record_leaf_result(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            outcome="accepted",
+            route_assessment="correct",
+            quality_verdict="pass",
+            integration_accepted=True,
+            token_observation="unavailable",
+            evidence_references=["local/maker-receipt.json"],
+        )
+
+        main_only = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="main_only_exception",
+            exception_reason="context_bound_microtask",
+            objective_lock_digest=digest,
+            evidence_references=["local/main-routing.json"],
+        )
+
+        self.assertEqual(main_only["phase"], "main_only_exception")
+        self.assertEqual(main_only["objective_lock_digest"], digest)
+        self.assertEqual(main_only["last_outcome"], "accepted")
+        for key in ("planned_launch", "child_turn_id", "child_transcript_path"):
+            self.assertNotIn(key, main_only)
+
+    def test_adaptive_child_cannot_run_exact_controller_command_after_launch(self) -> None:
+        self.activate()
+        digest = "c" * 64
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest=digest,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        gate.handle_hook(
+            self.tool_payload(
+                "spawn_agent",
+                {
+                    "task_name": decision["planned_launch"]["task_name"],
+                    "message": f"OBJECTIVE LOCK: {digest}",
+                    "agent_type": "adaptive-luna-maker-high",
+                    "reasoning_effort": "high",
+                    "fork_turns": "none",
+                },
+            ),
+            runtime_home=self.runtime_home,
+        )
+        transcript = self.child_transcript(decision)
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload(
+                    "Bash",
+                    {"command": "true"},
+                    turn_id=self.child_turn_id,
+                    transcript_path=str(transcript),
+                ),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"result --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            "--outcome path_blocked --route-assessment inconclusive "
+            "--quality-verdict inconclusive --integration-accepted false "
+            "--token-observation unavailable --evidence-ref local/blocked.json"
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload(
+                "Bash",
+                {"command": command},
+                turn_id=self.child_turn_id,
+                transcript_path=str(transcript),
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("turn binding", output["hookSpecificOutput"]["permissionDecisionReason"].lower())
+
+    def test_stale_main_turn_controller_command_reports_turn_binding_failure(self) -> None:
+        self.activate()
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"result --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            "--outcome accepted --route-assessment correct --quality-verdict pass "
+            "--integration-accepted true --token-observation unavailable "
+            "--evidence-ref local/checker.json"
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload("Bash", {"command": command}, turn_id=self.child_turn_id),
+            runtime_home=self.runtime_home,
+        )
+
+        reason = output["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("turn binding", reason.lower())
+        self.assertNotIn("invalid controller result command", reason.lower())
+
+    def test_predecision_controller_can_cancel_without_terminal_status(self) -> None:
+        state_path = self.activate()
+        cancel_command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"cancel --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))}"
+        )
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload("Bash", {"command": cancel_command}),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+
+        output = io.StringIO()
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(self.runtime_home)}):
+            with redirect_stdout(output):
+                exit_code = gate.main(
+                    [
+                        "cancel",
+                        "--session-id",
+                        self.session_id,
+                        "--workspace",
+                        str(self.cwd),
+                    ]
+                )
+
+        cancelled = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(cancelled, {"phase": "closed", "recorded": True})
+        state = json.loads(state_path.read_text())
+        self.assertNotIn("terminal_status", state)
+        events = [
+            json.loads(line)
+            for line in (state_path.parent / "controller-events.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(events[-1]["event_type"], "controller_cancelled")
+        self.assertNotIn("terminal_status", events[-1])
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload("functions.apply_patch", {"patch": "released"}),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+
+    def test_awaiting_main_declaration_can_cancel(self) -> None:
+        payload = self.prompt_payload("$adaptive-delegation wait for declaration")
+        payload.pop("model")
+        payload.pop("reasoning_effort")
+        output = gate.handle_hook(payload, runtime_home=self.runtime_home)
+        self.assertIn("declare-main", output["systemMessage"])
+
+        cancel_command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"cancel --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))}"
+        )
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload("Bash", {"command": cancel_command}),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        state_path = next(
+            (self.runtime_home / "state" / "adaptive-delegation" / "controller").glob(
+                "state-*.json"
+            )
+        )
+        self.assertEqual(json.loads(state_path.read_text())["phase"], "awaiting_main_declaration")
+
+        gate.cancel_controller(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+        )
+        self.assertEqual(json.loads(state_path.read_text())["phase"], "closed")
+
+    def test_cancel_after_decision_is_denied(self) -> None:
+        self.activate()
+        gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="main_only_exception",
+            exception_reason="context_bound_microtask",
+            objective_lock_digest="d" * 64,
+            evidence_references=["local/main-routing.json"],
+        )
+        cancel_command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"cancel --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))}"
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload("Bash", {"command": cancel_command}),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("before a decision", output["hookSpecificOutput"]["permissionDecisionReason"])
+        with self.assertRaisesRegex(gate.ControllerGateError, "before a decision"):
+            gate.cancel_controller(
+                runtime_home=self.runtime_home,
+                session_id=self.session_id,
+                workspace=self.cwd,
+            )
 
     def test_bound_leaf_transcript_promotes_unavailable_cost_to_exact(self) -> None:
         self.activate()
