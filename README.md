@@ -78,7 +78,7 @@ no external `AGENTS.md` is required to construct or enforce the packaged lock.
 The repository and its packaged policy are canonical. Installed copies are
 deployment targets, not additional policy sources.
 
-Current installable package version: `0.7.8`.
+Current installable package version: `0.7.9`.
 
 ### Read-only evidence health
 

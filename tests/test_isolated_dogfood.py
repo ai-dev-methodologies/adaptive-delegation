@@ -24,18 +24,38 @@ def load_module():
 
 
 class IsolatedDogfoodTests(unittest.TestCase):
-    def test_accepts_native_targeted_evidence_wording(self) -> None:
+    def test_derives_one_parent_session_from_thread_started_output(self) -> None:
         module = load_module()
-        output = (
-            "The exact targeted test passed (Ran 1 test — OK), and the scoped "
-            "diff contains only the requested change."
+        session_id = "019ff0df-6dd7-7682-90b7-e17e07630999"
+        output = "\n".join(
+            [
+                json.dumps({"type": "thread.started", "thread_id": session_id}),
+                json.dumps({"type": "turn.started"}),
+            ]
         )
-        self.assertTrue(module.reported_targeted_evidence(output))
-        native_output = (
-            "The exact requested unittest passed: 1 test, `OK`. "
-            "`git diff -- target.py` showed only the requested change."
-        )
-        self.assertTrue(module.reported_targeted_evidence(native_output))
+        self.assertEqual(module.derive_parent_session_id(output), session_id)
+        with self.assertRaises(ValueError):
+            module.derive_parent_session_id("{}\n")
+        with self.assertRaises(ValueError):
+            module.derive_parent_session_id(
+                output + "\n" + json.dumps({"type": "thread.started", "thread_id": "foreign"})
+            )
+        with self.assertRaises(ValueError):
+            module.derive_parent_session_id("[]\n")
+
+    def test_rejects_symlinked_or_oversized_state_evidence(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            regular = root / "state.json"
+            regular.write_text("{}\n", encoding="utf-8")
+            symlink = root / "linked.json"
+            symlink.symlink_to(regular)
+            with self.assertRaises(ValueError):
+                module.read_json_object(symlink)
+            regular.write_text("x" * 32, encoding="utf-8")
+            with self.assertRaises(ValueError):
+                module.read_json_object(regular, maximum_bytes=16)
 
     def test_installation_docs_require_promotion_before_user_level_install(self) -> None:
         for name in ("README.md", "INSTALL.md"):
@@ -52,31 +72,92 @@ class IsolatedDogfoodTests(unittest.TestCase):
         )
         self.assertIn("Non-goals:", gate)
         self.assertIn("do not perform additional reviews", gate)
+        self.assertNotIn('"--ignore-user-config"', gate)
 
-    def make_fake_codex(self, directory: Path, behavior: str) -> Path:
+    def make_fake_codex(
+        self,
+        directory: Path,
+        behavior: str,
+        *,
+        child_verifications: int = 1,
+        foreign_child_binding: bool = False,
+    ) -> Path:
         executable = directory / "codex"
         executable.write_text(
             f"#!{sys.executable}\n"
-            "import json, os, pathlib, subprocess, sys\n"
+            "import hashlib, json, os, pathlib, subprocess, sys\n"
             "fixture = pathlib.Path.cwd()\n"
             "target = fixture / 'target.py'\n"
             + behavior
-            + "\nresult = subprocess.run(['python3', '-m', 'unittest', '-v', "
-            + repr("test_target.TargetTests.test_normalizes_whitespace_and_case")
-            + "], check=False, capture_output=True, text=True)"
-            + "\nprint(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'The exact requested unittest passed (Ran 1 test). git diff -- target.py showed only the requested change.'}}))"
+            + "\n"
+            "candidate = pathlib.Path(os.environ['CODEX_HOME'])\n"
+            "session = 'parent-session'\n"
+            "turn = 'child-turn'\n"
+            "task = 'adaptive_' + ('b' * 64)\n"
+            "planned = {'agent_type': 'adaptive-luna-maker-high', 'model': 'gpt-5.6-luna', 'reasoning_effort': 'high', 'fork_turns': 'none', 'task_name': task}\n"
+            "workspace = str(fixture.resolve())\n"
+            "digest = 'a' * 64\n"
+            "activation = 'c' * 64\n"
+            "controller = candidate / 'state' / 'adaptive-delegation' / 'controller'\n"
+            "controller.mkdir(parents=True, exist_ok=True)\n"
+            "key = hashlib.sha256((session + '\\0' + workspace).encode()).hexdigest()\n"
+            "state = {'schema_version': '1', 'session_id': session, 'workspace': workspace, 'activation_id': activation, 'phase': 'closed', 'terminal_status': 'complete', 'last_outcome': 'accepted', 'last_integration_accepted': True, 'objective_lock_digest': digest, 'planned_launch': planned}\n"
+            + (
+                "state.update({'child_turn_id': 'foreign-turn', 'child_transcript_path': '/foreign/rollout.jsonl'})\n"
+                if foreign_child_binding
+                else ""
+            )
+            +
+            "(controller / ('state-' + key + '.json')).write_text(json.dumps(state) + '\\n', encoding='utf-8')\n"
+            "events = [\n"
+            " {'schema_version': '1', 'event_type': 'delegation_decision', 'session_id': session, 'workspace': workspace, 'activation_id': activation, 'objective_lock_digest': digest, 'decision': 'leaf_required', 'planned_launch': planned},\n"
+            " {'schema_version': '1', 'event_type': 'leaf_launch_authorized', 'session_id': session, 'workspace': workspace, 'activation_id': activation, 'objective_lock_digest': digest, 'planned_launch': planned},\n"
+            " {'schema_version': '1', 'event_type': 'leaf_result_recorded', 'session_id': session, 'workspace': workspace, 'activation_id': activation, 'objective_lock_digest': digest, 'planned_launch': planned, 'outcome': 'accepted', 'quality_verdict': 'pass', 'integration_accepted': True},\n"
+            " {'schema_version': '1', 'event_type': 'controller_closed', 'session_id': session, 'workspace': workspace, 'activation_id': activation, 'objective_lock_digest': digest, 'terminal_status': 'complete'},\n"
+            "]\n"
+            "(controller / 'controller-events.jsonl').write_text(''.join(json.dumps(row) + '\\n' for row in events), encoding='utf-8')\n"
+            "rollout = candidate / 'sessions' / '2026' / '01' / '01' / 'rollout.jsonl'\n"
+            "rollout.parent.mkdir(parents=True, exist_ok=True)\n"
+            "spawn = {'parent_thread_id': session, 'depth': 1, 'agent_path': '/root/' + task, 'agent_role': 'adaptive-luna-maker-high'}\n"
+            "rows = [\n"
+            " {'type': 'session_meta', 'payload': {'session_id': session, 'id': 'child-session', 'parent_thread_id': session, 'cwd': workspace, 'thread_source': 'subagent', 'agent_role': 'adaptive-luna-maker-high', 'agent_path': '/root/' + task, 'source': {'subagent': {'thread_spawn': spawn}}}},\n"
+            " {'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': turn}},\n"
+            " {'type': 'turn_context', 'payload': {'turn_id': turn, 'model': 'gpt-5.6-luna', 'effort': 'high'}},\n"
+            "]\n"
+            "command = 'python3 -m unittest -v test_target.TargetTests.test_normalizes_whitespace_and_case'\n"
+            f"for index in range({child_verifications}):\n"
+            " call = 'call-' + str(index)\n"
+            " tool_input = 'const r = await tools.exec_command({cmd:' + json.dumps(command) + '}); text(r.output);'\n"
+            " rows.append({'type': 'response_item', 'payload': {'type': 'custom_tool_call', 'name': 'exec', 'call_id': call, 'input': tool_input}})\n"
+            " rows.append({'type': 'response_item', 'payload': {'type': 'custom_tool_call_output', 'call_id': call, 'output': [{'type': 'input_text', 'text': 'Ran 1 test in 0.001s\\n\\nOK\\n'}]}})\n"
+            "rollout.write_text(''.join(json.dumps(row) + '\\n' for row in rows), encoding='utf-8')\n"
+            "print(json.dumps({'type': 'thread.started', 'thread_id': session}))\n"
+            "print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'The exact requested unittest passed (Ran 1 test). git diff -- target.py showed only the requested change.'}}))"
             + "\nprint(json.dumps({'event': 'completed', 'codex_home': os.environ.get('CODEX_HOME', '')}))\n",
             encoding="utf-8",
         )
         executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
         return executable
 
-    def run_gate(self, module, *, behavior: str, extra: list[str] | None = None):
+    def run_gate(
+        self,
+        module,
+        *,
+        behavior: str,
+        extra: list[str] | None = None,
+        child_verifications: int = 1,
+        foreign_child_binding: bool = False,
+    ):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             fake_bin = root / "bin"
             fake_bin.mkdir()
-            self.make_fake_codex(fake_bin, behavior)
+            self.make_fake_codex(
+                fake_bin,
+                behavior,
+                child_verifications=child_verifications,
+                foreign_child_binding=foreign_child_binding,
+            )
             auth = root / "auth.json"
             auth.write_text("{}", encoding="utf-8")
             user_home = root / "user-codex"
@@ -100,6 +181,46 @@ class IsolatedDogfoodTests(unittest.TestCase):
             behavior="target.write_text(\"def normalize(value):\\n    return value.strip().lower()\\n\", encoding='utf-8')",
         )
         self.assertEqual(result.exit_code, 0, result.diagnostic)
+
+    def test_rejects_reported_targeted_evidence_without_bound_child_unittest(self) -> None:
+        module = load_module()
+        result = self.run_gate(
+            module,
+            behavior="target.write_text(\"def normalize(value):\\n    return value.strip().lower()\\n\", encoding='utf-8')",
+            child_verifications=0,
+        )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("observed []", result.diagnostic)
+
+    def test_rejects_main_product_edit_and_targeted_test_activity(self) -> None:
+        module = load_module()
+        result = self.run_gate(
+            module,
+            behavior=(
+                "target.write_text(\"def normalize(value):\\n"
+                "    return value.strip().lower()\\n\", encoding='utf-8'); "
+                "print(json.dumps({'type': 'item.completed', 'item': {"
+                "'type': 'command_execution', 'command': "
+                f"{('python3 -m unittest -v ' + module.TARGET_TEST + ' && git diff -- target.py')!r}"
+                "}}))"
+            ),
+        )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("product", result.diagnostic)
+
+    def test_allows_controller_lifecycle_evidence_ref_to_target(self) -> None:
+        module = load_module()
+        commands = [
+            "/bin/zsh -lc '/usr/local/bin/python3 "
+            "adaptive-delegation/scripts/controller_gate.py result "
+            "--session-id s --workspace . --evidence-ref target.py "
+            "--evidence-ref test_target.TargetTests.test_normalizes_whitespace_and_case'",
+            "/bin/zsh -lc '/usr/local/bin/python3 "
+            "adaptive-delegation/scripts/controller_gate.py close "
+            "--session-id s --workspace . --evidence-ref target.py "
+            "--evidence-ref test_target.TargetTests.test_normalizes_whitespace_and_case'",
+        ]
+        self.assertEqual(module.product_work_violations(commands), [])
 
     def test_rejects_scope_drift_outside_target(self) -> None:
         module = load_module()
@@ -182,15 +303,21 @@ class IsolatedDogfoodTests(unittest.TestCase):
         module = load_module()
         result = self.run_gate(
             module,
-            behavior=(
-                "target.write_text(\"def normalize(value):\\n"
-                "    return value.strip().lower()\\n\", encoding='utf-8'); "
-                "subprocess.run(['python3', '-m', 'unittest', '-v', "
-                f"{module.TARGET_TEST!r}], check=False, capture_output=True, text=True)"
-            ),
+            behavior="target.write_text(\"def normalize(value):\\n    return value.strip().lower()\\n\", encoding='utf-8')",
+            child_verifications=2,
         )
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("exactly the declared targeted Python verification once", result.diagnostic)
+
+    def test_rejects_foreign_controller_child_binding(self) -> None:
+        module = load_module()
+        result = self.run_gate(
+            module,
+            behavior="target.write_text(\"def normalize(value):\\n    return value.strip().lower()\\n\", encoding='utf-8')",
+            foreign_child_binding=True,
+        )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("child binding", result.diagnostic)
 
     def test_rejects_optional_package_archaeology_in_main_preflight(self) -> None:
         module = load_module()

@@ -1511,6 +1511,233 @@ class ControllerGateTests(unittest.TestCase):
             decision["planned_launch"]["task_name"],
         )
 
+    def test_failed_leaf_retry_rebinds_child_turn_and_transcript(self) -> None:
+        self.activate()
+        digest = "6" * 64
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest=digest,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload(
+                    "spawn_agent",
+                    {
+                        "task_name": decision["planned_launch"]["task_name"],
+                        "message": f"OBJECTIVE LOCK: {digest}",
+                        "agent_type": "adaptive-luna-maker-high",
+                        "reasoning_effort": "high",
+                        "fork_turns": "none",
+                    },
+                ),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        transcript_a = self.child_transcript(decision)
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload(
+                    "Bash",
+                    {"command": "python3 -m unittest -v test_a.py"},
+                    turn_id=self.child_turn_id,
+                    transcript_path=str(transcript_a),
+                ),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        gate.record_leaf_result(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            outcome="failed",
+            route_assessment="correct",
+            quality_verdict="fail",
+            integration_accepted=False,
+            token_observation="unavailable",
+            evidence_references=["local/failed-check.json"],
+        )
+
+        retry = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest=digest,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        self.assertNotEqual(
+            retry["planned_launch"]["task_name"],
+            decision["planned_launch"]["task_name"],
+        )
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload(
+                    "spawn_agent",
+                    {
+                        "task_name": retry["planned_launch"]["task_name"],
+                        "message": f"OBJECTIVE LOCK: {digest}",
+                        "agent_type": "adaptive-luna-maker-high",
+                        "reasoning_effort": "high",
+                        "fork_turns": "none",
+                    },
+                ),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        child_b_turn_id = "55555555-5555-4555-8555-555555555555"
+        self.child_transcript(retry, turn_id=child_b_turn_id)
+        stale = gate.handle_hook(
+            self.tool_payload(
+                "Bash",
+                {"command": "python3 -m unittest -v test_stale.py"},
+                turn_id=self.child_turn_id,
+                transcript_path=str(transcript_a),
+            ),
+            runtime_home=self.runtime_home,
+        )
+        self.assertEqual(stale["hookSpecificOutput"]["permissionDecision"], "deny")
+        transcript_b = self.runtime_home / "sessions" / "child-b.jsonl"
+        transcript_a.rename(transcript_b)
+
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload(
+                    "Bash",
+                    {"command": "python3 -m unittest -v test_b.py"},
+                    turn_id=child_b_turn_id,
+                    transcript_path=str(transcript_b),
+                ),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        state_path = next(
+            (self.runtime_home / "state" / "adaptive-delegation" / "controller").glob(
+                "state-*.json"
+            )
+        )
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["child_turn_id"], child_b_turn_id)
+        self.assertEqual(state["child_transcript_path"], str(transcript_b.resolve()))
+
+    def test_path_blocked_leaf_retry_rebinds_child_turn_and_transcript(self) -> None:
+        self.activate()
+        digest = "8" * 64
+        decision = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest=digest,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload(
+                    "spawn_agent",
+                    {
+                        "task_name": decision["planned_launch"]["task_name"],
+                        "message": f"OBJECTIVE LOCK: {digest}",
+                        "agent_type": "adaptive-luna-maker-high",
+                        "reasoning_effort": "high",
+                        "fork_turns": "none",
+                    },
+                ),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        transcript_a = self.child_transcript(decision)
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload(
+                    "Bash",
+                    {"command": "python3 -m unittest -v test_a.py"},
+                    turn_id=self.child_turn_id,
+                    transcript_path=str(transcript_a),
+                ),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        gate.record_leaf_result(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            outcome="path_blocked",
+            route_assessment="inconclusive",
+            quality_verdict="inconclusive",
+            integration_accepted=False,
+            token_observation="unavailable",
+            evidence_references=["local/path-blocked.json"],
+        )
+
+        retry = gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="leaf_required",
+            objective_lock_digest=digest,
+            agent_type="adaptive-luna-maker-high",
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+        )
+        self.assertNotIn("child_turn_id", retry)
+        self.assertNotIn("child_transcript_path", retry)
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload(
+                    "spawn_agent",
+                    {
+                        "task_name": retry["planned_launch"]["task_name"],
+                        "message": f"OBJECTIVE LOCK: {digest}",
+                        "agent_type": "adaptive-luna-maker-high",
+                        "reasoning_effort": "high",
+                        "fork_turns": "none",
+                    },
+                ),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        child_b_turn_id = "66666666-6666-4666-8666-666666666666"
+        self.child_transcript(retry, turn_id=child_b_turn_id)
+        transcript_b = self.runtime_home / "sessions" / "child-b.jsonl"
+        transcript_a.rename(transcript_b)
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload(
+                    "Bash",
+                    {"command": "python3 -m unittest -v test_b.py"},
+                    turn_id=child_b_turn_id,
+                    transcript_path=str(transcript_b),
+                ),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        state_path = next(
+            (self.runtime_home / "state" / "adaptive-delegation" / "controller").glob(
+                "state-*.json"
+            )
+        )
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["child_turn_id"], child_b_turn_id)
+        self.assertEqual(state["child_transcript_path"], str(transcript_b.resolve()))
+
     def test_leaf_decision_denies_spawn_effort_mismatch(self) -> None:
         self.activate()
         decision = gate.record_decision(
