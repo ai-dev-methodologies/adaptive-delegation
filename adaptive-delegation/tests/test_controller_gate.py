@@ -461,6 +461,96 @@ class ControllerGateTests(unittest.TestCase):
             "deny",
         )
 
+    def test_no_state_stale_activation_turn_is_denied_before_state_creation(self) -> None:
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"activate --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            f"--main-turn-id {self.child_turn_id} --model gpt-5.6-sol --reasoning-effort high"
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload("Bash", {"command": command}),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        reason = output["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("activation", reason.lower())
+        self.assertIn("turn binding", reason.lower())
+        self.assertFalse((self.runtime_home / "state").exists())
+
+    def test_no_state_unrelated_third_token_activate_is_not_captured(self) -> None:
+        output = gate.handle_hook(
+            self.tool_payload(
+                "exec_command",
+                {"cmd": "/bin/echo /tmp/not-controller.py activate"},
+            ),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output, {})
+        self.assertFalse((self.runtime_home / "state").exists())
+
+    def test_closed_state_stale_activation_turn_does_not_replace_activation(self) -> None:
+        state_path = self.activate()
+        gate.record_decision(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            decision="main_only_exception",
+            exception_reason="context_bound_microtask",
+            objective_lock_digest="e" * 64,
+            evidence_references=["local/main-routing.json"],
+        )
+        gate.close_controller(
+            runtime_home=self.runtime_home,
+            session_id=self.session_id,
+            workspace=self.cwd,
+            terminal_status="complete",
+            evidence_references=["local/main-routing.json"],
+        )
+        before = json.loads(state_path.read_text())
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"activate --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            f"--main-turn-id {self.child_turn_id} --model gpt-5.6-sol --reasoning-effort high"
+        )
+
+        output = gate.handle_hook(
+            self.tool_payload("Bash", {"command": command}),
+            runtime_home=self.runtime_home,
+        )
+
+        self.assertEqual(output["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("turn binding", output["hookSpecificOutput"]["permissionDecisionReason"].lower())
+        after = json.loads(state_path.read_text())
+        self.assertEqual(after["phase"], "closed")
+        self.assertEqual(after["activation_id"], before["activation_id"])
+
+    def test_exact_current_turn_activation_is_allowed_and_extra_flag_is_denied(self) -> None:
+        command = (
+            f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(gate.__file__).resolve()))} "
+            f"activate --session-id {self.session_id} --workspace {shlex.quote(str(self.cwd))} "
+            f"--main-turn-id {self.main_turn_id} --model gpt-5.6-sol --reasoning-effort high"
+        )
+
+        self.assertEqual(
+            gate.handle_hook(
+                self.tool_payload("exec_command", {"cmd": command}),
+                runtime_home=self.runtime_home,
+            ),
+            {},
+        )
+        self.assertFalse((self.runtime_home / "state").exists())
+
+        extra = gate.handle_hook(
+            self.tool_payload("exec_command", {"cmd": command + " --extra value"}),
+            runtime_home=self.runtime_home,
+        )
+        self.assertEqual(extra["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("activation", extra["hookSpecificOutput"]["permissionDecisionReason"].lower())
+        self.assertFalse((self.runtime_home / "state").exists())
+
     def test_controller_preflight_is_the_only_allowed_main_read_lane(self) -> None:
         self.activate()
         controller = shlex.quote(str(Path(gate.__file__).resolve()))

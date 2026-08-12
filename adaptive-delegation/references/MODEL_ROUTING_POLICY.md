@@ -175,7 +175,10 @@ path-local launch binding is replaced by the next decision. Before any
 decision, an accidental activation may use the pre-decision `cancel`
 transition, which closes enforcement without claiming terminal completion or
 blockage. Controller CLI calls from a non-current main turn remain denied and
-are diagnosed as turn-binding failures rather than malformed flag shapes.
+are diagnosed as turn-binding failures rather than malformed flag shapes. A
+new or previously closed controller accepts `activate` only when its exact
+session, workspace, model, effort, and main-turn binding match the current hook
+context, so stale activation cannot create or replace state.
 The role selection is an
 explicit model choice. The selected model need not appear in the optional
 `model` override enum, so its absence there is not evidence that the fixed

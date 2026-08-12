@@ -30,6 +30,7 @@
 - [x] Add focused failing tests for accepted-leaf continuation, cancellation, and turn-mismatch diagnostics.
 - [x] Run the focused tests and confirm they fail for the reproduced v0.7.10 behavior.
 - [x] Implement the minimal state transitions, CLI authorization, parser, and correction messages.
+- [x] Reject stale or malformed activation argv before state creation while preserving unrelated no-state commands.
 - [x] Teach sanitized controller health to count cancellation without reporting an invalid record or open activation.
 - [x] Run the controller test module and `git diff --check`.
 

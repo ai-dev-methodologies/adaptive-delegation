@@ -66,7 +66,10 @@ uppercase placeholder and use the exact flag names. A malformed controller
 command is denied with its phase-specific exact flag form instead of a generic
 retry hint. A recognizable controller command from a turn other than the bound
 current main turn remains denied and reports the turn-binding mismatch instead
-of falsely reporting malformed flags. Before a child
+of falsely reporting malformed flags. Before a new or previously closed state
+accepts `activate`, the hook requires the exact command session, workspace,
+model, effort, and `main-turn-id` to match the current hook context; stale or
+malformed activation is denied before it can create or replace state. Before a child
 launch, use the exact installed `controller_gate.py decision` command to record
 `leaf_required` with the Objective Lock digest and package-fixed `agent_type`,
 model, and effort. The command returns `launch_task_name`; the next spawn must

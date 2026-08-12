@@ -24,8 +24,9 @@ and this changelog. Release tags should use `v<version>`.
   sanitized health counts cancellations separately and excludes them from
   pending/open activation totals.
 - Distinguished stale main-turn binding from malformed lifecycle flags so an
-  exact command from the wrong turn receives actionable recovery guidance
-  while foreign-turn execution remains denied.
+  exact command from the wrong turn receives actionable recovery guidance,
+  and rejected stale or malformed `activate` commands before they can create
+  or replace controller state while foreign-turn execution remains denied.
 
 ## [0.7.10] - 2026-08-12
 

@@ -1702,6 +1702,108 @@ def _controller_command_attempt(payload: dict[str, Any]) -> str | None:
     return tokens[2] if tokens[2] in controller_commands else None
 
 
+def _activation_command_tokens(payload: dict[str, Any]) -> list[str] | None:
+    tool_input = _spawn_input(payload)
+    command = tool_input.get("cmd") or tool_input.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return None
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    if len(tokens) < 3 or tokens[2] != "activate":
+        return None
+    try:
+        interpreter = Path(tokens[0]).expanduser().resolve()
+        controller = Path(tokens[1]).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+    if interpreter != Path(sys.executable).resolve() or controller != Path(__file__).resolve():
+        return None
+    return tokens
+
+
+def _authorized_activation_command(payload: dict[str, Any]) -> bool:
+    tokens = _activation_command_tokens(payload)
+    if tokens is None:
+        return False
+    tool_input = _spawn_input(payload)
+    command = tool_input.get("cmd") or tool_input.get("command")
+    if not isinstance(command, str) or any(
+        token in command for token in ("$", "`", "\n", "\r", ";", "&", "|", "<", ">")
+    ):
+        return False
+    if len(tokens) != 13:
+        return False
+    try:
+        interpreter = Path(tokens[0]).expanduser().resolve()
+        controller = Path(tokens[1]).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return False
+    if interpreter != Path(sys.executable).resolve() or controller != Path(__file__).resolve():
+        return False
+    allowed_flags = {
+        "--session-id",
+        "--workspace",
+        "--main-turn-id",
+        "--model",
+        "--reasoning-effort",
+    }
+    values: dict[str, str] = {}
+    index = 3
+    while index < len(tokens):
+        flag = tokens[index]
+        if flag not in allowed_flags or index + 1 >= len(tokens):
+            return False
+        value = tokens[index + 1]
+        if not value or value.startswith("--") or flag in values:
+            return False
+        values[flag] = value
+        index += 2
+    if set(values) != allowed_flags:
+        return False
+    try:
+        session_id = _session_from_payload(payload)
+        workspace = _workspace_from_payload(payload)
+        command_workspace = _canonical_workspace(values["--workspace"])
+    except ControllerGateError:
+        return False
+    current_turn_id = _payload_string(payload, "turn_id", "turnId")
+    return (
+        values["--session-id"] == session_id
+        and command_workspace == workspace
+        and values["--main-turn-id"] == current_turn_id
+        and values["--model"] == "gpt-5.6-sol"
+        and values["--reasoning-effort"] in MAIN_EFFORTS
+    )
+
+
+def _activation_command_correction(payload: dict[str, Any]) -> str:
+    session_id = _payload_string(payload, "session_id", "sessionId") or "<session-id>"
+    workspace = _payload_string(payload, "cwd", "working_directory", "workingDirectory")
+    workspace = workspace or "<workspace>"
+    turn_id = _payload_string(payload, "turn_id", "turnId") or "<current-turn-id>"
+    prefix = shlex.join(
+        [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "activate",
+            "--session-id",
+            session_id,
+            "--workspace",
+            workspace,
+            "--main-turn-id",
+            turn_id,
+        ]
+    )
+    return (
+        "Adaptive Delegation denied an activation command before controller state "
+        "creation. Activation turn binding must match the current hook turn; use "
+        f"the exact current-turn form: {prefix} --model gpt-5.6-sol "
+        "--reasoning-effort <high|xhigh|max|ultra>, with no extra or duplicate flags."
+    )
+
+
 def _controller_command_correction(
     command_name: str, state: dict[str, Any], workspace: Path
 ) -> str:
@@ -1927,12 +2029,22 @@ def _handle_pre_tool_use(payload: dict[str, Any], runtime_home: Path) -> dict[st
     workspace = _workspace_from_payload(payload)
     state_path = _state_path(runtime_home, session_id, workspace)
     state = _load_state(runtime_home, session_id, workspace)
-    if state is None:
+    tool_name = _payload_string(payload, "tool_name", "toolName")
+    if state is None or state.get("phase") == "closed":
+        if _activation_command_tokens(payload) is not None:
+            reason = _activation_command_correction(payload)
+            if _authorized_activation_command(payload):
+                return {}
+            if state is None:
+                return _deny(reason)
+            return _denied(
+                reason=reason,
+                tool_name=tool_name,
+                state=state,
+                runtime_home=runtime_home,
+            )
         return {}
     phase = state.get("phase")
-    if phase == "closed":
-        return {}
-    tool_name = _payload_string(payload, "tool_name", "toolName")
     if _tool_matches(tool_name, CONTROLLER_EXEC_TOOLS):
         command_name = _controller_command_attempt(payload)
         if command_name is not None:

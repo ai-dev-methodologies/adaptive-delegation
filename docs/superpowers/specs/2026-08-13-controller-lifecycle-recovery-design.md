@@ -28,7 +28,9 @@ otherwise recognizable controller command comes from another turn, the hook
 must report a main-turn binding mismatch and direct the main to continue on a
 fresh user turn. It must not misreport that condition as malformed flags.
 Foreign turns remain denied and cannot use `cancel` or any other lifecycle
-command.
+command. A no-state or closed-state `activate` command must bind its exact
+session, workspace, model, effort, and `main-turn-id` to the current hook
+payload before the CLI may create or replace state.
 
 ## Verification
 

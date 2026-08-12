@@ -44,6 +44,10 @@ the exact lifecycle command templates and finite allowed values for controller
 variants receive the exact required flag form rather than a generic denial
 alone. A recognizable exact command from a stale or foreign main turn instead
 reports the turn-binding mismatch and remains denied.
+Before a new or previously closed state accepts `activate`, the hook also
+requires the command's session, workspace, model, effort, and `main-turn-id` to
+match the exact current hook context; a stale activation cannot create or
+replace controller state.
 Each leaf decision returns a one-time `launch_task_name`; the next native spawn
 must use it exactly. This binds the opaque native child message to the recorded
 Objective Lock decision without claiming that the hook can decrypt or inspect
