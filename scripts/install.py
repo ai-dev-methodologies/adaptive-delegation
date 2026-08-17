@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import py_compile
@@ -365,8 +366,50 @@ def _remove_controller_trust(config_text: str, stale_keys: set[str]) -> str:
     return result
 
 
-def _atomic_text(value: str, target: Path) -> None:
-    _reject_symlink(target, "Codex config file")
+def _load_rules_text(path: Path) -> str:
+    _reject_symlink(path, "Codex rules file")
+    if not path.exists():
+        return ""
+    if not path.is_file():
+        raise InstallError(f"Codex rules path is not a file: {path}")
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise InstallError(f"invalid Codex rules file: {exc}") from exc
+
+
+def _remove_controller_rules(rules_text: str, controller: Path) -> str:
+    """Remove only the exact legacy direct-controller approval rule."""
+    rule = re.compile(
+        r'^\s*prefix_rule\(\s*pattern\s*=\s*(\[[^\n]*\])\s*,\s*'
+        r'decision\s*=\s*["\']allow["\']\s*\)\s*(?:\n|$)'
+    )
+    retained: list[str] = []
+    for line in rules_text.splitlines(keepends=True):
+        match = rule.fullmatch(line)
+        if match is None:
+            retained.append(line)
+            continue
+        try:
+            pattern = ast.literal_eval(match.group(1))
+        except (SyntaxError, ValueError):
+            retained.append(line)
+            continue
+        managed = (
+            isinstance(pattern, list)
+            and len(pattern) == 2
+            and all(isinstance(part, str) for part in pattern)
+            and re.fullmatch(r"python(?:3(?:\.\d+)?)?", Path(pattern[0]).name)
+            is not None
+            and pattern[1] == str(controller)
+        )
+        if not managed:
+            retained.append(line)
+    return "".join(retained)
+
+
+def _atomic_text(value: str, target: Path, label: str = "Codex config file") -> None:
+    _reject_symlink(target, label)
     mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else 0o600
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{target.name}.", dir=target.parent
@@ -430,9 +473,12 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
     dispatcher_target = codex_home / "scripts" / DISPATCHER_NAME
     hooks_target = codex_home / "hooks.json"
     config_target = codex_home / "config.toml"
+    rules_target = codex_home / "rules" / "default.rules"
     controller_command = _controller_hook_command(target_skill)
+    controller_path = target_skill / "scripts" / CONTROLLER_GATE_NAME
     hooks_exist = hooks_target.exists()
     config_exists = config_target.exists()
+    rules_exist = rules_target.exists()
     original_hooks = _load_hooks(hooks_target) if hooks_exist else {"hooks": {}}
     stale_controller_trust_keys = _controller_trust_keys(
         original_hooks, hooks_target, controller_command
@@ -442,6 +488,8 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
     reconciled_config = _remove_controller_trust(
         original_config, stale_controller_trust_keys
     )
+    original_rules = _load_rules_text(rules_target) if rules_exist else ""
+    reconciled_rules = _remove_controller_rules(original_rules, controller_path)
     managed_roles = [role for role in role_paths if role.stem.startswith("adaptive-")]
     agent_targets = [codex_home / "agents" / role.name for role in managed_roles]
     previous_roles = _previous_managed_role_names(target_skill)
@@ -454,7 +502,10 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
     print(f"skill: {target_skill}")
     print(f"package version: {package_version}")
     print(f"dispatcher: {dispatcher_target}")
-    print("hooks: none installed; legacy adaptive hook entries are removed on update")
+    print(
+        "hooks: none installed; legacy adaptive hook/trust/rule entries "
+        "are removed on update"
+    )
     print(f"role bindings: {len(agent_targets)} under {codex_home / 'agents'}")
     if dry_run:
         print("dry-run: validation passed; no files changed")
@@ -471,6 +522,8 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
         _atomic_json(reconciled_hooks, hooks_target)
     if config_exists and reconciled_config != original_config:
         _atomic_text(reconciled_config, config_target)
+    if rules_exist and reconciled_rules != original_rules:
+        _atomic_text(reconciled_rules, rules_target, "Codex rules file")
     _atomic_package(source, target_skill, runtime_paths)
     _atomic_file(
         target_skill / "scripts" / DISPATCHER_NAME,

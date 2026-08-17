@@ -342,12 +342,44 @@ class InstallerTests(unittest.TestCase):
             self.assertNotIn(legacy_key, parsed.get("hooks", {}).get("state", {}))
             self.assertEqual(parsed["hooks"]["state"]["foreign"], {"enabled": True})
 
-    def test_no_adaptive_artifact_preserves_hook_and_config_bytes_and_modes(self) -> None:
+    def test_update_removes_exact_legacy_controller_rule_and_preserves_foreign_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            codex_home = (Path(temporary) / ".codex").resolve()
+            rules_path = codex_home / "rules" / "default.rules"
+            rules_path.parent.mkdir(parents=True)
+            controller = (
+                codex_home
+                / "skills"
+                / "adaptive-delegation"
+                / "scripts"
+                / "controller_gate.py"
+            )
+            managed = (
+                'prefix_rule(pattern=["/opt/homebrew/opt/python@3.14/bin/python3.14", '
+                f'"{controller}"], decision="allow")\n'
+            )
+            foreign = (
+                f'prefix_rule(pattern=["echo", "{controller}"], decision="allow")\n'
+                f'prefix_rule(pattern=["python3", "{controller}", "preflight"], decision="allow")\n'
+                'prefix_rule(pattern=["python3", "/foreign/controller_gate.py"], decision="allow")\n'
+            )
+            rules_path.write_text(managed + foreign, encoding="utf-8")
+            rules_path.chmod(0o640)
+
+            result = self.run_installer(codex_home)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(rules_path.read_text(encoding="utf-8"), foreign)
+            self.assertEqual(stat.S_IMODE(rules_path.stat().st_mode), 0o640)
+
+    def test_no_adaptive_artifact_preserves_managed_surface_bytes_and_modes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             codex_home = Path(temporary) / ".codex"
             codex_home.mkdir()
             hooks_path = codex_home / "hooks.json"
             config_path = codex_home / "config.toml"
+            rules_path = codex_home / "rules" / "default.rules"
+            rules_path.parent.mkdir()
             hooks_path.write_text(
                 '{"owner":"foreign","hooks":{"Stop":[{"hooks":[{"type":"command","command":"foreign-stop"}]}]}}\n',
                 encoding="utf-8",
@@ -356,11 +388,16 @@ class InstallerTests(unittest.TestCase):
                 'model = "gpt-5.6-sol"\n[hooks.state."foreign"]\nenabled = true\n',
                 encoding="utf-8",
             )
+            rules_path.write_text(
+                'prefix_rule(pattern=["echo", "foreign"], decision="allow")\n',
+                encoding="utf-8",
+            )
             hooks_path.chmod(0o640)
             config_path.chmod(0o600)
+            rules_path.chmod(0o640)
             before = {
                 path: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
-                for path in (hooks_path, config_path)
+                for path in (hooks_path, config_path, rules_path)
             }
 
             result = self.run_installer(codex_home)
@@ -385,6 +422,12 @@ class InstallerTests(unittest.TestCase):
                 json.dumps({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": command}]}]}}),
                 encoding="utf-8",
             )
+            rules_path = codex_home / "rules" / "default.rules"
+            rules_path.parent.mkdir()
+            rules_path.write_text(
+                f'prefix_rule(pattern=["{sys.executable}", "{codex_home}/skills/adaptive-delegation/scripts/controller_gate.py"], decision="allow")\n',
+                encoding="utf-8",
+            )
 
             with mock.patch.object(
                 module, "_atomic_package", side_effect=RuntimeError("injected failure")
@@ -394,6 +437,9 @@ class InstallerTests(unittest.TestCase):
 
             self.assertNotIn(
                 "controller_gate.py", hooks_path.read_text(encoding="utf-8")
+            )
+            self.assertNotIn(
+                "controller_gate.py", rules_path.read_text(encoding="utf-8")
             )
 
     def test_docs_define_weighted_budget_and_portable_trigger_contract(self) -> None:

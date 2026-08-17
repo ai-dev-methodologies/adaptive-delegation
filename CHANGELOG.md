@@ -14,6 +14,12 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.8.1] - 2026-08-17
+
+- Removed the exact legacy direct-controller approval prefix from
+  `rules/default.rules` during updates while preserving foreign rules, wrappers,
+  additional arguments, file bytes when unchanged, and file permissions.
+
 ## [0.8.0] - 2026-08-15
 
 - Removed adaptive-delegation from the global hook chain. Explicit activation

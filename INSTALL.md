@@ -124,8 +124,8 @@ For a Codex home represented by `$CODEX_HOME`, installation manages:
 
 The installer registers no hooks. On update it removes only exact legacy
 adaptive `controller_gate.py` hook registrations and their matching trust
-entries. It preserves unrelated hooks, trust entries, and the user's Stop
-owner.
+entries, including the exact direct-command approval in `rules/default.rules`.
+It preserves unrelated hooks, rules, trust entries, and the user's Stop owner.
 
 The policy source of truth is
 `$CODEX_HOME/skills/adaptive-delegation/config/model-routing.defaults.json`.

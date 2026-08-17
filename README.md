@@ -4,7 +4,7 @@
 delegation through Codex native subagents. Claude Code and other agent runtimes
 are unsupported execution targets.
 
-Current installable package version: `0.8.0`.
+Current installable package version: `0.8.1`.
 
 `adaptive-delegation` is explicit and opt-in, and it is hook-free. A prompt activates it
 only when its first non-whitespace token is `$adaptive-delegation`. It installs
@@ -87,7 +87,8 @@ Skill activation and reasoning effort are separate decisions.
 The installer manages only the skill package, optional dispatcher, and
 package-declared roles. It installs no hooks. On update it removes only exact
 legacy adaptive `controller_gate.py` registrations and their matching trust
-entries; all foreign hooks, Stop owners, and host configuration remain intact.
+entries, including its exact direct-command approval rule; all foreign hooks,
+rules, Stop owners, and host configuration remain intact.
 
 This gives the same activation behavior in plain Codex, Codex with OMX, Codex
 with Ultracode, or a process containing both. Those hosts may impose their own
