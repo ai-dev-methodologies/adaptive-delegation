@@ -85,7 +85,7 @@ class IsolatedDogfoodTests(unittest.TestCase):
         executable = directory / "codex"
         executable.write_text(
             f"#!{sys.executable}\n"
-            "import hashlib, json, os, pathlib, subprocess, sys\n"
+            "import json, os, pathlib, subprocess, sys\n"
             "fixture = pathlib.Path.cwd()\n"
             "target = fixture / 'target.py'\n"
             + behavior
@@ -93,34 +93,19 @@ class IsolatedDogfoodTests(unittest.TestCase):
             "candidate = pathlib.Path(os.environ['CODEX_HOME'])\n"
             "session = 'parent-session'\n"
             "turn = 'child-turn'\n"
-            "task = 'adaptive_' + ('b' * 64)\n"
-            "planned = {'agent_type': 'adaptive-luna-maker-high', 'model': 'gpt-5.6-luna', 'reasoning_effort': 'high', 'fork_turns': 'none', 'task_name': task}\n"
-            "workspace = str(fixture.resolve())\n"
-            "digest = 'a' * 64\n"
-            "activation = 'c' * 64\n"
-            "controller = candidate / 'state' / 'adaptive-delegation' / 'controller'\n"
-            "controller.mkdir(parents=True, exist_ok=True)\n"
-            "key = hashlib.sha256((session + '\\0' + workspace).encode()).hexdigest()\n"
-            "state = {'schema_version': '1', 'session_id': session, 'workspace': workspace, 'activation_id': activation, 'phase': 'closed', 'terminal_status': 'complete', 'last_outcome': 'accepted', 'last_integration_accepted': True, 'objective_lock_digest': digest, 'planned_launch': planned}\n"
+            "task = 'adaptive_hook_free_dogfood'\n"
             + (
-                "state.update({'child_turn_id': 'foreign-turn', 'child_transcript_path': '/foreign/rollout.jsonl'})\n"
+                "role = 'adaptive-sol-maker-medium'\n"
                 if foreign_child_binding
-                else ""
+                else "role = 'adaptive-luna-maker-high'\n"
             )
             +
-            "(controller / ('state-' + key + '.json')).write_text(json.dumps(state) + '\\n', encoding='utf-8')\n"
-            "events = [\n"
-            " {'schema_version': '1', 'event_type': 'delegation_decision', 'session_id': session, 'workspace': workspace, 'activation_id': activation, 'objective_lock_digest': digest, 'decision': 'leaf_required', 'planned_launch': planned},\n"
-            " {'schema_version': '1', 'event_type': 'leaf_launch_authorized', 'session_id': session, 'workspace': workspace, 'activation_id': activation, 'objective_lock_digest': digest, 'planned_launch': planned},\n"
-            " {'schema_version': '1', 'event_type': 'leaf_result_recorded', 'session_id': session, 'workspace': workspace, 'activation_id': activation, 'objective_lock_digest': digest, 'planned_launch': planned, 'outcome': 'accepted', 'quality_verdict': 'pass', 'integration_accepted': True},\n"
-            " {'schema_version': '1', 'event_type': 'controller_closed', 'session_id': session, 'workspace': workspace, 'activation_id': activation, 'objective_lock_digest': digest, 'terminal_status': 'complete'},\n"
-            "]\n"
-            "(controller / 'controller-events.jsonl').write_text(''.join(json.dumps(row) + '\\n' for row in events), encoding='utf-8')\n"
+            "workspace = str(fixture.resolve())\n"
             "rollout = candidate / 'sessions' / '2026' / '01' / '01' / 'rollout.jsonl'\n"
             "rollout.parent.mkdir(parents=True, exist_ok=True)\n"
-            "spawn = {'parent_thread_id': session, 'depth': 1, 'agent_path': '/root/' + task, 'agent_role': 'adaptive-luna-maker-high'}\n"
+            "spawn = {'parent_thread_id': session, 'depth': 1, 'agent_path': '/root/' + task, 'agent_role': role}\n"
             "rows = [\n"
-            " {'type': 'session_meta', 'payload': {'session_id': session, 'id': 'child-session', 'parent_thread_id': session, 'cwd': workspace, 'thread_source': 'subagent', 'agent_role': 'adaptive-luna-maker-high', 'agent_path': '/root/' + task, 'source': {'subagent': {'thread_spawn': spawn}}}},\n"
+            " {'type': 'session_meta', 'payload': {'session_id': session, 'id': 'child-session', 'parent_thread_id': session, 'cwd': workspace, 'thread_source': 'subagent', 'agent_role': role, 'agent_path': '/root/' + task, 'source': {'subagent': {'thread_spawn': spawn}}}},\n"
             " {'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': turn}},\n"
             " {'type': 'turn_context', 'payload': {'turn_id': turn, 'model': 'gpt-5.6-luna', 'effort': 'high'}},\n"
             "]\n"
@@ -208,7 +193,7 @@ class IsolatedDogfoodTests(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("product", result.diagnostic)
 
-    def test_allows_controller_lifecycle_evidence_ref_to_target(self) -> None:
+    def test_rejects_removed_controller_commands(self) -> None:
         module = load_module()
         commands = [
             "/bin/zsh -lc '/usr/local/bin/python3 "
@@ -220,7 +205,7 @@ class IsolatedDogfoodTests(unittest.TestCase):
             "--session-id s --workspace . --evidence-ref target.py "
             "--evidence-ref test_target.TargetTests.test_normalizes_whitespace_and_case'",
         ]
-        self.assertEqual(module.product_work_violations(commands), [])
+        self.assertEqual(module.product_work_violations(commands), commands)
 
     def test_rejects_scope_drift_outside_target(self) -> None:
         module = load_module()
@@ -309,7 +294,7 @@ class IsolatedDogfoodTests(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("exactly the declared targeted Python verification once", result.diagnostic)
 
-    def test_rejects_foreign_controller_child_binding(self) -> None:
+    def test_rejects_foreign_native_child_role(self) -> None:
         module = load_module()
         result = self.run_gate(
             module,
@@ -317,7 +302,7 @@ class IsolatedDogfoodTests(unittest.TestCase):
             foreign_child_binding=True,
         )
         self.assertNotEqual(result.exit_code, 0)
-        self.assertIn("child binding", result.diagnostic)
+        self.assertIn("rollout metadata", result.diagnostic)
 
     def test_rejects_optional_package_archaeology_in_main_preflight(self) -> None:
         module = load_module()

@@ -1,542 +1,169 @@
 ---
 name: adaptive-delegation
-description: Codex-only skill for Codex native subagents. Use when routing bounded implementation and verification work for Objective-Locked delegation, scope-drift prevention, bounded verification, token effective, token-effective, token efficiency, token-efficient delegation, cost-efficient subagents, Luna-first delegation, adaptive delegation, effort-first escalation, model routing audit, validate model selection, reduce Sol usage, or evidence-checked delegation requests; also match 토큰효율화 and 토큰 효율화.
+description: Codex-only skill for Codex native subagents. Use only when the user explicitly prefixes the request with $adaptive-delegation to route bounded work with Objective Locks, fixed Luna-first roles, evidence-based escalation, and token-efficient verification. Discovery terms include 토큰효율화 and 토큰 효율화, but those terms never activate the skill.
 ---
 
 # Adaptive Delegation
 
-**Codex only:** this skill routes work to Codex native subagents. Claude Code
-is unsupported, and this package does not provide a general external runtime
-integration.
+Use this skill only for a user prompt whose first non-whitespace token is
+`$adaptive-delegation`. A quotation, explanation, continuation, localized
+discovery term, or bare mention does not activate it.
 
-This skill is explicit and opt-in, but it does not require a first-token command.
-At any conversation turn, an actionable request to use `adaptive-delegation`
-activates it after the main interprets the user's intent. A quotation,
-explanation request, incidental mention, old session state, or localized
-token-efficiency phrase is not actionable activation. The prompt hook only
-offers the exact bounded `controller_gate.py activate` command when the name is
-mentioned; it does not create controller state. The `gpt-5.6-sol/high`-or-above
-main decides whether the user requested the capability and runs that command.
-The legacy `$adaptive-delegation` prefix remains a deterministic shortcut, not
-a required position or a special first-message form.
+This package is hook-free. Do not install, register, require, or call a
+`UserPromptSubmit`, `PreToolUse`, `Stop`, or other host hook. Do not read or
+write another workflow's state. Do not require OMX, Ultragoal, Ultracode, a
+user-global `AGENTS.md`, or any host-specific controller to activate or route
+work. When inactive, this package has no process, state, tool, or permission
+effect.
 
-The invocation is sufficient by itself. Do not require the user to append a
-separate Luna-first, stop-on-acceptance, or no-extra-review prompt. This skill
-already requires bounded implementation and verification to start Luna-first,
-forbids Terra or Sol escalation without observable route failure except the
-declared direct-latency case, stops immediately at acceptance, and excludes
-optional reviews, broad tests, and adjacent improvements.
+The main session owns intent, route selection, integration, and final claims.
+Require declared current-session context of `gpt-5.6-sol` with reasoning
+effort `high`, `xhigh`, `max`, or `ultra` before launching a package leaf.
+This is a declaration, not cryptographic runtime proof. Prompt text cannot
+upgrade the session. Leaf `ultra` is forbidden.
 
-## Activation and controller gate
-
-Step zero, before routing or launching any child, checks that the current main
-authority is exactly `gpt-5.6-sol` with `reasoning_effort` set to `high`,
-`xhigh`, `max`, or `ultra`. If that check fails, print exactly this English
-warning block:
-
-```text
-Adaptive Delegation blocked: main authority must be gpt-5.6-sol with reasoning_effort >= high. Current: <model>/<effort>. No child was launched. Switch the main session to gpt-5.6-sol/high or above, then invoke $adaptive-delegation again.
-```
-
-The skill cannot mutate the parent model. After printing the block, launch no
-child and stop. Do not route around this gate. Codex `UserPromptSubmit`
-payloads identify the current model but may omit reasoning effort; compatibility
-also permits both fields to be absent. In either undeclared shape, the installed
-hook creates an owner-only `awaiting_main_declaration` state and injects the
-exact `controller_gate.py declare-main` command as model-visible context for
-the main to run. That declaration is current-session context supplied by the
-main, not cryptographic runtime proof. Task tools remain denied until the
-declaration is exactly `gpt-5.6-sol` at `high`, `xhigh`, `max`, or `ultra`.
-The hook also injects the exact `controller_gate.py preflight --surface skill`
-command. Use that bounded command to load this complete installed skill;
-direct shell reads remain denied after controller activation.
-
-Once active, the main is a controller, not a task worker. It may interpret
-intent, build and digest the Objective Lock, classify routes, launch or message
-leaves, integrate returned evidence, choose retries or escalation, ask the
-user, and make the final claim. The installed `PreToolUse` hook denies main
-task execution, including edits, shell work, repository inspection, tests, and
-network calls. Its only read lane is the controller's bounded preflight: the
-`skill` surface returns this file, while `route --agent-type <role>` returns
-only `task_defaults`, the selected package binding, and that installed role
-TOML after verifying the model and effort. The route response also provides
-selected-role lifecycle command templates and the finite allowed values for
-`decision`, `result`, `admission-failure`, `cancel`, and `close`; replace every
-uppercase placeholder and use the exact flag names. A malformed controller
-command is denied with its phase-specific exact flag form instead of a generic
-retry hint. A recognizable controller command from a turn other than the bound
-current main turn remains denied and reports the turn-binding mismatch instead
-of falsely reporting malformed flags. Before a new or previously closed state
-accepts `activate`, the hook requires the exact command session, workspace,
-model, effort, and `main-turn-id` to match the current hook context; stale or
-malformed activation is denied before it can create or replace state. When
-`PreToolUse` omits model or effort, the exact Sol/high-or-above command value
-remains declared current-session context rather than runtime proof; every
-nonempty payload value must match it. Before a child
-launch, use the exact installed `controller_gate.py decision` command to record
-`leaf_required` with the Objective Lock digest and package-fixed `agent_type`,
-model, and effort. The command returns `launch_task_name`; the next spawn must
-use that exact `task_name`, match the remaining envelope, and use
-`fork_turns="none"`.
-Codex exposes the native child `message` opaquely to `PreToolUse`, so the hook
-does not pretend to decrypt or inspect it. Instead, the controller-issued task
-name binds that spawn to the recorded Objective Lock decision while the skill
-contract still requires the full portable Objective Lock in the child message.
-The hook evaluates spawn authorization before any adaptive-child tool
-exemption because Codex also carries child role and parent metadata on the
-main's spawn request; that metadata never authorizes an unplanned launch.
-Subagent `PreToolUse` calls share the parent `session_id` and do not carry a
-role field. The controller therefore binds the main `turn_id` from
-`UserPromptSubmit`, refreshes it on later user prompts, and treats only a
-different turn whose owner-only rollout metadata matches the issued task name,
-role, parent, and `task_started` turn as the active child after the exact locked
-spawn is consumed. That one child turn is then fixed in controller state; the
-same-turn main and every foreign turn remain denied throughout leaf execution.
-The hook recognizes the fixed control-plane and spawn allowlists in both their
-separator-preserving and Codex-sanitized tool-name forms. A repeated explicit
-invocation in the same session preserves any open controller, Objective Lock,
-and pending launch; it does not start a second activation or reset progress.
-An admitted child must never request sandbox permission escalation or user
-approval. The hook denies `require_escalated` before Codex can display an
-approval prompt. The child retries an authorized in-scope command without
-escalation or returns the blocked action to the main when the sandbox or a
-project policy reserves that action for the main.
-
-Direct main execution is allowed only after the controller records one of
-these evidence-backed states:
-
-- `main_only_exception` with `non_delegable_authority`,
-  `context_bound_microtask`, `weak_oracle`, or `high_risk_or_ambiguous`, plus
-  one or more bounded local evidence references;
-- `takeover` with `ladder_exhausted`, plus bounded local evidence references.
-
-`weak_oracle`, `high_risk_or_ambiguous`, and `ladder_exhausted` execution also
-require the declared main effort to be `ultra`; the controller does not pretend
-that a `high`, `xhigh`, or `max` session was upgraded. A narrowly
-`non_delegable_authority` action may use the already-admitted Sol/high-or-above
-main because its exception is authority shape, not capability escalation. A
-bounded `context_bound_microtask` may also stay with that main when it records
-the local routing judgment and evidence. Generic convenience or an unrecorded
-claim that the main is cheaper remains insufficient.
-
-Every authorized Native launch must receive a result before another decision. After
-the leaf returns, run the exact installed `controller_gate.py result` command
-with `accepted`, `failed`, or `path_blocked`; the route assessment (`correct`,
-`too-cheap`, `too-premium`, or `inconclusive`); the quality verdict;
-integration acceptance; bounded evidence references; and token observation.
-Use `token_observation=unavailable` when provider usage is not visible to the
-main and omit token/cost values—never encode missing measurement as observed
-zero. The controller then checks only the already bound owner-local child
-transcript. If its cumulative token event, child identity, size, JSON shape,
-and package price factor validate, the controller records an exact observation
-using `ceil(input_tokens / 4) + output_tokens`; otherwise it preserves
-`unavailable`. An exact or estimated main-reported observation must include
-nonnegative weighted tokens and the route-relative cost proxy. Controller
-reviews label the observation source so bound transcript evidence is not
-confused with main-reported or unavailable data. The controller denies a new
-route decision until this result is recorded, then writes a cumulative
-owner-only controller review. If the same terminal outcome still requires a
-Checker, another Maker lane, or evidence-backed main-only action, record that
-next decision in the same activation with the exact same Objective Lock digest,
-including after an accepted leaf. Do not close and reactivate between lanes of
-one locked outcome.
-If native admission rejects before creating a child, run the exact installed
-`controller_gate.py admission-failure` command with a bounded local evidence
-reference. It is admitted only while a leaf is pending or launch-authorized
-and only when bounded owner-local rollout discovery finds no matching child
-and controller state has no child binding; it records `path_blocked` without
-claiming child execution and releases the controller for the next decision.
-Before any Objective Lock decision, an accidental activation may run the exact
-installed `controller_gate.py cancel` command.
-Cancellation is admitted only from `awaiting_main_declaration` or
-`explicit_active`, records no `complete` or `blocked` terminal status, and
-releases the session restriction; once work evidence exists, use the normal
-result and terminal-close lifecycle.
-Before the terminal user-facing answer, run `controller_gate.py close` with
-`complete` or `blocked` and bounded evidence. `complete` after a leaf requires
-an accepted integrated result. A closed state releases the session's task-tool
-restriction so a later non-adaptive request in the same conversation is not
-captured by stale controller state.
-
-When the gate passes, before tools print exactly:
-`Routing: main=<decision>; ready=<n>; parallel=<n>; serial=<reason|none>.`
-
-The main owns intent, planning, integration, acceptance, and final claims.
-It also exclusively owns route classification and selection. The Sol/high-or-
-above activation gate exists because this classification is a main-authority
-decision: before every child launch, the main classifies each bounded slice
-from its task shape, oracle strength, risk and ambiguity, latency sensitivity,
-execution horizon, and recoverability, then selects the matching package
-default and exact ladder. A child may not select, reinterpret, or change its
-route.
-
-Workflow names are not route inputs. A Codex goal or Ultragoal label is neither
-required nor sufficient for the quota-first long-horizon route. That route is
-eligible whenever the main determines that the bounded slice itself is
-long-horizon, latency-insensitive, risk `low`/`medium`, and protected by a
-strong acceptance oracle. If any predicate is false or unproven, the main
-chooses the ordinary task-shape route or keeps the work main-authoritative.
-After the initial selection, only observable failure may advance the exact
-ladder.
-
-Start implementation in a bounded leaf; the main must not implement the slice
-it classified for delegation. When the evidence-classified ladder is
-exhausted, the main is the final escalator and may take over the unresolved
-slice without widening it. Model or reasoning escalation changes capability,
-never authority or scope. Use Maker/Checker separation when risk warrants it:
-a Maker makes the bounded change and a distinct-session Checker checks it. Every
-child is a leaf and reports evidence, conflicts, and its stop condition.
-
-Select Checker capability from oracle shape and risk, not from a rule that the
-Checker must exceed the Maker model. A strong deterministic oracle may use a
-cheaper Checker because checking is narrower than making. If the oracle rejects
-the artifact, return to main and advance the exact Maker ladder. If the Checker
-itself has a tool/environment failure, repair or retry that Checker without
-upgrading Maker. If the oracle is weak, stop leaf escalation and use main
-takeover. The optional dispatcher integration-receipt path currently requires
-the distinct installed `adaptive-sol-checker-medium` session as its issuer; do
-not add another Verifier stage after sufficient Checker evidence. Main owns
-final integration acceptance and the stop decision.
+Load this file through normal skill loading. Run no activation continuation or
+shell preflight. Build the lock, inspect only the selected role binding, and
+launch the native leaf directly. A child routing mismatch cancels only that
+launch and returns control to main; it is not a task blocker.
 
 ## Primary invariant — Objective Lock
 
-Delegate every delegable bounded work slice inside one canonical **OBJECTIVE
-LOCK**. No valid Objective Lock, no child launch. The main does not compare its
-own apparent marginal cost with a leaf and choose direct task execution; only
-the structured controller exceptions above permit it.
+Before the first child launch, construct one portable **OBJECTIVE LOCK** from
+the user request and repository evidence. No valid Objective Lock, no child launch.
 
-Before routing, construct a self-contained **OBJECTIVE LOCK** from the current
-user request and repository evidence. It must declare the terminal outcome,
-non-goals (`non_goals`), read/write/network authority, authorized lanes, a
-progression policy, and global terminal conditions. The current method, data
-source, stage, test plan, path-local verification, side effects, and path stop
-condition belong to a replaceable path/iteration envelope. Every packet must
-also declare `terminal_outcome`; no valid lock means no child launch. The skill
-must not depend on a user-global `AGENTS.md` or machine-specific policy file to
-supply these fields.
+The lock contains:
 
-The dispatcher serializes one route-independent canonical v3 JSON object and
-carries its SHA-256 consistency digest through Native admission, typed
-execution, terminal/integration records, linked audit schema `0.3.0`, retry,
-escalation, Checker review, and main takeover. A stronger model, higher effort,
-retry, or takeover may finish the unresolved slice but may not change any lock
-field. The digest is same-user drift evidence, not a signature or proof that
-the declared acceptance oracle is semantically adequate.
+- terminal outcome and acceptance evidence;
+- non-goals (`non_goals`);
+- read, write, and network authority;
+- authorized lanes and collision ownership;
+- progression policy and global terminal conditions; and
+- side-effect and verification ceilings.
 
-The lock binds the main session too. Main-side planning, repository inspection,
-routing preflight, package inspection, verification, retry decisions, and
-integration must remain inside the same authority and verification ceiling.
-Delegating a narrow leaf never authorizes the main to perform broader discovery
-or extra review around it.
+Keep the current method, data source, stage, test plan, path-local verification,
+and path stop condition in a replaceable path envelope. Every Maker, Checker,
+retry, escalation, and main takeover inherits the exact terminal-outcome lock.
+Model or reasoning escalation changes capability, never authority or scope.
 
-Use the smallest verification path that proves the acceptance evidence. Stop
-as soon as that evidence passes and the stop condition applies. A blocked path
-returns to the main for an in-scope alternative and ends the current lane
-attempt chain; the main starts the next authorized lane with a new path
-envelope under the same lock. A truthful blocked-lane report uses a successful
-child process result with receipt outcome `path_blocked`; it is not terminal
-acceptance. Final BLOCKED is valid only when all authorized lanes are terminal.
-Continue iterative discovery or
-flywheel work until the terminal outcome passes or the user stop condition
-applies. The verification ceiling limits nonessential verification and never
-truncates core outcome work. Never fabricate evidence or substitute an
-unauthorized method. After sufficient evidence exists, do not perform
-additional reviews, repository-wide analysis, repeated validation, optional
-model consultations,
-unrelated cleanup, refactoring, architectural redesign, abstraction,
-documentation expansion, speculative robustness, or consistency polishing.
-Record adjacent improvements as concise backlog findings instead of
-implementing them.
+The lock binds the main session too. Main planning, inspection, routing,
+verification, retry, and integration must remain inside the same authority and
+verification ceiling. A blocked lane returns to main for another authorized
+lane. Final BLOCKED requires evidence that no meaningful authorized lane
+remains. Never fabricate evidence, and do not silently turn a takeover into a redesign.
 
-Keep routing preflight proportional to the locked task. After loading this
-`SKILL.md` once through the injected `preflight --surface skill` command, do not reopen it, enumerate the package,
-inspect dispatcher source, invoke `--help`, or read optional references merely
-to reconstruct package internals.
-For an ordinary bounded Native route, inspect the live spawn schema/catalog
-once, then run `controller_gate.py preflight --surface route --agent-type
-<role>` with the exact selected role. That command returns only
-`task_defaults`, the selected policy binding, and the matching installed role
-TOML; do not replace it with direct `jq`, `sed`, or whole-policy output. Expand
-that preflight only after a concrete admission failure makes a specific
-additional read necessary.
-
-Expand scope only when direct evidence proves that the accepted path crosses a
-required public contract, shared invariant, security/auth/financial boundary,
-cross-process concurrency boundary, schema/protocol migration, or
-compatibility/rollback surface. Record the trigger, evidence, added scope,
-budget, side effects, and stop condition. Uncertainty alone never expands
-scope. A materially broader objective requires a new explicitly authorized
-task or packet; do not silently turn a takeover into a redesign.
+Stop as soon as the declared acceptance evidence passes. Do not add optional
+work, adjacent improvements, additional reviews, or broad verification.
 
 ## Policy source and routing defaults
 
-The policy source of truth is the package config at
-`adaptive-delegation/config/model-routing.defaults.json` in this repository.
-The repository and package sources are canonical; an installed copy is a
-deployment target and does not become a second policy source.
+Use `config/model-routing.defaults.json` as the routing source of truth. Select
+the route from task shape, oracle strength, risk,
+ambiguity, latency sensitivity, horizon, and recoverability. Workflow names
+and other runtime state are never route inputs.
 
-The default strategy is Luna-first, effort-first within Luna, then an
-evidence-seeking Terra intermediate after an observable Luna acceptance or
-quality failure, followed by bounded Sol leaf escalation before main takeover:
+Use these fixed Maker ladders:
 
-These are candidate defaults selected by the main after classification, not
-global modes selected from a workflow name. The main repeats classification
-for each bounded slice; one long-running goal may legitimately contain slices
-that start on different routes.
+- Simple lookup or extraction: Luna medium -> high -> xhigh -> max -> Terra
+  medium -> Sol medium -> main Sol ultra.
+- Clear implementation or transformation: Luna high -> xhigh -> max -> Terra
+  medium -> Sol medium -> Sol high -> main Sol ultra.
+- Bounded complex implementation, debugging, or review: Luna xhigh -> max ->
+  Terra high -> Sol medium -> Sol high -> main Sol ultra.
+- Latency-insensitive long-horizon work with a strong oracle and low/medium
+  risk: Luna max -> Terra xhigh -> Terra max -> Sol high -> main Sol ultra.
+- Weak-oracle, ambiguous, high-risk, or long-contract work: main Sol ultra.
 
-| Work shape | Default route |
-| --- | --- |
-| Simple lookup or extraction | `gpt-5.6-luna/medium` |
-| Clear implementation or transformation | `gpt-5.6-luna/high` |
-| Bounded complex implementation or verification | `gpt-5.6-luna/xhigh` |
-| Any bounded slice that is latency-insensitive, long-horizon, low/medium risk, and has a strong oracle | `gpt-5.6-luna/max` |
-| Weak oracle, ambiguous/high-risk, or long contract | Main-authoritative `gpt-5.6-sol/ultra` |
+Start at the lowest suitable Luna effort. Escalate only from observable failed
+acceptance checks, contradictions, missed constraints, truncation or context
+evidence, runtime/tool errors, capability ceilings, or a weak oracle. Hidden
+reasoning is not evidence. Ordinary Terra use is `medium` or `high`; Terra
+`xhigh`/`max` is restricted to the quota-first long-horizon ladder after an
+observable Luna failure.
 
-Leaf `ultra` is forbidden. Sol `medium` and `high` are fixed leaf roles; they do
-not inherit the main's authority or `ultra` effort. The main retains authority
-and may take over at `gpt-5.6-sol/ultra`. There is one same-model reasoning
-retry per stage, with reevaluation after every attempt. The fixed ladders are:
+## Native leaf procedure
 
-- Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> terra/medium -> sol/medium -> main-takeover sol/ultra`.
-- Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> terra/medium -> sol/medium -> sol/high -> main-takeover sol/ultra`.
-- Bounded complex implementation, debugging, or review: `luna/xhigh -> luna/max -> terra/high -> sol/medium -> sol/high -> main-takeover sol/ultra`.
-- Bounded complex work with a strong oracle uses the same bounded-complex ladder and may not skip a configured step.
-- Any bounded slice that is long-horizon, latency-insensitive, risk
-  `low`/`medium`, and has a strong acceptance oracle:
-  `luna/max -> terra/xhigh -> terra/max -> sol/high -> main-takeover sol/ultra`.
-- Weak-oracle, ambiguous/high-risk, or long-contract work stays main-authoritative at `sol/ultra`.
+Prefer Native V2 through a verified fixed `agent_type`. Select the installed
+package role whose TOML fixes the exact model and reasoning effort. Inspect the
+live child schema and installed role before every launch; do not reuse stale
+capability claims.
 
-For a `weak_oracle` failure discovered on a leaf, `main_takeover` moves directly
-to the final main-authority step. It is not an adjacent leaf escalation, and
-`raise_model` cannot select main authority.
+The absence of a selected model from the optional `model` override enum does not
+reject a Native route when the fixed `agent_type` is installed. In that mode,
+prefer Native V2 through a verified fixed `agent_type`; omitting the optional
+model field is not leader-model inheritance. Select the installed package role
+and pass `fork_turns="none"`, an explicit task name, and the role's exact effort.
 
-Every leaf step and Checker route resolves to a package-declared role with the
-exact model and effort. `sol/ultra` is a main-authority route, never a child
-role. The runtime validator rejects unknown routes, skipped steps, mismatched
-counters, exhausted same-route retries, and model/effort substitutions.
+Send every child the complete Objective Lock plus a narrow packet containing:
 
-The config records the official 2026-07-30 API token prices and normalized
-Sol-equivalent factors: Luna `0.04`, Terra `0.4`, and Sol `1.0`. Effort changes
-token consumption, so per-token price alone never selects a route; Codex quota
-or credit units are not provider-token equivalents. Routing is
-provisional and evidence-seeking; accepted-task quality, latency, weighted
-tokens, and total cost determine later revisions.
+- one bounded objective and owned files or responsibility;
+- non-goals, read/write/network authority, and side effects;
+- acceptance evidence and verification ceiling;
+- resource/token guidance and stop condition; and
+- a warning that other agents may be editing the workspace and their changes
+  must not be reverted.
 
-Terra `medium` and `high` remain the evidence-seeking intermediate routes for
-ordinary scoped or latency-sensitive work. Terra `xhigh` and `max` are active
-only in the latency-insensitive long-horizon quota-first ladder after observable
-Luna failure. They trade elapsed time for lower Sol usage and are provisional
-until local accepted-task logs justify retention. Ordinary runs passively
-record Terra `use_mode=post_luna_failure` or `use_mode=direct_latency`; no
-perpetual, random, or duplicate paired A/B is allowed. The main may directly
-choose Terra only when it records a pre-observable, latency-sensitive, scoped,
-strong-oracle, recoverable, non-ambiguous predicate. Terra does not support an
-`ultra` route, and leaf `ultra` remains forbidden.
+Use a bounded Maker for implementation. Use a distinct-session Checker only
+when risk or the integration contract warrants independent evidence. Checker
+capability follows oracle shape and risk, not a blanket rule that it exceed the
+Maker. Main performs final integration acceptance.
 
-## Observable failure and review evidence
+If child creation, tools, or routing are rejected, preserve the same lock and
+try an in-scope authorized lane. Do not silently substitute another model,
+widen scope, ask the user to mutate unrelated workflow state, or report final
+BLOCKED while meaningful authorized work remains.
 
-Hidden reasoning is not visible. Classify failure only from observable
-evidence:
+## Optional deterministic helpers
 
-- test or acceptance failure;
-- contradiction with the packet or repository evidence;
-- missed constraint or scope violation;
-- truncation or context-limit evidence;
-- runtime or tool error; or
-- weak oracle or an ambiguity that prevents a trustworthy decision.
+The package dispatcher and audit utilities are optional, on-demand helpers.
+They do not activate this skill and are never host hooks. Use them only when a
+task needs their typed receipt, hard-cap, or audit behavior. Native child
+routing does not require a shell preflight.
 
-Do not invent a failure class from an unseen reasoning chain. Log an ambiguous
-observation before freezing a weak rule. Prefer an auditable observation to a
-confident rule unsupported by evidence.
+The typed dispatcher budget is `ceil(input_tokens / 4) + output_tokens`.
+This is a routing proxy, not a provider billing amount. Use it only for
+token-effective route evidence. Model-relative price factors are not
+cross-model currency; missing usage is unavailable, never zero.
 
-The resolved runtime home is `$CODEX_HOME` when it is set, otherwise
-`$HOME/.codex`; in a shell, set and export it before using it:
-`RUNTIME_HOME="${CODEX_HOME:-$HOME/.codex}"; export RUNTIME_HOME`. Never read or
-fall back outside it. Central
-append-only attempt records live at `$RUNTIME_HOME/state/model-routing/attempts.jsonl`;
-review records live at `$RUNTIME_HOME/state/model-routing/reviews/`. Every attempt record has a
-`pre_decision` or `post_result` type. Linked v0.3 records capture the declared
-main authority, policy and surface fingerprints, pre-selection rationale,
-observed result, exact effort/model escalation counts, execution completion,
-oracle verdict, and integration acceptance. A successful child process is not
-integration acceptance. Review failures, escalations, direct-Sol use, and
-model-price changes at the configured cadence. The dispatcher records package
-attempts automatically and the audit CLI auto-creates triggered reviews.
+The controller hook program is not part of this package. The installer removes
+legacy package-owned hook and trust entries while preserving foreign hooks.
 
-Each review file is a cumulative snapshot, not one independent task record.
-Its metadata states the trigger and covered pair count. The evaluation section
-separates model selection into `appropriate`, `underpowered`, `overpowered`,
-and `inconclusive`; cost into observed and unobserved attempts so unavailable
-tokens never look like observed zero; and quality into accepted, integrated,
-oracle, and failure outcomes. Evidence remains `insufficient_sample` until the
-configured 25 accepted-task cadence is met. Controller events are stored
-separately and health output aggregates activations, exact leaf decisions,
-authorized launches, exceptions, takeovers, and main-tool denials without
-returning prompts, tool inputs, session identifiers, or workspace paths.
+## Evidence, continuity, and completion
 
-When asked to validate model selection, route the bounded read-only analysis to
-an admitted leaf, then consult the model-routing attempts, cumulative reviews,
-and sanitized controller health before reporting a conclusion. Do not claim
-cost reduction or no quality loss when measurement coverage or the accepted
-sample is insufficient.
+Accept a leaf only from observable artifacts: changed files, test output,
+structured results, or bounded local evidence references. A child process exit
+is not integration acceptance. Record route fitness and quality only when the
+selected helper requires it; normal Native execution may report the evidence
+directly to main.
 
-When asked to turn local usage experience into a GitHub issue, read
-[references/CODEX-ISSUE-REPORT-PROMPT.md](references/CODEX-ISSUE-REPORT-PROMPT.md),
-then use the `issue-report` and `record-submission` commands from
-`scripts/model_routing_audit.py`. The formatter prints only allowlisted
-Markdown and never publishes or uploads the attempts ledger. A separate
-owner-only issue-state ledger keeps pending random Report IDs and submitted
-attempt fingerprints so later requests do not resend recorded history.
+Continuity is an optimization, not a mandatory preflight. For a fresh bounded
+task, do not reopen it, enumerate the package, or inspect optional continuity
+data. Reuse continuity only when the same objective demonstrably recurs and the
+bounded reuse is cheaper than reconstructing context. Never let continuity or
+another runtime's state expand authority.
 
-## Bounded continuity reuse
+Before the final answer:
 
-Continuity is an optimization, not a mandatory preflight. Consult
-[TOKEN_EFFICIENCY_CONTINUITY.md](TOKEN_EFFICIENCY_CONTINUITY.md) only when the
-task repeats a stable workspace/objective pair, the Objective Lock permits the
-state read, and a prior accepted route or evidence path is likely to replace
-material work. Skip continuity for a fresh one-shot task with complete
-acceptance evidence, or whenever the lookup would exceed the read scope or
-verification ceiling.
+1. Verify the terminal outcome with the smallest declared acceptance checks.
+2. Confirm every change stayed inside the Objective Lock.
+3. Confirm no package hook was installed or required.
+4. Stop immediately and report exact evidence, limitations, and any remaining
+   authorized work.
 
-When consultation is justified, export `RUNTIME_HOME` and run `python3
-"$RUNTIME_HOME/skills/adaptive-delegation/scripts/read_continuity.py"
---workspace "$WORKSPACE" --objective-key "$OBJECTIVE_KEY"` with exact values;
-it returns at most the latest three accepted matching records. Never `tail`,
-`grep`, or `cat` a continuity ledger. Reuse valid decisions and evidence paths
-unless newer direct evidence invalidates them, and do not reload unrelated raw
-logs. At acceptance or handoff, append one compact record only when the lock
-permits that state write and reuse is expected; the distinct-session Checker
-records when present, otherwise the sole verified executor. `token_budget` is
-optional/advisory; its absence preserves Native V2 eligibility and never
-triggers external rerouting.
+## Portable locations
 
-## Codex native routing and local admission evidence
-
-After delegation is chosen, prefer Native V2 through a verified fixed
-`agent_type`. Select the installed package role whose TOML fixes the exact Luna,
-Terra, or Sol leaf model and effort, pass the decision command's returned
-`launch_task_name` as the exact `task_name`, the matching `reasoning_effort`,
-and `fork_turns="none"`, and verify the role binding before creation. In this
-mode the chosen `agent_type` is the explicit model selection; omitting the
-optional `model` override is not leader-model inheritance.
-
-Inspect the live `collaboration.spawn_agent` schema and agent-type catalog
-before every route; do not reuse an old capability claim. The absence of a
-selected model from the optional `model` override enum does not reject a Native
-route when its allowlisted fixed `agent_type` exists. A surface that uses
-explicit model overrides instead must support `agent_type`, `model`,
-`reasoning_effort`, and
-`fork_turns="none"`. Both modes require the installed role TOML/launch binding,
-exact resolved role/model/effort allowlist, `desired=explicit=native_v2`, and
-locally validated runtime metadata. Before creation, require the bounded local
-sequence `pending_receipt -> native_spawn_gate -> child_creation_eligibility`;
-this is consistency evidence, not a clock-backed security proof.
-
-The package retains the typed direct dispatcher for isolated validation and
-non-controller compatibility, but an active controller does not admit a main
-shell command that constructs or runs that fallback. Native V2 is the enforced
-leaf surface for explicit controller sessions. If Native creation is rejected,
-record the observable admission failure and return to the main for another
-authorized lane or a truthful blocked result; do not silently substitute a
-model or bypass the controller through typed execution. A pre-creation
-rejection means no child and child token 0. Network defaults to off unless the
-packet explicitly permits it.
-
-A corrected or fallback launch envelope must canonically match the dispatched
-packet in full, including objective, scope, network, resource, budget, and
-routing fields. A matching dispatch identifier and route alone are insufficient.
-
-Use validated child session metadata/turn_context for the session, model, and
-effort. Hidden fields, hook `updatedInput`, and prompt text are not evidence.
-Model omission is valid only for a verified fixed-role selection; otherwise
-model omission and inheritance are not evidence. A mismatch cancels only that
-child and returns control to root.
-
-## Packets, truthful caps, and integration
-
-Every packet states the objective, required `non_goals`, owned mutable surfaces,
-acceptance evidence, verification ceiling, resource cap, token budget, stop
-condition, collision ownership, and side effects. Packets are narrow planning
-inputs, not proof of enforcement. For
-Native V2, caps are unavailable/planning/advisory unless trusted live parent
-monitoring exists; mark enforcement unavailable and never claim `parent_enforced` or
-`quantitative_caps_enforced` without that proof. The typed direct path may make
-those claims only when trusted parent monitoring proves them.
-
-The typed direct path enforces `token_budget` against cost-weighted usage:
-`ceil(input_tokens / 4) + output_tokens`. Codex `input_tokens` already includes
-cached input. Therefore the CLI's raw `tokens used` display can exceed this
-weighted budget without a cap violation. This is a routing proxy, not a provider
-billing amount.
-
-Every package-owned dispatcher packet also declares `main_authority` and a
-bounded `routing_audit`. The latter includes task/attempt identifiers, the
-stable decision timestamp, exact cumulative effort and model escalation
-counts, task/oracle/risk/selection enums, workspace and main-session identity,
-and the dispatch surface plus its SHA-256 schema fingerprint. Missing,
-malformed, or sensitive fields fail closed before child creation.
-
-When a hard token or resource cap is required, use the canonical typed direct
-Codex worker path with exact role binding, isolated runtime, network
-defaults, ledger semantics, `rollout_budget`, and trusted parent monitoring. A
-real cap stop preserves evidence, stops only that child, and returns to root
-for a narrower packet. Do not describe Native V2 caps as blanket hard-enforced.
-
-Completion is not integration. Child execution first records a dispatcher-
-captured terminal event. A separate `--finalize-integration` phase is the only
-path that reads an integration receipt. The receipt must match the exact packet
-digest, canonical Objective Lock version/digest, route/model/effort, child and
-rollout, terminal nonce/result/digest, captured output digest, declared
-worktree digest, verification checks, evidence artifact, and the
-package-declared `adaptive-sol-checker-medium` session. The Checker session
-must differ from both the child and the declared main session. Pre-created,
-stale, mutable, or mismatched evidence fails closed.
-
-The model-routing ledger appends `pre_decision` before execution. A failed
-execution closes that attempt immediately. A successful child remains pending
-with no `post_result` until integration finalization succeeds, at which point
-the accepted terminal result is appended. Within the same installed terminal,
-receipt, and audit schema, a failed receipt or pre-gate check stays pending for
-corrected finalization without rewriting history.
-
-Schema upgrades are an explicit cutover. Finalize v1 terminal/receipt and
-linked `0.2.0` pending attempts before updating. After updating, those pending
-chains remain readable evidence but are deliberately non-finalizable; never
-backfill or rewrite them. Re-execute the bounded work as a genuinely fresh
-chain with a new task ID, attempt index 1, dispatch ID, packet, v2 execution,
-v2 terminal/receipt, and linked `0.3.0` records.
-
-This is same-user local integrity checking, not a signature, remote
-attestation, or a separate security principal. A malicious process running as
-the same operating-system user can forge local files and session records. The
-main remains the final trusted authority and must not describe a local receipt
-as cryptographic proof.
-
-## Portable locations and GitHub deployment
+Resolve the runtime home from `$CODEX_HOME`, otherwise `~/.codex`.
 
 | Purpose | Location |
 | --- | --- |
-| Adaptive-delegation package | `$RUNTIME_HOME/skills/adaptive-delegation/` |
-| Policy source of truth | `$RUNTIME_HOME/skills/adaptive-delegation/config/model-routing.defaults.json` |
-| Package dispatcher | `$RUNTIME_HOME/scripts/adaptive_dispatch_attestation.py` |
-| Controller gate | `$RUNTIME_HOME/skills/adaptive-delegation/scripts/controller_gate.py` |
-| Controller events | `$RUNTIME_HOME/state/adaptive-delegation/controller/controller-events.jsonl` |
-| Controller reviews | `$RUNTIME_HOME/state/adaptive-delegation/controller/reviews/` |
-| Issue-publication prompt | `$RUNTIME_HOME/skills/adaptive-delegation/references/CODEX-ISSUE-REPORT-PROMPT.md` |
-| Model-routing attempts | `$RUNTIME_HOME/state/model-routing/attempts.jsonl` |
-| Model-routing reviews | `$RUNTIME_HOME/state/model-routing/reviews/` |
-| Issue-report duplicate state | `$RUNTIME_HOME/state/model-routing/issue-report-state.jsonl` |
-| Continuity ledger | `$RUNTIME_HOME/state/adaptive-delegation/continuity.jsonl` |
+| Skill | `$RUNTIME_HOME/skills/adaptive-delegation/` |
+| Policy | `$RUNTIME_HOME/skills/adaptive-delegation/config/model-routing.defaults.json` |
+| Roles | `$RUNTIME_HOME/agents/adaptive-*.toml` |
+| Optional dispatcher | `$RUNTIME_HOME/scripts/adaptive_dispatch_attestation.py` |
+| Local audit state | `$RUNTIME_HOME/state/adaptive-delegation/` |
 
-The standalone repository is the portable source for Codex deployment.
-Deployment fetches the repository and runs `python3 scripts/install.py`; see
-the canonical [installation documentation](https://github.com/ai-dev-methodologies/adaptive-delegation/blob/main/INSTALL.md).
-The installer copies only the allowlisted runtime package files, installs its
-package dispatcher, regenerates only package-declared role bindings, appends
-one controller handler to `UserPromptSubmit` and `PreToolUse`, and records their
-Codex trust hashes. It never installs a Stop handler and preserves unrelated
-hooks. Hook topology is loaded at process start, so verify controller behavior
-in a fresh Codex process after installation.
-
-Never copy authentication, logs, issue-report state, continuity data, or
-rollout/session data. Those files stay on the machine where they were created.
+Never copy or publish authentication, raw ledgers, continuity data, rollout
+records, or session state. Repository files are canonical; installed files are
+deployment targets. The installer manages only the skill, dispatcher, and
+package-declared roles. It installs no hooks and does not modify foreign hook
+owners.

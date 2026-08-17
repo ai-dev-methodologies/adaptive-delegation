@@ -1,6 +1,6 @@
 interface:
   display_name: "Adaptive Delegation"
   short_description: "Codex-only Objective-Locked delegation"
-  default_prompt: "Use $adaptive-delegation explicitly and keep the Sol/high-or-above main controller-only. Construct one portable terminal-outcome Objective Lock, record its digest and the exact package-fixed role/model/effort before each leaf launch, and deny main task execution unless a bounded evidence-backed non-delegable/weak-oracle/high-risk exception or exhausted-ladder takeover is recorded. Cost, task size, existing context, convenience, and latency never authorize direct main work. Select the Luna-first path from task shape, oracle, risk/ambiguity, latency, horizon, and recoverability; escalate only from observable evidence. Invoke an independent Checker only when oracle shape or risk requires it; main owns integration and final claims."
+  default_prompt: "Use $adaptive-delegation only when explicitly invoked. Install or require no hooks. Construct one portable terminal-outcome Objective Lock, select the exact package-fixed role/model/effort, and launch bounded native leaves directly. Keep every retry and escalation inside the lock, escalate only from observable evidence, use an independent Checker only when oracle shape or risk requires it, and let main own integration and final claims."
 policy:
   allow_implicit_invocation: false

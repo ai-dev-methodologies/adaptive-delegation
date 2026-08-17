@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import py_compile
@@ -107,7 +106,6 @@ def _validate_package(package: Path) -> list[Path]:
         package / "config" / "model-routing.defaults.json",
         package / "scripts" / DISPATCHER_NAME,
         package / "scripts" / CONTINUITY_READER_NAME,
-        package / "scripts" / CONTROLLER_GATE_NAME,
         package / "scripts" / "dispatch_policy.py",
         package / "scripts" / "model_routing_audit.py",
     ]
@@ -145,7 +143,6 @@ def _validate_package(package: Path) -> list[Path]:
         for name in (
             DISPATCHER_NAME,
             CONTINUITY_READER_NAME,
-            CONTROLLER_GATE_NAME,
             "dispatch_policy.py",
             "model_routing_audit.py",
         ):
@@ -248,15 +245,20 @@ def _is_managed_controller_command(existing: object, expected: str) -> bool:
     return (
         len(existing_parts) == 2
         and len(expected_parts) == 2
+        and re.fullmatch(r"python(?:3(?:\.\d+)?)?", Path(existing_parts[0]).name)
+        is not None
         and existing_parts[1] == expected_parts[1]
     )
 
 
-def _reconcile_controller_hooks(value: dict, command: str) -> dict:
+def _remove_controller_hooks(value: dict, command: str) -> dict:
+    """Remove only legacy hooks directly owned by this package."""
     updated = json.loads(json.dumps(value))
     hooks = updated["hooks"]
     for event in ("UserPromptSubmit", "PreToolUse"):
-        groups = hooks.get(event, [])
+        if event not in hooks:
+            continue
+        groups = hooks[event]
         if not isinstance(groups, list):
             raise InstallError(f"Codex hooks {event} entry must be a list")
         retained = []
@@ -271,10 +273,10 @@ def _reconcile_controller_hooks(value: dict, command: str) -> dict:
                     filtered.append(hook)
             if filtered:
                 retained.append({**group, "hooks": filtered})
-        retained.append(
-            {"hooks": [{"type": "command", "command": command}]}
-        )
-        hooks[event] = retained
+        if retained:
+            hooks[event] = retained
+        else:
+            hooks.pop(event, None)
     return updated
 
 
@@ -314,46 +316,6 @@ def _load_config_text(path: Path) -> str:
     return text
 
 
-def _controller_trust_entries(
-    hooks_document: dict, hooks_path: Path, command: str
-) -> list[tuple[str, str]]:
-    labels = {
-        "PreToolUse": "pre_tool_use",
-        "UserPromptSubmit": "user_prompt_submit",
-    }
-    entries: list[tuple[str, str]] = []
-    for event, label in labels.items():
-        for group_index, group in enumerate(hooks_document["hooks"].get(event, [])):
-            for hook_index, hook in enumerate(group.get("hooks", [])):
-                if hook.get("command") != command:
-                    continue
-                identity = {
-                    "event_name": label,
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": command,
-                            "timeout": hook.get("timeout", 600),
-                            "async": hook.get("async", False),
-                        }
-                    ],
-                }
-                if event == "PreToolUse" and group.get("matcher"):
-                    identity["matcher"] = group["matcher"]
-                canonical = json.dumps(
-                    identity,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-                key = f'{hooks_path}:{label}:{group_index}:{hook_index}'
-                entries.append((key, f"sha256:{digest}"))
-    if len(entries) != 2:
-        raise InstallError("controller hook trust entries could not be resolved exactly")
-    return sorted(entries)
-
-
 def _controller_trust_keys(
     hooks_document: dict, hooks_path: Path, command: str
 ) -> set[str]:
@@ -388,41 +350,18 @@ def _strip_exact_trust_tables(config_text: str, keys: set[str]) -> str:
     return result
 
 
-def _render_controller_trust(
-    config_text: str,
-    hooks_document: dict,
-    hooks_path: Path,
-    command: str,
-    stale_keys: set[str] | None = None,
-) -> str:
+def _remove_controller_trust(config_text: str, stale_keys: set[str]) -> str:
+    """Remove legacy adaptive trust without creating or changing foreign trust."""
     block_pattern = re.compile(
         rf"(?ms)^\s*{re.escape(CONTROLLER_TRUST_START)}\n.*?"
         rf"{re.escape(CONTROLLER_TRUST_END)}\s*\n?"
     )
     cleaned = block_pattern.sub("\n", config_text)
-    entries = _controller_trust_entries(hooks_document, hooks_path, command)
-    replacement_keys = {key for key, _ in entries}
-    cleaned = _strip_exact_trust_tables(
-        cleaned, replacement_keys | (stale_keys or set())
-    ).rstrip()
-    if not re.search(r"(?m)^\[hooks\.state\]\s*$", cleaned):
-        cleaned += ("\n\n" if cleaned else "") + "[hooks.state]"
-    rendered = [CONTROLLER_TRUST_START]
-    for key, digest in entries:
-        escaped_key = key.replace("\\", "\\\\").replace('"', '\\"')
-        rendered.extend(
-            [
-                f'[hooks.state."{escaped_key}"]',
-                f'trusted_hash = "{digest}"',
-                "",
-            ]
-        )
-    rendered.append(CONTROLLER_TRUST_END)
-    result = cleaned + "\n\n" + "\n".join(rendered) + "\n"
+    result = _strip_exact_trust_tables(cleaned, stale_keys)
     try:
         tomllib.loads(result)
     except tomllib.TOMLDecodeError as exc:
-        raise InstallError(f"controller hook trust would invalidate config.toml: {exc}") from exc
+        raise InstallError(f"controller hook trust cleanup would invalidate config.toml: {exc}") from exc
     return result
 
 
@@ -492,17 +431,16 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
     hooks_target = codex_home / "hooks.json"
     config_target = codex_home / "config.toml"
     controller_command = _controller_hook_command(target_skill)
-    original_hooks = _load_hooks(hooks_target)
+    hooks_exist = hooks_target.exists()
+    config_exists = config_target.exists()
+    original_hooks = _load_hooks(hooks_target) if hooks_exist else {"hooks": {}}
     stale_controller_trust_keys = _controller_trust_keys(
         original_hooks, hooks_target, controller_command
     )
-    reconciled_hooks = _reconcile_controller_hooks(original_hooks, controller_command)
-    reconciled_config = _render_controller_trust(
-        _load_config_text(config_target),
-        reconciled_hooks,
-        hooks_target,
-        controller_command,
-        stale_controller_trust_keys,
+    reconciled_hooks = _remove_controller_hooks(original_hooks, controller_command)
+    original_config = _load_config_text(config_target) if config_exists else ""
+    reconciled_config = _remove_controller_trust(
+        original_config, stale_controller_trust_keys
     )
     managed_roles = [role for role in role_paths if role.stem.startswith("adaptive-")]
     agent_targets = [codex_home / "agents" / role.name for role in managed_roles]
@@ -516,8 +454,7 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
     print(f"skill: {target_skill}")
     print(f"package version: {package_version}")
     print(f"dispatcher: {dispatcher_target}")
-    print(f"controller hooks: UserPromptSubmit, PreToolUse in {hooks_target}")
-    print(f"controller hook trust: {config_target}")
+    print("hooks: none installed; legacy adaptive hook entries are removed on update")
     print(f"role bindings: {len(agent_targets)} under {codex_home / 'agents'}")
     if dry_run:
         print("dry-run: validation passed; no files changed")
@@ -528,14 +465,18 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
     _ensure_directory(codex_home / "scripts")
     _ensure_directory(codex_home / "agents")
 
+    # Remove legacy ingress before replacing the package. If package deployment
+    # later fails, do not restore a global hook that can block unrelated work.
+    if hooks_exist and reconciled_hooks != original_hooks:
+        _atomic_json(reconciled_hooks, hooks_target)
+    if config_exists and reconciled_config != original_config:
+        _atomic_text(reconciled_config, config_target)
     _atomic_package(source, target_skill, runtime_paths)
     _atomic_file(
         target_skill / "scripts" / DISPATCHER_NAME,
         dispatcher_target,
         0o700,
     )
-    _atomic_json(reconciled_hooks, hooks_target)
-    _atomic_text(reconciled_config, config_target)
     for source_role, target_role in zip(managed_roles, agent_targets, strict=True):
         _atomic_file(target_skill / "roles" / source_role.name, target_role, 0o600)
     for obsolete_role in obsolete_role_targets:
@@ -545,9 +486,8 @@ def install(repo_root: Path, codex_home: Path, skills_root: Path, dry_run: bool)
         raise InstallError("dispatcher permission verification failed")
     print(
         "installed: package version "
-        f"{package_version}, dispatcher, controller hooks, and policy-matched role bindings"
+        f"{package_version}, dispatcher, no hooks, and policy-matched role bindings"
     )
-    print("Start a fresh Codex process before validating the installed controller hooks.")
 
 
 def main() -> int:

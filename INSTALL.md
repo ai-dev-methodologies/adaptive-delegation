@@ -100,7 +100,7 @@ targeted unittest passes, an adjacent intentional failure remains unchanged
 and failing, the fresh command exits zero, its output does not reference the
 user Codex home, and before/after fingerprints of the managed user installation
 surface match. The immutable fingerprint covers the installed skill, dispatcher,
-roles, hooks, and Codex config. Controller-only Native execution may append
+and roles. Native execution may append
 normal owner-only routing evidence under `state/`; runtime evidence is not an
 installation mutation and is evaluated by the audit tooling. Artifacts are
 removed by default; use `--keep-artifacts` only to retain
@@ -121,13 +121,11 @@ For a Codex home represented by `$CODEX_HOME`, installation manages:
 - `$CODEX_HOME/scripts/adaptive_dispatch_attestation.py` — the package
   dispatcher;
 - `$CODEX_HOME/agents/adaptive-*.toml` — exact package-declared Codex roles.
-- `$CODEX_HOME/hooks.json` — one preserved/idempotent controller handler under
-  `UserPromptSubmit` and one under `PreToolUse`; and
-- `$CODEX_HOME/config.toml` — trust hashes for those two controller handlers.
 
-The installer preserves unrelated hooks and trust entries. It never registers
-an adaptive-delegation Stop handler and does not replace the user's existing
-Stop owner.
+The installer registers no hooks. On update it removes only exact legacy
+adaptive `controller_gate.py` hook registrations and their matching trust
+entries. It preserves unrelated hooks, trust entries, and the user's Stop
+owner.
 
 The policy source of truth is
 `$CODEX_HOME/skills/adaptive-delegation/config/model-routing.defaults.json`.
@@ -203,10 +201,8 @@ python3 scripts/version_status.py
 
 Rerunning the installer is the supported repair and reinstall path.
 
-Hook configuration is loaded at process start. After an install or update,
-start a fresh Codex process before validating `$adaptive-delegation`; an
-already-running process may retain the previous hook topology even when the
-skill files are current.
+After an install or update, start a fresh Codex process so it discovers the
+updated skill text. Adaptive activation itself requires no hook topology.
 
 ## Roll back
 
@@ -254,10 +250,10 @@ required, inspect it before transfer.
 To report routing behavior, generate and manually inspect a sanitized summary
 as described in [`REPORTING.md`](REPORTING.md). Never upload a raw ledger.
 
-## Skill and controller visibility
+## Skill visibility
 
-Codex may detect skill text changes automatically, but controller hooks require
-a fresh process. After installation, open a new Codex process, invoke
-`$adaptive-delegation`, and confirm that the owner-only controller ledger is
-created under `$CODEX_HOME/state/adaptive-delegation/controller/` before using
-new review data as release evidence.
+After installation, open a new Codex process and invoke
+`$adaptive-delegation`. Confirm that the skill loads normally, launches no
+child before an Objective Lock exists, and adds no adaptive entry to
+`$CODEX_HOME/hooks.json`. Optional dispatcher evidence may be created only
+when that helper is explicitly used.

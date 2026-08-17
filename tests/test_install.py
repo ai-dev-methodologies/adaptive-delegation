@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import importlib.util
+import os
 import re
 import stat
 import subprocess
@@ -9,10 +11,19 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts" / "install.py"
+
+
+def load_installer_module():
+    spec = importlib.util.spec_from_file_location("adaptive_installer", INSTALLER)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class InstallerTests(unittest.TestCase):
@@ -89,7 +100,7 @@ class InstallerTests(unittest.TestCase):
                 source_version,
             )
             self.assertTrue((installed / "scripts" / "read_continuity.py").is_file())
-            self.assertTrue((installed / "scripts" / "controller_gate.py").is_file())
+            self.assertFalse((installed / "scripts" / "controller_gate.py").exists())
             self.assertTrue(
                 (installed / "references" / "CODEX-ISSUE-REPORT-PROMPT.md").is_file()
             )
@@ -116,30 +127,11 @@ class InstallerTests(unittest.TestCase):
             second = self.run_installer(codex_home)
             self.assertEqual(second.returncode, 0, second.stderr)
 
-            hooks = json.loads((codex_home / "hooks.json").read_text(encoding="utf-8"))[
-                "hooks"
-            ]
-            for event in ("UserPromptSubmit", "PreToolUse"):
-                commands = [
-                    hook["command"]
-                    for group in hooks[event]
-                    for hook in group.get("hooks", [])
-                    if "command" in hook
-                ]
-                controller_commands = [
-                    command for command in commands if "controller_gate.py" in command
-                ]
-                self.assertEqual(len(controller_commands), 1, (event, commands))
-            self.assertNotIn("Stop", hooks)
-            config = tomllib.loads(
-                (codex_home / "config.toml").read_text(encoding="utf-8")
-            )
-            trust = config["hooks"]["state"]
-            self.assertEqual(len(trust), 2)
-            self.assertTrue(any(":pre_tool_use:" in key for key in trust))
-            self.assertTrue(any(":user_prompt_submit:" in key for key in trust))
-            for item in trust.values():
-                self.assertRegex(item["trusted_hash"], r"^sha256:[0-9a-f]{64}$")
+            self.assertFalse((codex_home / "hooks.json").exists())
+            self.assertFalse((codex_home / "config.toml").exists())
+            self.assertNotIn("controller hooks", result.stdout)
+
+            self.assertFalse((codex_home / "state").exists())
 
     def test_update_removes_only_roles_managed_by_the_previous_package(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -220,7 +212,7 @@ class InstallerTests(unittest.TestCase):
             self.assertIn("no files changed", result.stdout)
             self.assertFalse(codex_home.exists())
 
-    def test_install_preserves_unrelated_hooks_and_does_not_add_stop_owner(self) -> None:
+    def test_install_removes_only_legacy_adaptive_hooks_and_preserves_foreign_hooks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             codex_home = Path(temporary) / ".codex"
             codex_home.mkdir(parents=True)
@@ -233,11 +225,27 @@ class InstallerTests(unittest.TestCase):
                 f"{codex_home}/skills/adaptive-delegation/scripts/controller_gate.py "
                 "--audit"
             )
+            two_token_foreign = (
+                "echo "
+                f"{codex_home.resolve()}/skills/adaptive-delegation/scripts/controller_gate.py"
+            )
+            managed_controller = (
+                f"{sys.executable} "
+                f"{codex_home.resolve()}/skills/adaptive-delegation/scripts/controller_gate.py"
+            )
             hooks_path.write_text(
                 json.dumps(
                     {
                         "hooks": {
                             "PreToolUse": [
+                                {
+                                    "hooks": [
+                                        {
+                                            "type": "command",
+                                            "command": managed_controller,
+                                        }
+                                    ],
+                                },
                                 {
                                     "matcher": "Read",
                                     "hooks": [
@@ -253,7 +261,15 @@ class InstallerTests(unittest.TestCase):
                                     "hooks": [
                                         {
                                             "type": "command",
+                                            "command": managed_controller,
+                                        },
+                                        {
+                                            "type": "command",
                                             "command": "preserve-prompt",
+                                        },
+                                        {
+                                            "type": "command",
+                                            "command": two_token_foreign,
                                         },
                                         {
                                             "type": "command",
@@ -286,7 +302,8 @@ class InstallerTests(unittest.TestCase):
             self.assertIn("preserve-pre-tool", serialized)
             self.assertIn("preserve-prompt", serialized)
             self.assertIn(foreign_wrapper, serialized)
-            self.assertEqual(serialized.count("controller_gate.py"), 3)
+            self.assertIn(two_token_foreign, serialized)
+            self.assertEqual(serialized.count("controller_gate.py"), 2)
             stop_commands = [
                 hook["command"]
                 for group in hooks["Stop"]
@@ -295,29 +312,89 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(stop_commands, ["single-stop-owner"])
             installed_config = (codex_home / "config.toml").read_text(encoding="utf-8")
             self.assertIn('model = "gpt-5.6-sol"', installed_config)
-            self.assertIn("adaptive-delegation-controller-trust:start", installed_config)
+            self.assertNotIn("adaptive-delegation-controller-trust:start", installed_config)
+            self.assertNotIn(str(hooks_path), installed_config)
 
-    def test_reinstall_replaces_unmarked_controller_trust_tables(self) -> None:
+    def test_update_removes_legacy_controller_trust_tables(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             codex_home = Path(temporary) / ".codex"
-            first = self.run_installer(codex_home)
-            self.assertEqual(first.returncode, 0, first.stderr)
+            codex_home.mkdir(parents=True)
             config_path = codex_home / "config.toml"
-            config_text = config_path.read_text(encoding="utf-8")
-            config_text = config_text.replace(
-                "# adaptive-delegation-controller-trust:start\n", ""
-            ).replace("# adaptive-delegation-controller-trust:end\n", "")
-            config_path.write_text(config_text, encoding="utf-8")
+            hooks_path = codex_home / "hooks.json"
+            managed_controller = (
+                f"{sys.executable} "
+                f"{codex_home.resolve()}/skills/adaptive-delegation/scripts/controller_gate.py"
+            )
+            hooks_path.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": managed_controller}]}]}}), encoding="utf-8")
+            legacy_key = f"{codex_home.resolve() / 'hooks.json'}:pre_tool_use:0:0"
+            config_path.write_text(
+                'model = "gpt-5.6-sol"\n\n[hooks.state]\n'
+                f'[hooks.state."{legacy_key}"]\ntrusted_hash = "sha256:{"0" * 64}"\n\n'
+                '[hooks.state."foreign"]\nenabled = true\n',
+                encoding="utf-8",
+            )
 
             second = self.run_installer(codex_home)
 
             self.assertEqual(second.returncode, 0, second.stderr)
             parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
-            trust = parsed["hooks"]["state"]
-            controller_keys = [
-                key for key in trust if str(codex_home / "hooks.json") in key
-            ]
-            self.assertEqual(len(controller_keys), 2)
+            self.assertEqual(parsed["model"], "gpt-5.6-sol")
+            self.assertNotIn(legacy_key, parsed.get("hooks", {}).get("state", {}))
+            self.assertEqual(parsed["hooks"]["state"]["foreign"], {"enabled": True})
+
+    def test_no_adaptive_artifact_preserves_hook_and_config_bytes_and_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            codex_home = Path(temporary) / ".codex"
+            codex_home.mkdir()
+            hooks_path = codex_home / "hooks.json"
+            config_path = codex_home / "config.toml"
+            hooks_path.write_text(
+                '{"owner":"foreign","hooks":{"Stop":[{"hooks":[{"type":"command","command":"foreign-stop"}]}]}}\n',
+                encoding="utf-8",
+            )
+            config_path.write_text(
+                'model = "gpt-5.6-sol"\n[hooks.state."foreign"]\nenabled = true\n',
+                encoding="utf-8",
+            )
+            hooks_path.chmod(0o640)
+            config_path.chmod(0o600)
+            before = {
+                path: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
+                for path in (hooks_path, config_path)
+            }
+
+            result = self.run_installer(codex_home)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for path, expected in before.items():
+                self.assertEqual(
+                    (path.read_bytes(), stat.S_IMODE(path.stat().st_mode)), expected
+                )
+
+    def test_legacy_hook_cleanup_is_not_rolled_back_when_package_install_fails(self) -> None:
+        module = load_installer_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            codex_home = (Path(temporary) / ".codex").resolve()
+            codex_home.mkdir()
+            hooks_path = codex_home / "hooks.json"
+            command = (
+                f"{sys.executable} "
+                f"{codex_home}/skills/adaptive-delegation/scripts/controller_gate.py"
+            )
+            hooks_path.write_text(
+                json.dumps({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": command}]}]}}),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(
+                module, "_atomic_package", side_effect=RuntimeError("injected failure")
+            ):
+                with self.assertRaisesRegex(RuntimeError, "injected failure"):
+                    module.install(ROOT, codex_home, codex_home / "skills", False)
+
+            self.assertNotIn(
+                "controller_gate.py", hooks_path.read_text(encoding="utf-8")
+            )
 
     def test_docs_define_weighted_budget_and_portable_trigger_contract(self) -> None:
         skill = (ROOT / "adaptive-delegation" / "SKILL.md").read_text(

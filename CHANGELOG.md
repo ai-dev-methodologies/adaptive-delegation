@@ -14,6 +14,18 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.8.0] - 2026-08-15
+
+- Removed adaptive-delegation from the global hook chain. Explicit activation
+  now uses normal Codex skill loading and direct verified native-role routing,
+  with no dependency on OMX, Ultragoal, Ultracode, or host workflow state.
+- Changed installation to create no hook or trust configuration and to remove
+  only exact legacy adaptive hook/trust entries before package replacement,
+  preserving foreign hooks, wrappers, Stop owners, and configuration.
+- Removed the controller hook program and its hook-contract tests. The
+  dispatcher and audit CLIs remain optional helpers and are not activation
+  gates; historical controller records remain readable aggregate evidence.
+
 ## [0.7.11] - 2026-08-13
 
 - Kept one activation and immutable Objective Lock across accepted Maker,

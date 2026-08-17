@@ -1,5 +1,13 @@
 # Model Routing Policy
 
+## Activation boundary
+
+Routing policy applies only after normal Codex skill loading for a prompt whose
+first non-whitespace token is `$adaptive-delegation`. The package installs and
+requires no hook, creates no global activation state, and never reads another
+workflow's state. Missing authority metadata and non-prefix mentions launch no
+child. Diagnostic CLIs are not activation continuations.
+
 This is the policy reference for the Codex-only `adaptive-delegation` skill
 and its Codex native subagents. Claude Code is unsupported.
 
@@ -155,33 +163,14 @@ recoverability, and non-ambiguity. Terra has no `ultra` route.
 
 Prefer Native routing by choosing the installed fixed `agent_type` for the
 selected Luna, Terra, or Sol leaf route, verifying its TOML model/effort binding,
-passing the controller decision's exact `launch_task_name` as `task_name`, the
-same effort, and `fork_turns="none"`, and validating local runtime model/effort
-metadata. Native `PreToolUse` receives an opaque child message, so this issued
-task name binds the launch to the recorded Objective Lock decision without
-claiming message decryption. Child tool hooks reuse the parent session id; the
-controller binds the one child turn whose private rollout metadata matches the
-issued task name, role, parent, and start turn after that exact spawn while
-continuing to deny the main and foreign turns. A missing or unusable hook
-transcript path triggers only a bounded recent owner-local rollout search and
-requires one exact match. A resumed child may rebind a new turn only within
-the already bound transcript. If native admission creates no child, the
-evidence-bound `admission-failure` transition records `path_blocked` and
-releases the launch only when no matching rollout or child binding exists.
-An accepted leaf result does not end the Objective Lock by itself. Required
-Maker, Checker, and evidence-backed main-only lanes for the same terminal
-outcome continue under the same activation ID and immutable digest; only the
-path-local launch binding is replaced by the next decision. Before any
-decision, an accidental activation may use the pre-decision `cancel`
-transition, which closes enforcement without claiming terminal completion or
-blockage. Controller CLI calls from a non-current main turn remain denied and
-are diagnosed as turn-binding failures rather than malformed flag shapes. A
-new or previously closed controller accepts `activate` only when its exact
-session, workspace, model, effort, and main-turn binding match the current hook
-context, so stale activation cannot create or replace state. A nonempty
-`PreToolUse` model or effort must equal the command declaration. When the hook
-omits either field, the exact Sol/high-or-above command value remains declared
-current-session context rather than cryptographic runtime proof.
+passing an explicit task name, the same effort, and `fork_turns="none"`, and
+validating local runtime model/effort metadata. Put the complete Objective Lock
+in the child message. The package installs no native hook and does not bind or
+deny foreign turns. If native admission creates no child, treat it as an
+observable path-local failure and return control to main without claiming
+execution. An accepted leaf result does not end the Objective Lock when a
+declared Checker or integration lane is still required; those lanes preserve
+the same immutable lock and replace only the path envelope.
 The role selection is an
 explicit model choice. The selected model need not appear in the optional
 `model` override enum, so its absence there is not evidence that the fixed

@@ -1,10 +1,10 @@
 # Trigger Examples
 
 This file documents intended activation boundaries for the
-`adaptive-delegation` skill. Activation is explicit and opt-in, but the request
-does not need to begin with a command. The Sol/high-or-above main interprets an
-actionable request anywhere in the current turn and explicitly starts the
-controller. The skill is Codex-only and routes Codex native subagents.
+`adaptive-delegation` skill. Activation is explicit and opt-in: the current
+prompt must begin with `$adaptive-delegation`. Codex loads it through the normal
+skill mechanism; the package installs and requires no hook. The skill is
+Codex-only and routes Codex native subagents.
 
 ## Positive actionable examples
 
@@ -13,26 +13,22 @@ controller. The skill is Codex-only and routes Codex native subagents.
 - `$adaptive-delegation use token-efficient delegation for the independent check.`
 - `$adaptive-delegation apply Luna-first delegation with effort-first escalation.`
 - `$adaptive-delegation: continue the preceding task; scope: update the bounded parser and run its targeted tests.`
-- `Continue the current task and use adaptive-delegation for the independent implementation slices.`
-- `For the remaining review, apply adaptive-delegation and report model cost evidence.`
+- `$adaptive-delegation continue the current task with bounded implementation slices.`
 
-All forms are valid mid-conversation opt-ins. The `$` directive is a
-deterministic shortcut, while natural prose is activated only after the main
-judges that it is an actionable request. Restating the bounded scope remains
-useful but is not a syntactic requirement.
+Only the prefix form activates. Restating the bounded scope remains useful.
 
 ## Actionable natural-language requests
 
 - "Use adaptive-delegation for this bounded transformation and preserve evidence."
 - "Please apply adaptive-delegation to the remaining verification task."
 
-These activate after main judgment. Generic cost-efficiency vocabulary without
-the capability name remains discovery-only.
+These do not activate; reinvoke with the prefix. Generic cost-efficiency
+vocabulary without the capability name remains discovery-only.
 
 ## Localized discovery vocabulary
 
 Localized vocabulary is declared in the skill frontmatter for discovery only.
-It does not activate the controller. Keep this reference file in English so it
+It does not activate the skill. Keep this reference file in English so it
 remains portable across environments.
 
 ## Negative boundaries

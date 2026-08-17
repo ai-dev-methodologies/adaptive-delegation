@@ -8,7 +8,7 @@ executable sources of truth when this explanation differs from runtime code.
 
 | Role | Responsibility | Invocation point | May change scope or route? |
 | --- | --- | --- | --- |
-| Main authority | Interpret intent, build the Objective Lock, classify each bounded slice, select routes, orchestrate leaves, integrate returned evidence, decide retry/escalation/takeover, and make the final claim. | An actionable `adaptive-delegation` request anywhere in the conversation requires `gpt-5.6-sol` at `high` or above. The main, not a prompt-position matcher, decides whether the mention requests activation. | Main direct work requires a recorded evidence-backed exception such as `context_bound_microtask` or `non_delegable_authority`, or exhausted-ladder takeover. Generic convenience is insufficient. |
+| Main authority | Build the Objective Lock, classify each bounded slice, select routes, orchestrate leaves, integrate returned evidence, decide retry/escalation/takeover, and make the final claim. | Normal skill loading for a `$adaptive-delegation`-prefixed prompt with declared `gpt-5.6-sol` at `high` or above. The package installs no hook; non-prefix mentions do not activate. | Main direct work requires a bounded authority or context justification, or exhausted-ladder takeover. Generic convenience is insufficient. |
 | Maker leaf | Perform one bounded implementation, transformation, lookup, or other owned change. | Main launches the exact package role selected by the task-class ladder. | No. It reports evidence and returns control to main. |
 | Checker leaf | Independently test declared acceptance evidence without owning the Maker's change. | Main uses a distinct session when risk warrants independent checking. Package-owned integration finalization specifically requires `adaptive-sol-checker-medium` as the receipt issuer. | No. Checker routes do not join or alter the Maker escalation ladder. |
 | Final verifier | No separate package role exists. | Not invoked as an additional mandatory stage. | Not applicable. Checker supplies independent leaf evidence; main owns final integration acceptance and stopping. |
@@ -26,7 +26,7 @@ flowchart TD
     U[Explicit adaptive-delegation request] --> M[Sol high-or-above main controller]
     M --> G{Declared main-authority gate passes?}
     G -- No --> S0[Stop: no child launched]
-    G -- Metadata omitted --> D[Controller declaration required;<br/>task tools denied]
+    G -- Metadata omitted --> D[Stop before child launch;<br/>report authority mismatch]
     D --> G
     G -- Yes --> L[Construct Objective Lock v3 and digest]
     L --> C[Main classifies one bounded slice]
@@ -80,11 +80,10 @@ failure may advance to the next configured Maker route. A model or effort
 change never gives the Maker authority to reinterpret intent, broaden scope,
 or add verification.
 
-The installed `PreToolUse` controller admits only the exact recorded
-`agent_type`, model, reasoning effort, `fork_turns="none"`, and Objective Lock
-digest. A mismatch denies the launch and records aggregate-only controller
-evidence. After authorization, the main remains restricted to control-plane
-operations until it records another allowed controller transition.
+Main launches only the verified `agent_type`, model, reasoning effort,
+`fork_turns="none"`, and Objective Lock packet selected for the lane. A routing
+mismatch cancels only that child launch and returns control to main. No package
+hook blocks unrelated main or host-runtime operations.
 
 ## When Checker is invoked
 

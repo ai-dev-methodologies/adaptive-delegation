@@ -16,7 +16,6 @@ STATIC_RUNTIME_PATHS = (
     "config/model-routing.defaults.json",
     "references/CODEX-ISSUE-REPORT-PROMPT.md",
     "scripts/adaptive_dispatch_attestation.py",
-    "scripts/controller_gate.py",
     "scripts/dispatch_policy.py",
     "scripts/model_routing_audit.py",
     "scripts/read_continuity.py",

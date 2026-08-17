@@ -3,9 +3,9 @@
 
 This is a release-quality gate, not a security boundary: a same-user process can
 always bypass filesystem checks. It is supported on current POSIX macOS/Linux
-systems with Python 3.11 and a working ``codex`` executable. Controller-only
-Native execution may append normal owner-only runtime audit evidence; that
-state is deliberately outside the immutable installation fingerprint.
+systems with Python 3.11 and a working ``codex`` executable. Native execution
+may append normal owner-only runtime audit evidence; that state is deliberately
+outside the immutable installation fingerprint.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import shutil
 import stat
 import subprocess
@@ -150,89 +149,6 @@ def derive_parent_session_id(output: str) -> str:
     return sessions[0]
 
 
-def controller_state_path(candidate_home: Path, session_id: str, fixture: Path) -> Path:
-    material = f"{session_id}\0{fixture.resolve()}".encode("utf-8")
-    key = hashlib.sha256(material).hexdigest()
-    return (
-        candidate_home
-        / "state"
-        / "adaptive-delegation"
-        / "controller"
-        / f"state-{key}.json"
-    )
-
-
-def validate_controller_lifecycle(
-    candidate_home: Path, fixture: Path, session_id: str
-) -> dict:
-    state_path = controller_state_path(candidate_home, session_id, fixture)
-    try:
-        state = read_json_object(state_path)
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
-        raise ValueError(f"controller state is unavailable or invalid: {exc}") from exc
-    workspace = str(fixture.resolve())
-    planned = state.get("planned_launch")
-    exact_planned = {
-        "agent_type": "adaptive-luna-maker-high",
-        "model": "gpt-5.6-luna",
-        "reasoning_effort": "high",
-        "fork_turns": "none",
-    }
-    if not isinstance(planned, dict) or any(
-        planned.get(key) != expected for key, expected in exact_planned.items()
-    ) or not isinstance(planned.get("task_name"), str) or re.fullmatch(
-        r"adaptive_[0-9a-f]{64}", planned["task_name"]
-    ) is None:
-        raise ValueError(f"controller planned launch is not exact: {planned!r}")
-    if not (
-        state.get("schema_version") == "1"
-        and state.get("session_id") == session_id
-        and state.get("workspace") == workspace
-        and state.get("phase") == "closed"
-        and state.get("terminal_status") == "complete"
-        and state.get("last_outcome") == "accepted"
-        and state.get("last_integration_accepted") is True
-    ):
-        raise ValueError("controller did not close with an accepted integrated leaf result")
-    digest = state.get("objective_lock_digest")
-    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
-        raise ValueError("controller Objective Lock digest is invalid")
-    activation_id = state.get("activation_id")
-    if not isinstance(activation_id, str) or re.fullmatch(
-        r"[0-9a-f]{64}", activation_id
-    ) is None:
-        raise ValueError("controller activation identity is invalid")
-    ledger = state_path.parent / "controller-events.jsonl"
-    ledger_rows = read_jsonl(ledger)
-    if any(
-        row.get("schema_version") != "1"
-        or row.get("session_id") != session_id
-        or row.get("workspace") != workspace
-        or row.get("activation_id") != activation_id
-        for row in ledger_rows
-    ):
-        raise ValueError("controller ledger contains foreign or malformed lifecycle evidence")
-    rows = ledger_rows
-    required = ["delegation_decision", "leaf_launch_authorized", "leaf_result_recorded", "controller_closed"]
-    selected = [row for row in rows if row.get("event_type") in required]
-    if [row.get("event_type") for row in selected] != required:
-        raise ValueError("controller lifecycle is incomplete or duplicated")
-    decision, launch, result, close = selected
-    if not (
-        decision.get("decision") == "leaf_required"
-        and decision.get("planned_launch") == planned
-        and launch.get("planned_launch") == planned
-        and result.get("planned_launch") == planned
-        and all(row.get("objective_lock_digest") == digest for row in selected)
-        and result.get("outcome") == "accepted"
-        and result.get("quality_verdict") == "pass"
-        and result.get("integration_accepted") is True
-        and close.get("terminal_status") == "complete"
-    ):
-        raise ValueError("controller lifecycle evidence does not match the closed state")
-    return planned
-
-
 def _exec_command_from_input(value: object) -> str | None:
     if not isinstance(value, str):
         return None
@@ -244,7 +160,7 @@ def _exec_command_from_input(value: object) -> str | None:
 
 
 def validate_child_rollout(
-    candidate_home: Path, fixture: Path, session_id: str, planned: dict
+    candidate_home: Path, fixture: Path, session_id: str
 ) -> None:
     sessions = candidate_home / "sessions"
     if sessions.is_symlink() or not sessions.is_dir():
@@ -265,7 +181,9 @@ def validate_child_rollout(
     source = metadata.get("source") if isinstance(metadata, dict) else None
     subagent = source.get("subagent") if isinstance(source, dict) else None
     spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
-    expected_path = f"/root/{planned['task_name']}"
+    expected_role = "adaptive-luna-maker-high"
+    expected_task = "adaptive_hook_free_dogfood"
+    expected_path = f"/root/{expected_task}"
     if not (
         isinstance(metadata, dict)
         and isinstance(spawn, dict)
@@ -273,10 +191,10 @@ def validate_child_rollout(
         and metadata.get("parent_thread_id") == session_id
         and metadata.get("cwd") == str(fixture.resolve())
         and metadata.get("thread_source") == "subagent"
-        and metadata.get("agent_role") == planned["agent_type"]
+        and metadata.get("agent_role") == expected_role
         and metadata.get("agent_path") == expected_path
         and spawn.get("parent_thread_id") == session_id
-        and spawn.get("agent_role") == planned["agent_type"]
+        and spawn.get("agent_role") == expected_role
         and spawn.get("agent_path") == expected_path
     ):
         raise ValueError("child rollout metadata does not match the authorized launch")
@@ -296,17 +214,11 @@ def validate_child_rollout(
     if not any(
         isinstance(context, dict)
         and context.get("turn_id") == task_turn
-        and context.get("model") == planned["model"]
-        and context.get("effort") == planned["reasoning_effort"]
+        and context.get("model") == "gpt-5.6-luna"
+        and context.get("effort") == "high"
         for context in contexts
     ):
         raise ValueError("child rollout model or effort does not match the authorized launch")
-    state = read_json_object(controller_state_path(candidate_home, session_id, fixture))
-    bound_turn = state.get("child_turn_id")
-    bound_transcript = state.get("child_transcript_path")
-    if bound_turn is not None or bound_transcript is not None:
-        if bound_turn != task_turn or bound_transcript != str(resolved):
-            raise ValueError("controller child binding does not match the rollout")
     calls: dict[str, str] = {}
     outputs: dict[str, object] = {}
     all_unittests: list[str] = []
@@ -398,28 +310,6 @@ def preflight_violations(commands: list[str]) -> list[str]:
     return violations
 
 
-def _split_simple_shell_command(command: str) -> list[str] | None:
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return None
-    shell_names = {"bash", "sh", "zsh"}
-    if tokens and Path(tokens[0]).name in shell_names:
-        if len(tokens) != 3 or tokens[1] != "-lc":
-            return None
-        try:
-            tokens = shlex.split(tokens[2])
-        except ValueError:
-            return None
-        if (
-            len(tokens) >= 2
-            and Path(tokens[0]).name in shell_names
-            and tokens[1] in {"-c", "-lc"}
-        ):
-            return None
-    return tokens
-
-
 def product_work_violations(commands: list[str]) -> list[str]:
     """Reject main-session commands that edit or verify the fixture product."""
     markers = ("target.py", TARGET_TEST.lower())
@@ -428,35 +318,20 @@ def product_work_violations(commands: list[str]) -> list[str]:
         normalized = command.lower()
         if not any(marker in normalized for marker in markers):
             continue
-        tokens = _split_simple_shell_command(command)
-        if tokens is None:
-            violations.append(command)
-            continue
-        if any(token in {"&&", "||", ";", "|"} for token in tokens):
-            violations.append(command)
-            continue
-        controller_index = next(
-            (
-                index
-                for index, token in enumerate(tokens)
-                if token.endswith("controller_gate.py")
-            ),
-            None,
-        )
-        if (
-            controller_index is None
-            or controller_index + 1 >= len(tokens)
-            or tokens[controller_index + 1] not in {"result", "close"}
-        ):
-            violations.append(command)
-            continue
-        if any(
-            any(marker in token.lower() for marker in markers)
-            and (index == 0 or tokens[index - 1] != "--evidence-ref")
-            for index, token in enumerate(tokens)
-        ):
-            violations.append(command)
+        violations.append(command)
     return violations
+
+
+def validate_hook_free_candidate(candidate_home: Path, commands: list[str]) -> None:
+    if (candidate_home / "skills" / "adaptive-delegation" / "scripts" / "controller_gate.py").exists():
+        raise ValueError("candidate installed the removed controller hook program")
+    if (candidate_home / "state" / "adaptive-delegation" / "controller").exists():
+        raise ValueError("candidate created forbidden controller state")
+    hooks = candidate_home / "hooks.json"
+    if hooks.exists() and "adaptive-delegation" in hooks.read_text(encoding="utf-8"):
+        raise ValueError("candidate registered an adaptive hook")
+    if any("controller_gate.py" in command for command in commands):
+        raise ValueError("fresh main executed a removed controller command")
 
 
 def run(command: list[str], cwd: Path, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -528,6 +403,9 @@ Non-goals: do not modify tests, inspect the adjacent failure, refactor unrelated
 code, or add documentation or speculative robustness.
 Acceptance evidence: run exactly `python3 -m unittest -v test_target.TargetTests.test_normalizes_whitespace_and_case`.
 Verification ceiling: do not run broad tests, inspect unrelated files, or perform cleanup.
+Launch exactly one native child with agent_type `adaptive-luna-maker-high`,
+reasoning effort `high`, fork_turns `none`, and task_name
+`adaptive_hook_free_dogfood`. The child alone edits and verifies target.py.
 After sufficient evidence exists, do not perform additional reviews, repeated
 validation, repository-wide analysis, or optional model consultations.
 Stop condition: when that exact command passes and `git diff -- target.py` shows only the requested change, stop.
@@ -590,11 +468,11 @@ Final evidence line (required exactly): The exact requested unittest passed (Ran
             )
         try:
             session_id = derive_parent_session_id(output)
-            planned = validate_controller_lifecycle(candidate_home, fixture, session_id)
-            validate_child_rollout(candidate_home, fixture, session_id, planned)
+            validate_hook_free_candidate(candidate_home, completed_commands)
+            validate_child_rollout(candidate_home, fixture, session_id)
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
             return checked_result(
-                failed(f"fresh controller/child evidence is invalid: {exc}"),
+                failed(f"fresh hook-free child evidence is invalid: {exc}"),
                 user_codex_home,
                 before,
             )
