@@ -208,6 +208,8 @@ class ModelRoutingAuditTests(unittest.TestCase):
         event.update(
             {
                 "schema_version": "0.3.0",
+                "main_model": policy["required_model"],
+                "main_reasoning_effort": policy["strategy"]["main_authority"]["reasoning_effort"],
                 "objective_lock_version": audit.CURRENT_OBJECTIVE_LOCK_VERSION,
                 "objective_lock_digest": "c" * 64,
                 "policy_id": policy["policy_id"],
@@ -239,6 +241,8 @@ class ModelRoutingAuditTests(unittest.TestCase):
         event.update(
             {
                 "schema_version": pre["schema_version"],
+                "main_model": pre["main_model"],
+                "main_reasoning_effort": pre["main_reasoning_effort"],
                 "objective_lock_version": pre["objective_lock_version"],
                 "objective_lock_digest": pre["objective_lock_digest"],
                 "policy_id": pre["policy_id"],
@@ -800,7 +804,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
             "objective-lock-main",
             task_id,
             index=2,
-            route_id="main_takeover_sol_ultra",
+            route_id="main_takeover_astra_max",
         )
         takeover["planned_model_escalations"] = 1
         takeover["objective_lock_digest"] = "d" * 64
@@ -1624,7 +1628,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
             "weak-oracle-main",
             task_id,
             index=2,
-            route_id="main_takeover_sol_ultra",
+            route_id="main_takeover_astra_max",
         )
         takeover["planned_model_escalations"] = 1
         takeover["rationale"].update(
@@ -1667,7 +1671,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
             "raise-model-main",
             wrong_task,
             index=2,
-            route_id="main_takeover_sol_ultra",
+            route_id="main_takeover_astra_max",
         )
         invalid_main["planned_model_escalations"] = 1
         invalid_main["rationale"].update(
@@ -1691,7 +1695,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
         main_pre = self.current_pre(
             "main-repeat-first",
             main_task,
-            route_id="main_takeover_sol_ultra",
+            route_id="main_takeover_astra_max",
         )
         main_pre["rationale"].update(
             task_class="weak_oracle_ambiguous_high_risk_or_long_contract",
@@ -1718,7 +1722,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
             "main-repeat-second",
             main_task,
             index=2,
-            route_id="main_takeover_sol_ultra",
+            route_id="main_takeover_astra_max",
         )
         repeated_main["rationale"].update(
             task_class="weak_oracle_ambiguous_high_risk_or_long_contract",
@@ -1755,7 +1759,7 @@ class ModelRoutingAuditTests(unittest.TestCase):
             "non-weak-main",
             skip_task,
             index=2,
-            route_id="main_takeover_sol_ultra",
+            route_id="main_takeover_astra_max",
         )
         skipped_main["planned_model_escalations"] = 1
         skipped_main["rationale"]["prior_failure_class"] = "capability_ceiling"
@@ -1993,6 +1997,20 @@ class ModelRoutingAuditTests(unittest.TestCase):
                 auto_review=False,
                 idempotent=True,
             )
+
+    def test_current_audit_requires_astra_main_but_preserves_sol_history(self):
+        for model, effort in (("gpt-5.6-sol", "ultra"), ("gpt-6-astra", "ultra"), ("gpt-6-astra", "medium")):
+            with self.subTest(model=model, effort=effort):
+                pre = self.current_pre("main-admission", "main-admission")
+                pre.update(main_model=model, main_reasoning_effort=effort)
+                audit.validate_event(pre)  # An attempted launch is not admission.
+                event = self.current_post("main-admission", "main-admission")
+                event.update(main_model=model, main_reasoning_effort=effort)
+                with self.assertRaisesRegex(audit.AuditError, "main authority"):
+                    audit.validate_event(event)
+        audit.validate_event(self.current_pre("astra-valid", "astra-valid"))
+        audit.validate_event(self.linked_pre("sol-history", "sol-history"))
+        audit.validate_event(self.linked_post("sol-history", "sol-history"))
 
     def test_review_reports_linked_coverage_and_grouping(self):
         self.record("linked-one-pre.json", self.linked_pre("linked-one", "task-one"))

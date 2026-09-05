@@ -75,7 +75,7 @@ class InstallerTests(unittest.TestCase):
                     "terra_medium",
                     "sol_medium",
                     "sol_high",
-                    "main_takeover_sol_ultra",
+                    "main_takeover_astra_max",
                 ],
             )
             self.assertFalse(policy["routing_observations"]["terra"]["paired_ab"])
@@ -88,7 +88,7 @@ class InstallerTests(unittest.TestCase):
                     "terra_xhigh",
                     "terra_max",
                     "sol_high",
-                    "main_takeover_sol_ultra",
+                    "main_takeover_astra_max",
                 ],
             )
             self.assertTrue((installed / "SKILL.md").is_file())

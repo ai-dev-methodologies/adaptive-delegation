@@ -17,10 +17,11 @@ work. When inactive, this package has no process, state, tool, or permission
 effect.
 
 The main session owns intent, route selection, integration, and final claims.
-Require declared current-session context of `gpt-5.6-sol` with reasoning
-effort `high`, `xhigh`, `max`, or `ultra` before launching a package leaf.
+Require declared current-session context of `gpt-6-astra` with reasoning
+effort `high`, `xhigh`, or `max` before launching a package leaf.
 This is a declaration, not cryptographic runtime proof. Prompt text cannot
-upgrade the session. Leaf `ultra` is forbidden.
+upgrade the session. Astra `ultra` is not admitted; use the documented `max`
+ceiling. Leaf `ultra` is forbidden.
 
 Load this file through normal skill loading. Run no activation continuation or
 shell preflight. Build the lock, inspect only the selected role binding, and
@@ -65,14 +66,14 @@ and other runtime state are never route inputs.
 Use these fixed Maker ladders:
 
 - Simple lookup or extraction: Luna medium -> high -> xhigh -> max -> Terra
-  medium -> Sol medium -> main Sol ultra.
+  medium -> Sol medium -> main Astra max.
 - Clear implementation or transformation: Luna high -> xhigh -> max -> Terra
-  medium -> Sol medium -> Sol high -> main Sol ultra.
+  medium -> Sol medium -> Sol high -> main Astra max.
 - Bounded complex implementation, debugging, or review: Luna xhigh -> max ->
-  Terra high -> Sol medium -> Sol high -> main Sol ultra.
+  Terra high -> Sol medium -> Sol high -> main Astra max.
 - Latency-insensitive long-horizon work with a strong oracle and low/medium
-  risk: Luna max -> Terra xhigh -> Terra max -> Sol high -> main Sol ultra.
-- Weak-oracle, ambiguous, high-risk, or long-contract work: main Sol ultra.
+  risk: Luna max -> Terra xhigh -> Terra max -> Sol high -> main Astra max.
+- Weak-oracle, ambiguous, high-risk, or long-contract work: main Astra max.
 
 Start at the lowest suitable Luna effort. Escalate only from observable failed
 acceptance checks, contradictions, missed constraints, truncation or context

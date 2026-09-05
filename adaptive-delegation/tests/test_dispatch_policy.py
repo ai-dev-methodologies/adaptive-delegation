@@ -15,9 +15,10 @@ import dispatch_policy as contract  # noqa: E402
 
 ROLE = "adaptive-luna-maker-xhigh"
 WARNING = (
-    "Adaptive Delegation blocked: main authority must be gpt-5.6-sol with "
-    "reasoning_effort >= high. Current: {current}. No child was launched. Switch "
-    "the main session to gpt-5.6-sol/high or above, then invoke "
+    "Adaptive Delegation blocked: main authority must be gpt-6-astra with "
+    "reasoning_effort one of high, xhigh, max. Current: {current}. No child was "
+    "launched. Switch the main session to gpt-6-astra with reasoning_effort one "
+    "of high, xhigh, max, then invoke "
     "$adaptive-delegation again."
 )
 
@@ -27,7 +28,7 @@ def load_policy():
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def authority(model="gpt-5.6-sol", effort="high"):
+def authority(model="gpt-6-astra", effort="high"):
     return {"model": model, "reasoning_effort": effort}
 
 
@@ -64,17 +65,27 @@ class DispatchPolicyTests(unittest.TestCase):
         self.assert_blocked(
             authority(effort="medium"),
             "MAIN_AUTHORITY_BELOW_MINIMUM",
-            "gpt-5.6-sol/medium",
+            "gpt-6-astra/medium",
         )
 
-    def test_high_xhigh_max_and_ultra_pass(self):
-        for effort in ("high", "xhigh", "max", "ultra"):
+    def test_high_xhigh_and_max_pass_but_ultra_and_sol_are_rejected(self):
+        for effort in ("high", "xhigh", "max"):
             with self.subTest(effort=effort):
                 decision = contract.enforce_main_authority(
                     load_policy(), ROLE, authority(effort=effort)
                 )
                 self.assertTrue(decision.enforced)
                 self.assertEqual(decision.reasoning_effort, effort)
+        self.assert_blocked(
+            authority("gpt-5.6-sol", "high"),
+            "MAIN_AUTHORITY_UNKNOWN",
+            "gpt-5.6-sol/high",
+        )
+        self.assert_blocked(
+            authority("gpt-6-astra", "ultra"),
+            "MAIN_AUTHORITY_EFFORT_NOT_ALLOWED",
+            "gpt-6-astra/ultra",
+        )
 
     def test_non_package_role_bypasses_authority_settings(self):
         policy = {"role_bindings": {ROLE: {}}}
@@ -93,7 +104,7 @@ class DispatchPolicyTests(unittest.TestCase):
         self.assertTrue(decision.enforced)
         with self.assertRaises(contract.PolicyContractError) as caught:
             contract.enforce_main_authority(policy, ROLE, authority("test-main", "high"))
-        self.assertIn("test-main/xhigh", caught.exception.warning)
+        self.assertIn("test-main with reasoning_effort one of xhigh, max", caught.exception.warning)
 
     def test_policy_consistency_is_fail_closed(self):
         for field, value in (
@@ -192,7 +203,7 @@ class DispatchPolicyTests(unittest.TestCase):
                         (route["authority"], route["model"], route["reasoning_effort"])
                         if route["authority"] == "main"
                         else (route["role"], route["model"], route["reasoning_effort"]),
-                        ("main", "gpt-5.6-sol", "ultra")
+                        ("main", "gpt-6-astra", "max")
                         if route["authority"] == "main"
                         else (
                             route["role"],
@@ -228,11 +239,11 @@ class DispatchPolicyTests(unittest.TestCase):
                         following,
                     )
 
-    def test_main_sol_classifies_each_slice_and_goal_labels_do_not_select_routes(self):
+    def test_main_astra_classifies_each_slice_and_goal_labels_do_not_select_routes(self):
         policy = load_policy()
         decision = policy["decision_contract"]
         self.assertEqual(decision["owner"], "main_session")
-        self.assertEqual(policy["required_model"], "gpt-5.6-sol")
+        self.assertEqual(policy["required_model"], "gpt-6-astra")
         self.assertEqual(policy["minimum_reasoning_effort"], "high")
         self.assertTrue(decision["classify_before_child_launch"])
         self.assertTrue(decision["classify_each_bounded_slice"])
@@ -259,6 +270,39 @@ class DispatchPolicyTests(unittest.TestCase):
             contract.validate_policy_routes(label_selected)
         self.assertEqual(caught.exception.code, "DECISION_CONTRACT_INVALID")
 
+    def test_astra_is_main_only_and_main_routes_require_max(self):
+        policy = load_policy()
+        self.assertTrue(policy["model_capabilities"]["gpt-6-astra"]["main_only"])
+
+        invalid_leaf = copy.deepcopy(policy)
+        invalid_leaf["role_bindings"]["adaptive-astra-maker-high"] = {
+            "model_tier": "frontier-tier",
+            "model": "gpt-6-astra",
+            "reasoning_effort": "high",
+        }
+        invalid_leaf["route_bindings"]["astra_leaf"] = {
+            "authority": "leaf",
+            "role": "adaptive-astra-maker-high",
+            "model": "gpt-6-astra",
+            "model_tier": "frontier-tier",
+            "reasoning_effort": "high",
+        }
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.validate_policy_routes(invalid_leaf)
+        self.assertEqual(caught.exception.code, "MAIN_MODEL_LEAF_FORBIDDEN")
+
+        invalid_main = copy.deepcopy(policy)
+        invalid_main["route_bindings"]["main_takeover_astra_high"] = {
+            "authority": "main",
+            "role": "main-authority",
+            "model": "gpt-6-astra",
+            "model_tier": "frontier-tier",
+            "reasoning_effort": "high",
+        }
+        with self.assertRaises(contract.PolicyContractError) as caught:
+            contract.validate_policy_routes(invalid_main)
+        self.assertEqual(caught.exception.code, "MAIN_ROUTE_INVALID")
+
     def test_route_transition_contract_rejects_jumps_and_illegal_overrides(self):
         policy = load_policy()
         self.assertEqual(
@@ -280,7 +324,7 @@ class DispatchPolicyTests(unittest.TestCase):
                 next_action="main_takeover",
                 failure_class="weak_oracle",
             ),
-            "main_takeover_sol_ultra",
+            "main_takeover_astra_max",
         )
         with self.assertRaises(contract.PolicyContractError) as caught:
             contract.route_transition(
@@ -310,7 +354,7 @@ class DispatchPolicyTests(unittest.TestCase):
                 "terra_xhigh",
                 "terra_max",
                 "sol_high",
-                "main_takeover_sol_ultra",
+                "main_takeover_astra_max",
             ],
         )
         self.assertIn("terra_max", policy["route_bindings"])

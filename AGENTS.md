@@ -17,8 +17,8 @@ subagents. Claude Code is unsupported.
   failures, and fixed Sol `medium`/`high` leaf roles. Bounded work starts on
   the lowest suitable Luna effort and escalates only from observable evidence.
 - The main-authority gate is fail-closed over declared current-session context:
-  the main must be `gpt-5.6-sol` with reasoning effort `high`, `xhigh`, `max`,
-  or `ultra` before delegation can launch. Do not describe this declaration as
+  the main must be `gpt-6-astra` with reasoning effort `high`, `xhigh`,
+  or `max` before delegation can launch. Do not describe this declaration as
   cryptographic runtime proof.
 - Native leaves use fixed, package-declared role bindings in
   `adaptive-delegation/roles/*.toml`. Verify the bound model and effort; do not
@@ -27,7 +27,7 @@ subagents. Claude Code is unsupported.
 - Terra `xhigh`/`max` are restricted to the latency-insensitive long-horizon
   quota-first ladder after observable Luna failure. No dormant or paired A/B
   bindings are retained; ordinary Terra use is passively logged by use mode.
-- Leaf `ultra` is forbidden. `gpt-5.6-sol/ultra` is a main-authoritative
+- Leaf `ultra` is forbidden. `gpt-6-astra/max` is a main-authoritative
   takeover only.
 - Model or reasoning escalation changes capability, never authority or scope.
   Every child, Checker, retry, escalation, and main takeover inherits the exact

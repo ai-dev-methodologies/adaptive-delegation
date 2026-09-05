@@ -4,7 +4,7 @@
 delegation through Codex native subagents. Claude Code and other agent runtimes
 are unsupported execution targets.
 
-Current installable package version: `0.8.1`.
+Current installable package version: `0.9.0`.
 
 `adaptive-delegation` is explicit and opt-in, and it is hook-free. A prompt activates it
 only when its first non-whitespace token is `$adaptive-delegation`. It installs
@@ -16,7 +16,7 @@ language mentions do not activate it.
 The main session is controller-only in the sense that it owns intent, routing,
 integration, and final claims; this is a skill procedure, not a global hook
 that blocks tools. The package requires declared current-session context of
-`gpt-5.6-sol` with `high`, `xhigh`, `max`, or `ultra` effort before a package
+`gpt-6-astra` with `high`, `xhigh`, or `max` effort before a package
 leaf launches. Prompt text cannot upgrade the session. Model or reasoning escalation changes capability, not authority or scope.
 
 The central rule is one portable Objective Lock per terminal outcome. It binds
@@ -45,11 +45,11 @@ The fixed ladders are:
 
 | Work shape | Fixed path |
 | --- | --- |
-| Simple lookup or extraction | `Luna medium -> Luna high -> Luna xhigh -> Luna max -> Terra medium -> Sol medium -> main Sol ultra` |
-| Clear implementation or transformation | `Luna high -> Luna xhigh -> Luna max -> Terra medium -> Sol medium -> Sol high -> main Sol ultra` |
-| Bounded complex implementation or verification | `Luna xhigh -> Luna max -> Terra high -> Sol medium -> Sol high -> main Sol ultra` |
-| Latency-insensitive long horizon with a strong oracle and low/medium risk | `Luna max -> Terra xhigh -> Terra max -> Sol high -> main Sol ultra` |
-| Weak oracle, ambiguous/high risk, or long contract | `main Sol ultra` |
+| Simple lookup or extraction | `Luna medium -> Luna high -> Luna xhigh -> Luna max -> Terra medium -> Sol medium -> main Astra max` |
+| Clear implementation or transformation | `Luna high -> Luna xhigh -> Luna max -> Terra medium -> Sol medium -> Sol high -> main Astra max` |
+| Bounded complex implementation or verification | `Luna xhigh -> Luna max -> Terra high -> Sol medium -> Sol high -> main Astra max` |
+| Latency-insensitive long horizon with a strong oracle and low/medium risk | `Luna max -> Terra xhigh -> Terra max -> Sol high -> main Astra max` |
+| Weak oracle, ambiguous/high risk, or long contract | `main Astra max` |
 
 Workflow labels such as `Goal` or `Ultragoal` are not route inputs. The detailed
 runtime contract is in
@@ -76,8 +76,8 @@ Skill activation and reasoning effort are separate decisions.
 
 | Request | Result |
 | --- | --- |
-| `$adaptive-delegation ...` | Explicit activation; declared Sol/high-or-above main applies the routing policy. |
-| `$adaptive-delegation ... Use ultra reasoning.` | Activates the skill, but `ultra` applies only if the main is already configured for it. Prompt text cannot upgrade the session. Leaf `ultra` remains forbidden. |
+| `$adaptive-delegation ...` | Explicit activation; declared Astra at high, xhigh, or max main applies the routing policy. |
+| `$adaptive-delegation ... Use ultra reasoning.` | Activates the skill, but Astra main accepts only `high`, `xhigh`, or `max`; `ultra` is rejected. Prompt text cannot upgrade the session. Leaf `ultra` remains forbidden. |
 | A bare mention or quotation | Does not activate this skill by itself. |
 | A localized token-efficiency phrase | Discovery only; does not activate this skill by itself. |
 | `Use ultra reasoning.` | Does not activate this skill by itself. |
@@ -158,8 +158,8 @@ No hook topology restart is required by this package.
 `main` is the only deployable branch. Review this README against the skill,
 policy, version, installer, and reporting behavior before merging.
 
-1. On the feature branch, run `scripts/release_preflight.py --mode pre-merge`,
-   then push the reviewed commit.
+1. Push the reviewed feature-branch commit, then run
+   `scripts/release_preflight.py --mode pre-merge`.
 2. Merge through the repository's authorized workflow.
 3. Fetch the remote and run `scripts/release_preflight.py --mode deploy` from a
    clean `main` or detached checkout exactly matching `origin/main`.

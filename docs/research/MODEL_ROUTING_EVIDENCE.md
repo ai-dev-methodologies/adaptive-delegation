@@ -9,6 +9,47 @@ skill: `SKILL.md` stays short enough for runtime use, while this dossier keeps
 the sources, measurements, conflicts, confidence, and review triggers needed
 to change policy later.
 
+## 2026-09-05 Astra main migration
+
+The user selected GPT-6 Astra as main authority. Repository HEAD and GitHub
+`main` both resolved to `7f1793d07707e027ef433b691a1166a2707932f7` (version
+`0.8.1`) before this change; no release tags were advertised. Version `0.9.0`
+requires `gpt-6-astra` main at `high`, `xhigh`, or `max`, with `Astra/max`
+final takeover. Fixed Luna/Terra/Sol leaf bindings and evidence thresholds
+are unchanged. Older decisions and benchmark sections below are historical
+evidence, not the current main model contract.
+
+The [Astra model page](https://developers.openai.com/api/docs/models/gpt-6-astra)
+was opened on 2026-09-05. It lists `low`, `medium`, `high`, `xhigh`, and `max`
+efforts, 1,050,000 context tokens, and 128,000 output tokens. The portable
+policy uses documented `max`; host-specific `ultra` support is not assumed.
+The [migration guide](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra)
+requires Responses for API tool calls. This package routes native Codex roles
+and does not implement an API endpoint migration.
+
+Current standard input/output USD per million tokens, checked against model
+pages: Astra $10/$50; [Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol)
+$4/$20 (promotion available at least through 2026-11-21);
+[Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra) $2/$12;
+[Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna) $0.20/$1.20.
+The July Sol-equivalent scalar remains a historical routing proxy, not
+current billing. Current ratios depend on input/output mix; do not infer a
+common scalar or Codex quota conversion.
+
+The latest local review inspected was generated 2026-09-03T15:13:26.351632Z:
+two paired attempts, zero accepted tasks, and insufficient quality/selection
+samples. Neither Terra use mode had accepted calls. The latest attempt was
+not integration-accepted. These observations neither establish Astra
+performance nor justify changing the leaf ladder. Raw records remain local.
+
+Implementation envelope: main policy, route validation, audit recognition,
+corresponding tests, smoke configuration, and active docs. Non-goals: leaf
+replacements, global skill rewrites, deployment, and Git publication without
+explicit authorization. Acceptance: installer dry run, both required unittest
+suites, README/relative-link checks, and bounded independent review of the
+main/leaf boundary. Stop when these pass. Deterministic checks do not prove
+live model performance or switch the running session's model.
+
 ## Evidence precedence
 
 Use evidence in this order:
@@ -23,7 +64,7 @@ External evidence selects hypotheses; it never overrides a contrary local
 acceptance result. Before changing a route, read this dossier and the latest
 local audit review. Do not activate a model or effort from anecdotes alone.
 
-## Current decision
+## Historical decision (2026-08-03)
 
 - Default fresh bounded work to Luna and raise Luna effort before changing
   model tier.
@@ -39,7 +80,7 @@ local audit review. Do not activate a model or effort from anecdotes alone.
 - Run no random or perpetual paired A/B. Record ordinary Terra use as
   `post_luna_failure` or `direct_latency`, then review real accepted outcomes.
 
-## Cost, latency, and capability decision matrix
+## Historical cost, latency, and capability decision matrix (2026-08-03)
 
 The price factors below use the 2026-07-30 standard API rates and normalize
 both input and output prices to Sol. They are also the package's routing cost

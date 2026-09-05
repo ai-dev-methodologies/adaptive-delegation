@@ -14,6 +14,16 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.9.0] - 2026-09-05
+
+- Require declared GPT-6 Astra main authority at `high`, `xhigh`, or `max`,
+  with `Astra/max` final takeover. Old Sol main and Astra `ultra` declarations
+  are rejected; prompt text does not change the running model.
+- Preserve fixed Luna/Terra/Sol leaf roles and evidence-based escalation.
+- Update policy validation, audit model recognition, smoke configuration,
+  release checks, and documentation for the new main authority. Historical
+  Sol audit records remain readable.
+
 ## [0.8.1] - 2026-08-17
 
 - Removed the exact legacy direct-controller approval prefix from

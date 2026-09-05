@@ -248,7 +248,7 @@ class DispatcherGateTests(unittest.TestCase):
         authorized_lanes: list[str] | None = None,
         lane_id: str | None = None,
     ):
-        packet = self.packet(dispatch_id, "gpt-5.6-sol", "high")
+        packet = self.packet(dispatch_id, "gpt-6-astra", "high")
         packet["write_scope"] = ["read-only"] if write_scope is None else write_scope
         if authorized_lanes is not None:
             packet["authorized_lanes"] = authorized_lanes
@@ -394,7 +394,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_child_success_remains_pending_until_integration_finalization(self) -> None:
         result, ledger = self.run_packet(
-            self.packet("portable-success", "gpt-5.6-sol", "high")
+            self.packet("portable-success", "gpt-6-astra", "high")
         )
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertTrue(self.fake_log.is_file())
@@ -403,7 +403,7 @@ class DispatcherGateTests(unittest.TestCase):
         self.assertEqual(self.fake_log.read_text(encoding="utf-8"), "isolated")
 
     def test_execute_finalize_and_issue_report_records_acceptance(self) -> None:
-        packet = self.packet("finalized-success", "gpt-5.6-sol", "high")
+        packet = self.packet("finalized-success", "gpt-6-astra", "high")
         packet["write_scope"] = ["read-only"]
         result, model_ledger = self.run_packet(packet)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -516,7 +516,7 @@ class DispatcherGateTests(unittest.TestCase):
         )
 
     def test_weighted_budget_exhaustion_is_classified_for_same_route_retry(self) -> None:
-        packet = self.packet("portable-budget", "gpt-5.6-sol", "high")
+        packet = self.packet("portable-budget", "gpt-6-astra", "high")
         packet["token_budget"] = 3000
         (self.leaf_home / "fake-over-budget").write_text("1", encoding="utf-8")
 
@@ -546,7 +546,7 @@ class DispatcherGateTests(unittest.TestCase):
         )
 
         result, _ledger = self.run_packet(
-            self.packet("portable-isolated-environment", "gpt-5.6-sol", "high")
+            self.packet("portable-isolated-environment", "gpt-6-astra", "high")
         )
 
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -571,7 +571,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_typed_objective_binds_scope_and_stop_rules(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("typed-objective-lock", "gpt-5.6-sol", "high")
+        packet = self.packet("typed-objective-lock", "gpt-6-astra", "high")
 
         objective = module._typed_objective(packet)
 
@@ -602,7 +602,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_objective_lock_digest_is_route_independent_and_authority_sensitive(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("objective-lock-digest", "gpt-5.6-sol", "high")
+        packet = self.packet("objective-lock-digest", "gpt-6-astra", "high")
         digest = module._objective_lock_digest(packet)
         packet_digest = module._canonical_digest(packet)
 
@@ -648,7 +648,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_packet_requires_explicit_objective_lock_envelope(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("objective-lock-envelope", "gpt-5.6-sol", "high")
+        packet = self.packet("objective-lock-envelope", "gpt-6-astra", "high")
 
         for field in (
             "read_scope",
@@ -664,7 +664,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_terminal_outcome_is_bounded_when_explicit(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("terminal-outcome", "gpt-5.6-sol", "high")
+        packet = self.packet("terminal-outcome", "gpt-6-astra", "high")
         missing = json.loads(json.dumps(packet))
         missing.pop("terminal_outcome")
         self.assertEqual(
@@ -678,7 +678,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_non_goals_cannot_exclude_an_authorized_progression_lane(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("lane-conflict", "gpt-5.6-sol", "high")
+        packet = self.packet("lane-conflict", "gpt-6-astra", "high")
         packet["authorized_lanes"] = ["G009", "G010"]
         packet["lane_id"] = "G009"
         packet["non_goals"] = ["Do not continue G010 when G009 is blocked."]
@@ -686,7 +686,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_non_goals_require_a_nonempty_bounded_string_list(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("objective-lock-non-goals", "gpt-5.6-sol", "high")
+        packet = self.packet("objective-lock-non-goals", "gpt-6-astra", "high")
 
         empty = json.loads(json.dumps(packet))
         empty["non_goals"] = []
@@ -708,7 +708,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_intended_behavior_requires_bounded_text(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("intended-behavior-contract", "gpt-5.6-sol", "high")
+        packet = self.packet("intended-behavior-contract", "gpt-6-astra", "high")
 
         for value in (["behavior"], {"behavior": "text"}, True, 1):
             with self.subTest(value=value):
@@ -727,7 +727,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_packet_requires_typed_acceptance_evidence(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("acceptance-evidence-contract", "gpt-5.6-sol", "high")
+        packet = self.packet("acceptance-evidence-contract", "gpt-6-astra", "high")
 
         packet.pop("acceptance_evidence")
         self.assertEqual(
@@ -743,7 +743,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_packet_requires_nonempty_verification_ceiling(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("verification-ceiling-contract", "gpt-5.6-sol", "high")
+        packet = self.packet("verification-ceiling-contract", "gpt-6-astra", "high")
 
         packet.pop("verification_ceiling")
         self.assertEqual(
@@ -759,7 +759,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_protected_resume_requires_isolated_canonical_argv(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("protected-isolated-resume", "gpt-5.6-sol", "high")
+        packet = self.packet("protected-isolated-resume", "gpt-6-astra", "high")
         binding = module._role_binding(packet)
         self.assertIsNotNone(binding)
         session_id = str(uuid.uuid4())
@@ -1035,7 +1035,7 @@ class DispatcherGateTests(unittest.TestCase):
         load_receipt.assert_not_called()
 
     def test_pre_gate_finalization_failure_keeps_attempt_pending_for_retry(self) -> None:
-        packet = self.packet("finalize-precondition-retry", "gpt-5.6-sol", "high")
+        packet = self.packet("finalize-precondition-retry", "gpt-6-astra", "high")
         packet["write_scope"] = ["read-only"]
         result, model_ledger = self.run_packet(packet)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -1094,7 +1094,7 @@ class DispatcherGateTests(unittest.TestCase):
         )
 
     def test_finalize_argument_conflict_keeps_attempt_pending_for_retry(self) -> None:
-        packet = self.packet("finalize-argument-retry", "gpt-5.6-sol", "high")
+        packet = self.packet("finalize-argument-retry", "gpt-6-astra", "high")
         packet["write_scope"] = ["read-only"]
         result, model_ledger = self.run_packet(packet)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -1186,7 +1186,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_main_reads_packet_once_before_audit_and_dispatch(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("single-packet-read", "gpt-5.6-sol", "high")
+        packet = self.packet("single-packet-read", "gpt-6-astra", "high")
         packet_path = self.root / "single-packet-read.json"
         packet_path.write_text(json.dumps(packet), encoding="utf-8")
         packet_path.chmod(0o600)
@@ -1259,7 +1259,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_adaptive_audit_uses_explicit_escalated_route(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("explicit-escalation", "gpt-5.6-sol", "high")
+        packet = self.packet("explicit-escalation", "gpt-6-astra", "high")
         max_role = self.codex_home / "agents" / "adaptive-luna-maker-max.toml"
         packet.update(
             {
@@ -1309,7 +1309,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_adaptive_audit_rejects_escalation_without_explicit_route(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("missing-escalation", "gpt-5.6-sol", "high")
+        packet = self.packet("missing-escalation", "gpt-6-astra", "high")
         packet["routing_audit"].update(
             {
                 "attempt_index": 2,
@@ -1330,7 +1330,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_adaptive_audit_rejects_explicit_orphan_escalation(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("orphan-escalation", "gpt-5.6-sol", "high")
+        packet = self.packet("orphan-escalation", "gpt-6-astra", "high")
         packet["routing_audit"].update(
             {
                 "attempt_index": 2,
@@ -1411,7 +1411,7 @@ class DispatcherGateTests(unittest.TestCase):
         )
         legacy.chmod(0o600)
 
-        packet = self.packet("external-role", "gpt-5.6-sol", "high")
+        packet = self.packet("external-role", "gpt-6-astra", "high")
         packet.update(
             {
                 "agent_type": "external-role",
@@ -1445,7 +1445,7 @@ class DispatcherGateTests(unittest.TestCase):
         )
         override.chmod(0o600)
 
-        packet = self.packet("override-ignored", "gpt-5.6-sol", "high")
+        packet = self.packet("override-ignored", "gpt-6-astra", "high")
         binding = module._role_binding(packet)
         self.assertIsNotNone(binding)
         self.assertEqual(binding.model, "gpt-5.6-luna")
@@ -1522,7 +1522,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_schema_cutover_rejects_legacy_pending_chain_and_fresh_chain_finalizes(self) -> None:
         module = self.load_dispatcher_module()
-        legacy_packet = self.packet("legacy-pending-cutover", "gpt-5.6-sol", "high")
+        legacy_packet = self.packet("legacy-pending-cutover", "gpt-6-astra", "high")
         legacy_packet["write_scope"] = ["read-only"]
         legacy_model_ledger = self.root / "legacy-pending-routing.jsonl"
         legacy_pre = {
@@ -1621,7 +1621,7 @@ class DispatcherGateTests(unittest.TestCase):
         self.assertEqual(legacy_dispatch_ledger.read_bytes(), before_dispatch)
         self.assertEqual(legacy_model_ledger.read_bytes(), before_model)
 
-        fresh_packet = self.packet("fresh-after-cutover", "gpt-5.6-sol", "high")
+        fresh_packet = self.packet("fresh-after-cutover", "gpt-6-astra", "high")
         fresh_packet["write_scope"] = ["read-only"]
         fresh_packet_path = self.root / "fresh-after-cutover.json"
         fresh_packet_path.write_text(json.dumps(fresh_packet), encoding="utf-8")
@@ -1691,7 +1691,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_recovery_launch_is_bound_to_dispatched_packet_and_route(self) -> None:
         module = self.load_dispatcher_module()
-        primary = self.packet("bound-recovery", "gpt-5.6-sol", "high")
+        primary = self.packet("bound-recovery", "gpt-6-astra", "high")
         fallback = json.loads(json.dumps(primary))
         fallback_role = self.codex_home / "agents" / "adaptive-sol-maker-medium.toml"
         fallback.update(
@@ -1749,7 +1749,7 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_provenance_rejections_record_zero_child_rejected_shape(self) -> None:
         module = self.load_dispatcher_module()
-        packet = self.packet("provenance-zero-child", "gpt-5.6-sol", "high")
+        packet = self.packet("provenance-zero-child", "gpt-6-astra", "high")
         binding = module._role_binding(packet)
         self.assertIsNotNone(binding)
         session_id = str(uuid.uuid4())

@@ -1,20 +1,20 @@
 {
-  "schema_version": "0.5.0",
+  "schema_version": "0.6.0",
   "status": "provisional-evidence-seeking",
-  "policy_id": "adaptive-delegation-luna-terra-sol-v0.5",
+  "policy_id": "adaptive-delegation-luna-terra-sol-v0.6",
   "policy_source": "package-default",
   "policy_ssot": "package-default",
-  "required_model": "gpt-5.6-sol",
+  "required_model": "gpt-6-astra",
   "minimum_reasoning_effort": "high",
-  "allowed_main_efforts": ["high", "xhigh", "max", "ultra"],
+  "allowed_main_efforts": ["high", "xhigh", "max"],
   "enforcement_mode": "fail-closed-declared-context",
   "parent_model_mutation": false,
   "strategy": {
     "primary": "luna-first-terra-evidence-intermediate-then-sol-leaf",
     "leaf_ultra": "forbidden",
     "main_authority": {
-      "model": "gpt-5.6-sol",
-      "reasoning_effort": "ultra",
+      "model": "gpt-6-astra",
+      "reasoning_effort": "max",
       "plan_reasoning_effort": "xhigh"
     },
     "same_model_reasoning_retries_per_stage": 1,
@@ -60,6 +60,7 @@
     ]
   },
   "price_evidence": {
+    "reference_only": true,
     "kind": "official-api-token-price",
     "as_of": "2026-07-30",
     "source_url": "https://openai.com/index/advancing-the-price-performance-frontier-with-gpt-5-6/",
@@ -82,6 +83,31 @@
     },
     "cost_proxy_note": "Effort changes token use; compare accepted-task quality, latency, weighted tokens, and total Sol-equivalent cost rather than per-token price alone. Codex quota or credit units are not provider-token equivalents."
   },
+  "current_api_price_evidence": {
+    "kind": "official-api-token-price",
+    "as_of": "2026-09-05",
+    "currency": "USD",
+    "unit": "per-million-tokens",
+    "input_per_million": {
+      "gpt-6-astra": 10.0,
+      "gpt-5.6-sol": 4.0,
+      "gpt-5.6-terra": 2.0,
+      "gpt-5.6-luna": 0.2
+    },
+    "output_per_million": {
+      "gpt-6-astra": 50.0,
+      "gpt-5.6-sol": 20.0,
+      "gpt-5.6-terra": 12.0,
+      "gpt-5.6-luna": 1.2
+    },
+    "source_urls": {
+      "gpt-6-astra": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+      "gpt-5.6-sol": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+      "gpt-5.6-terra": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
+      "gpt-5.6-luna": "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+    },
+    "cost_proxy_note": "Current API prices are reported independently; no Astra-to-Sol-equivalent scalar is inferred."
+  },
   "model_capabilities": {
     "gpt-5.6-luna": {
       "model_tier": "spark-tier",
@@ -97,6 +123,12 @@
       "model_tier": "frontier-tier",
       "allowed_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
       "long_context_risk": "reference"
+    },
+    "gpt-6-astra": {
+      "model_tier": "frontier-tier",
+      "allowed_efforts": ["low", "medium", "high", "xhigh", "max"],
+      "long_context_risk": "reference",
+      "main_only": true
     }
   },
   "route_bindings": {
@@ -226,12 +258,12 @@
       "model_tier": "standard-tier",
       "reasoning_effort": "max"
     },
-    "main_takeover_sol_ultra": {
+    "main_takeover_astra_max": {
       "authority": "main",
       "role": "main-authority",
-      "model": "gpt-5.6-sol",
+      "model": "gpt-6-astra",
       "model_tier": "frontier-tier",
-      "reasoning_effort": "ultra"
+      "reasoning_effort": "max"
     }
   },
   "task_defaults": {
@@ -239,7 +271,7 @@
     "clear_implementation_or_transformation": "luna_high",
     "bounded_complex_implementation_or_verification": "luna_xhigh",
     "latency_insensitive_long_horizon_with_strong_oracle": "luna_max",
-    "weak_oracle_ambiguous_high_risk_or_long_contract": "main_takeover_sol_ultra"
+    "weak_oracle_ambiguous_high_risk_or_long_contract": "main_takeover_astra_max"
   },
   "escalation_ladders": {
     "simple_lookup_or_extraction": [
@@ -249,7 +281,7 @@
       "luna_max",
       "terra_medium",
       "sol_medium",
-      "main_takeover_sol_ultra"
+      "main_takeover_astra_max"
     ],
     "clear_implementation_or_transformation": [
       "luna_high",
@@ -258,7 +290,7 @@
       "terra_medium",
       "sol_medium",
       "sol_high",
-      "main_takeover_sol_ultra"
+      "main_takeover_astra_max"
     ],
     "bounded_complex_implementation_or_verification": [
       "luna_xhigh",
@@ -266,7 +298,7 @@
       "terra_high",
       "sol_medium",
       "sol_high",
-      "main_takeover_sol_ultra"
+      "main_takeover_astra_max"
     ],
     "bounded_complex_with_strong_oracle": [
       "luna_xhigh",
@@ -274,17 +306,17 @@
       "terra_high",
       "sol_medium",
       "sol_high",
-      "main_takeover_sol_ultra"
+      "main_takeover_astra_max"
     ],
     "latency_insensitive_long_horizon_with_strong_oracle": [
       "luna_max",
       "terra_xhigh",
       "terra_max",
       "sol_high",
-      "main_takeover_sol_ultra"
+      "main_takeover_astra_max"
     ],
     "weak_oracle_ambiguous_high_risk_or_long_contract": [
-      "main_takeover_sol_ultra"
+      "main_takeover_astra_max"
     ]
   },
   "routing_observations": {

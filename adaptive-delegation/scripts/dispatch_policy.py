@@ -23,6 +23,8 @@ MAX_ATTEMPT_INDEX = 1_000_000
 MAX_TEXT_LENGTH = 256
 MAX_ID_LENGTH = 128
 SUPPORTED_ENFORCEMENT_MODE = "fail-closed-declared-context"
+MAIN_AUTHORITY_MODEL = "gpt-6-astra"
+MAIN_AUTHORITY_ROUTE = ("main-authority", MAIN_AUTHORITY_MODEL, "max")
 TASK_CLASSES = frozenset({
     "simple_lookup_or_extraction", "clear_implementation_or_transformation",
     "bounded_complex_implementation_or_verification",
@@ -107,7 +109,7 @@ def validate_policy_routes(policy: Mapping[str, Any]) -> dict[str, dict[str, str
     if policy.get("decision_contract") != expected_decision:
         raise _route_error(
             "DECISION_CONTRACT_INVALID",
-            "main Sol/high-or-above must classify each bounded slice before launch; labels alone cannot select a route",
+            "main Astra at high, xhigh, or max must classify each bounded slice before launch; labels alone cannot select a route",
         )
     roles = policy.get("role_bindings")
     routes = policy.get("route_bindings")
@@ -121,6 +123,8 @@ def validate_policy_routes(policy: Mapping[str, Any]) -> dict[str, dict[str, str
         if any(not isinstance(value, str) or not value for value in fields.values()):
             raise _route_error("ROUTE_BINDING_INCOMPLETE", f"route {route_id!r} is incomplete")
         if fields["authority"] == "leaf":
+            if fields["model"] == MAIN_AUTHORITY_MODEL:
+                raise _route_error("MAIN_MODEL_LEAF_FORBIDDEN", f"main-only model {fields['model']!r} cannot be used by leaf route {route_id!r}")
             binding = roles.get(fields["role"])
             if not isinstance(binding, Mapping):
                 raise _route_error("ROUTE_ROLE_UNBOUND", f"route {route_id!r} has no package role")
@@ -129,8 +133,8 @@ def validate_policy_routes(policy: Mapping[str, Any]) -> dict[str, dict[str, str
             if any(binding.get(key) != fields[key] for key in ("model", "model_tier", "reasoning_effort")):
                 raise _route_error("ROUTE_ROLE_MISMATCH", f"route {route_id!r} disagrees with package role")
         elif fields["authority"] == "main":
-            if (fields["role"], fields["model"], fields["reasoning_effort"]) != ("main-authority", "gpt-5.6-sol", "ultra"):
-                raise _route_error("MAIN_ROUTE_INVALID", f"main route {route_id!r} is not Sol/Ultra takeover")
+            if (fields["role"], fields["model"], fields["reasoning_effort"]) != MAIN_AUTHORITY_ROUTE:
+                raise _route_error("MAIN_ROUTE_INVALID", f"main route {route_id!r} is not Astra/max takeover")
         else:
             raise _route_error("ROUTE_AUTHORITY_INVALID", f"route {route_id!r} has unknown authority")
         result[route_id] = fields
@@ -169,7 +173,7 @@ def validate_policy_routes(policy: Mapping[str, Any]) -> dict[str, dict[str, str
         "terra_xhigh",
         "terra_max",
         "sol_high",
-        "main_takeover_sol_ultra",
+        "main_takeover_astra_max",
     ]
     if quota_ladder != expected_quota_ladder:
         raise _route_error(
@@ -327,7 +331,8 @@ def _authority_value(authority: Any, field: str) -> str:
 
 
 def _warning(authority: Any, settings: Mapping[str, Any]) -> str:
-    return (f"Adaptive Delegation blocked: main authority must be {settings['required_model']} with reasoning_effort >= {settings['minimum_reasoning_effort']}. Current: {_authority_value(authority, 'model')}/{_authority_value(authority, 'reasoning_effort')}. No child was launched. Switch the main session to {settings['required_model']}/{settings['minimum_reasoning_effort']} or above, then invoke $adaptive-delegation again.")
+    allowed = ", ".join(settings["allowed_main_efforts"])
+    return (f"Adaptive Delegation blocked: main authority must be {settings['required_model']} with reasoning_effort one of {allowed}. Current: {_authority_value(authority, 'model')}/{_authority_value(authority, 'reasoning_effort')}. No child was launched. Switch the main session to {settings['required_model']} with reasoning_effort one of {allowed}, then invoke $adaptive-delegation again.")
 
 
 def enforce_main_authority(policy: Mapping[str, Any], role: str, main_authority: Mapping[str, Any] | None) -> AuthorityDecision:

@@ -72,7 +72,7 @@ CANONICAL_ISSUE_REPOSITORY = "ai-dev-methodologies/adaptive-delegation"
 MODE_FILE = 0o600
 MODE_DIRECTORY = 0o700
 
-MODELS = ("gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol")
+MODELS = ("gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra")
 MODEL_TIERS = ("spark-tier", "standard-tier", "frontier-tier")
 EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
 MAIN_MODELS = MODELS + ("unknown",)
@@ -679,6 +679,14 @@ def validate_event(event: Any) -> dict[str, Any]:
 
     policy = _load_policy()
     strict_current = _is_current_policy_event(event, policy)
+    # Rejected prelaunch attempts remain auditable; they cannot claim execution.
+    if strict_current and event["event_type"] == "post_result" and any(
+        event.get(field) for field in ("accepted", "execution_completed", "integration_accepted")
+    ) and (
+        event["main_model"] != policy.get("required_model")
+        or event["main_reasoning_effort"] not in policy.get("allowed_main_efforts", [])
+    ):
+        raise AuditError("main authority does not satisfy the current package policy")
     capabilities = policy.get("model_capabilities", {})
     if not isinstance(capabilities, dict):
         capabilities = {}

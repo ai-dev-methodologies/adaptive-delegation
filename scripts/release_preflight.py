@@ -48,6 +48,7 @@ def _route_label(route_id: str, bindings: dict[str, Any]) -> str:
         "gpt-5.6-luna": "Luna",
         "gpt-5.6-terra": "Terra",
         "gpt-5.6-sol": "Sol",
+        "gpt-6-astra": "Astra",
     }
     if model not in names or not isinstance(effort, str):
         raise PreflightError("policy route has an invalid model or effort")
@@ -68,6 +69,7 @@ def validate_readme_contract(
         "## Invocation and `ultra` reasoning behavior",
         "labels such as `Goal` or `Ultragoal` are not route inputs.",
         "Leaf `ultra` remains forbidden.",
+        "`gpt-6-astra` with `high`, `xhigh`, or `max` effort",
         "## Maintainer promotion and local deployment order",
         "scripts/release_preflight.py --mode pre-merge",
         "scripts/release_preflight.py --mode deploy",
@@ -82,7 +84,9 @@ def validate_readme_contract(
     if f"## [{version}]" not in changelog:
         raise PreflightError("CHANGELOG has no entry for VERSION")
     allowed_efforts = policy.get("allowed_main_efforts")
-    if allowed_efforts != ["high", "xhigh", "max", "ultra"]:
+    if policy.get("required_model") != "gpt-6-astra":
+        raise PreflightError("main authority model changed without README review")
+    if allowed_efforts != ["high", "xhigh", "max"]:
         raise PreflightError("main authority efforts changed without README review")
     bindings = policy.get("route_bindings")
     ladders = policy.get("escalation_ladders")

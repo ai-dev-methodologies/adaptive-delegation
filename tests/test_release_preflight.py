@@ -43,7 +43,7 @@ class ReleasePreflightTests(unittest.TestCase):
             self.readme, self.version, self.changelog, self.policy
         )
         self.assertEqual(result["version"], self.version)
-        self.assertEqual(result["main_efforts"], ["high", "xhigh", "max", "ultra"])
+        self.assertEqual(result["main_efforts"], ["high", "xhigh", "max"])
         self.assertGreaterEqual(result["unique_policy_ladders"], 5)
 
     def test_stale_version_or_ladder_fails_closed(self) -> None:
@@ -68,6 +68,22 @@ class ReleasePreflightTests(unittest.TestCase):
                 self.version,
                 self.changelog,
                 self.policy,
+            )
+
+    def test_stale_main_model_or_effort_fails_closed(self) -> None:
+        for stale in (
+            self.readme.replace("`gpt-6-astra`", "`gpt-5.6-sol`"),
+            self.readme.replace("`high`, `xhigh`, or `max` effort", "`ultra` effort"),
+        ):
+            with self.subTest(readme=stale[:80]):
+                with self.assertRaises(self.module.PreflightError):
+                    self.module.validate_readme_contract(
+                        stale, self.version, self.changelog, self.policy
+                    )
+        policy = dict(self.policy, required_model="gpt-5.6-sol")
+        with self.assertRaises(self.module.PreflightError):
+            self.module.validate_readme_contract(
+                self.readme, self.version, self.changelog, policy
             )
 
 

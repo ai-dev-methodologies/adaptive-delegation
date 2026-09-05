@@ -69,13 +69,13 @@ The qualitative starting point is the package's installed Codex role catalog:
 Luna handles clear bounded work, Terra `medium` and `high` are scoped or
 latency-sensitive post-Luna intermediates, Terra `xhigh` and `max` are
 quota-first long-horizon intermediates, Sol `medium` and `high` are bounded
-leaf escalations, and Sol `ultra` remains the authoritative main takeover. Effort is raised
+leaf escalations, and Astra `max` is the authoritative main takeover. Effort is raised
 before model tier when observable evidence supports that transition.
 These are package policy choices, not universal quality equivalence claims.
 The exact thresholds and ladders remain provisional hypotheses evaluated
 through local audit outcomes and acceptance oracles.
 
-As of 2026-08-02, [OpenAI's model guidance](https://developers.openai.com/api/docs/guides/latest-model)
+Historical family guidance (2026-08-02): [OpenAI's model guidance](https://developers.openai.com/api/docs/guides/latest-model)
 positions Sol for frontier capability, Terra for a balance of intelligence and
 cost, and Luna for efficient high-volume work. It recommends representative
 evaluation rather than a universal escalation ladder. A current
@@ -104,7 +104,7 @@ quality failure, followed by bounded Sol leaf escalation:
 | Clear implementation or transformation | `gpt-5.6-luna/high` |
 | Bounded complex implementation or verification | `gpt-5.6-luna/xhigh` |
 | Latency-insensitive long-horizon goal with strong oracle | `gpt-5.6-luna/max` |
-| Weak oracle, ambiguous/high-risk, or long contract | main-authoritative `gpt-5.6-sol/ultra` |
+| Weak oracle, ambiguous/high-risk, or long contract | main-authoritative `gpt-6-astra/max` |
 
 Effort is increased before changing model tier when the failure evidence is
 reasoning insufficiency and the task remains within the current model's
@@ -122,16 +122,16 @@ main-authority step. `raise_model` can never select that main-authority step.
 
 The configured ladders are:
 
-- Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> terra/medium -> sol/medium -> main-takeover sol/ultra`.
-- Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> terra/medium -> sol/medium -> sol/high -> main-takeover sol/ultra`.
-- Bounded complex implementation, debugging, or review: `luna/xhigh -> luna/max -> terra/high -> sol/medium -> sol/high -> main-takeover sol/ultra`.
-- Bounded complex work with a strong oracle: `luna/xhigh -> luna/max -> terra/high -> sol/medium -> sol/high -> main-takeover sol/ultra`.
-- Latency-insensitive long-horizon goal with a strong oracle: `luna/max -> terra/xhigh -> terra/max -> sol/high -> main-takeover sol/ultra`.
-- Weak-oracle, ambiguous/high-risk, or long-contract work: main-authoritative `sol/ultra` only.
+- Simple lookup or extraction: `luna/medium -> luna/high -> luna/xhigh -> luna/max -> terra/medium -> sol/medium -> main-takeover astra/max`.
+- Clear implementation or transformation: `luna/high -> luna/xhigh -> luna/max -> terra/medium -> sol/medium -> sol/high -> main-takeover astra/max`.
+- Bounded complex implementation, debugging, or review: `luna/xhigh -> luna/max -> terra/high -> sol/medium -> sol/high -> main-takeover astra/max`.
+- Bounded complex work with a strong oracle: `luna/xhigh -> luna/max -> terra/high -> sol/medium -> sol/high -> main-takeover astra/max`.
+- Latency-insensitive long-horizon goal with a strong oracle: `luna/max -> terra/xhigh -> terra/max -> sol/high -> main-takeover astra/max`.
+- Weak-oracle, ambiguous/high-risk, or long-contract work: main-authoritative `astra/max` only.
 
 The main may take over when the weak-oracle condition means a leaf cannot
 truthfully establish acceptance, or when the ladder reaches its takeover
-step. Main takeover is authoritative `gpt-5.6-sol/ultra`; a leaf may never use
+step. Main takeover is authoritative `gpt-6-astra/max`; a leaf may never use
 `ultra`. Fixed Sol `medium` and `high` leaf roles change capability only and do
 not inherit main authority.
 
@@ -143,13 +143,18 @@ escalation ladder.
 
 The package records
 [OpenAI's published API token prices](https://openai.com/index/advancing-the-price-performance-frontier-with-gpt-5-6/)
-as of 2026-07-30: Sol `$5/$30`, Terra `$2/$12`, and Luna `$0.2/$1.2` per
+as a historical 2026-07-30 reference: Sol `$5/$30`, Terra `$2/$12`, and Luna `$0.2/$1.2` per
 million input/output tokens. The routing cost proxy normalizes them to
 Sol-equivalent factors of `1.0`, `0.4`, and `0.04`. Model-relative price
 factors are never aggregated across models as if they were provider invoices;
 Codex quota or credit units are not provider-token equivalents. Effort can
 change token use and latency, so compare total cost per accepted task, not
 price per token alone.
+
+The separate `current_api_price_evidence` table records the 2026-09-05
+model-page prices, including Astra and Sol's promotion. The historical
+scalar is not current billing and has no Astra entry; do not extrapolate it
+to the new main model or silently treat missing usage as zero.
 
 Terra `xhigh` and `max` are restricted to the quota-first long-horizon ladder
 and require preceding Luna failure. Ordinary runs passively record
@@ -199,7 +204,7 @@ Classify only what can be observed at the task boundary:
 | `scope_or_retrieval_overbreadth` | The task envelope or retrieved material is too broad for the bounded acceptance claim. | Narrow the envelope or retrieval, then retry the same route. |
 | `tool_or_environment` | A runtime, tool, dependency, or environment error prevents a meaningful attempt. | Repair the environment, then retry the same route. |
 | `capability_ceiling` | Direct evidence shows the current route cannot satisfy the required capability. | Advance one configured ladder step; use main takeover only at the declared final step. |
-| `weak_oracle` | Acceptance cannot be independently established because the oracle is ambiguous, unavailable, or too weak for the risk. | Main-authoritative takeover at `gpt-5.6-sol/ultra`; leaf work can be scout-only if useful. |
+| `weak_oracle` | Acceptance cannot be independently established because the oracle is ambiguous, unavailable, or too weak for the risk. | Main-authoritative takeover at `gpt-6-astra/max`; leaf work can be scout-only if useful. |
 
 Do not relabel a missed requirement as reasoning insufficiency when the
 evidence shows an overbroad scope, context ceiling, tool failure, capability
@@ -325,7 +330,7 @@ failure, apply the taxonomy action and reevaluate; increase effort before
 changing tier when the failure is reasoning insufficiency. Move along the
 configured ladder only when evidence supports escalation. If the oracle is
 weak or the risk/contract is too high for a leaf to verify, keep authority at
-the main and use `gpt-5.6-sol/ultra`; never assign `ultra` to a leaf.
+the main and use `gpt-6-astra/max`; never assign `ultra` to a leaf.
 
 Model or reasoning escalation changes capability, not authority or scope. Each
 route, including main takeover, inherits the packet's canonical Objective Lock

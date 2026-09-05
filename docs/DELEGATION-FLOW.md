@@ -8,7 +8,7 @@ executable sources of truth when this explanation differs from runtime code.
 
 | Role | Responsibility | Invocation point | May change scope or route? |
 | --- | --- | --- | --- |
-| Main authority | Build the Objective Lock, classify each bounded slice, select routes, orchestrate leaves, integrate returned evidence, decide retry/escalation/takeover, and make the final claim. | Normal skill loading for a `$adaptive-delegation`-prefixed prompt with declared `gpt-5.6-sol` at `high` or above. The package installs no hook; non-prefix mentions do not activate. | Main direct work requires a bounded authority or context justification, or exhausted-ladder takeover. Generic convenience is insufficient. |
+| Main authority | Build the Objective Lock, classify each bounded slice, select routes, orchestrate leaves, integrate returned evidence, decide retry/escalation/takeover, and make the final claim. | Normal skill loading for a `$adaptive-delegation`-prefixed prompt with declared `gpt-6-astra` at `high`, `xhigh`, or `max`. The package installs no hook; non-prefix mentions do not activate. | Main direct work requires a bounded authority or context justification, or exhausted-ladder takeover. Generic convenience is insufficient. |
 | Maker leaf | Perform one bounded implementation, transformation, lookup, or other owned change. | Main launches the exact package role selected by the task-class ladder. | No. It reports evidence and returns control to main. |
 | Checker leaf | Independently test declared acceptance evidence without owning the Maker's change. | Main uses a distinct session when risk warrants independent checking. Package-owned integration finalization specifically requires `adaptive-sol-checker-medium` as the receipt issuer. | No. Checker routes do not join or alter the Maker escalation ladder. |
 | Final verifier | No separate package role exists. | Not invoked as an additional mandatory stage. | Not applicable. Checker supplies independent leaf evidence; main owns final integration acceptance and stopping. |
@@ -23,7 +23,7 @@ distinct, observable responsibility.
 
 ```mermaid
 flowchart TD
-    U[Explicit adaptive-delegation request] --> M[Sol high-or-above main controller]
+    U[Explicit adaptive-delegation request] --> M[Astra high, xhigh, or max main controller]
     M --> G{Declared main-authority gate passes?}
     G -- No --> S0[Stop: no child launched]
     G -- Metadata omitted --> D[Stop before child launch;<br/>report authority mismatch]
@@ -113,11 +113,11 @@ Checker outcomes have distinct recovery paths:
 | The declared oracle rejects the Maker artifact. | `acceptance_quality_failure` | Return to main and advance the exact Maker ladder under the same Objective Lock. Do not merely upgrade the Checker. |
 | The Checker encounters a tool or environment failure. | `tool_or_environment` | Repair or retry the Checker environment on the same route. Do not upgrade the Maker. |
 | The Checker demonstrably lacks capability for the bounded check. | `capability_ceiling` | Main may select a stronger package-declared Checker surface without changing the Maker artifact or scope. |
-| The oracle cannot establish acceptance. | `weak_oracle` | Stop leaf escalation and return to main Sol/ultra authority. |
+| The oracle cannot establish acceptance. | `weak_oracle` | Stop leaf escalation and return to main Astra/max authority. |
 
 This separation is the token-efficiency reason for Checker leaves: when
 independence is required, a fresh bounded Checker can consume much less context
-than asking the Sol/ultra main to reconstruct and re-review the entire Maker
+than asking the Astra/max main to reconstruct and re-review the entire Maker
 session. It is still more expensive than stopping on already-sufficient
 evidence, so Checker invocation remains conditional.
 
