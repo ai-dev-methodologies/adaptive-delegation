@@ -81,6 +81,10 @@ class IsolatedDogfoodTests(unittest.TestCase):
         *,
         child_verifications: int = 1,
         foreign_child_binding: bool = False,
+        missing_parent: bool = False,
+        foreign_parent_binding: bool = False,
+        foreign_parent_context: bool = False,
+        extra_child_rollout: bool = False,
     ) -> Path:
         executable = directory / "codex"
         executable.write_text(
@@ -101,21 +105,37 @@ class IsolatedDogfoodTests(unittest.TestCase):
             )
             +
             "workspace = str(fixture.resolve())\n"
-            "rollout = candidate / 'sessions' / '2026' / '01' / '01' / 'rollout.jsonl'\n"
-            "rollout.parent.mkdir(parents=True, exist_ok=True)\n"
-            "spawn = {'parent_thread_id': session, 'depth': 1, 'agent_path': '/root/' + task, 'agent_role': role}\n"
-            "rows = [\n"
-            " {'type': 'session_meta', 'payload': {'session_id': session, 'id': 'child-session', 'parent_thread_id': session, 'cwd': workspace, 'thread_source': 'subagent', 'agent_role': role, 'agent_path': '/root/' + task, 'source': {'subagent': {'thread_spawn': spawn}}}},\n"
-            " {'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': turn}},\n"
-            " {'type': 'turn_context', 'payload': {'turn_id': turn, 'model': 'gpt-5.6-luna', 'effort': 'high'}},\n"
-            "]\n"
-            "command = 'python3 -m unittest -v test_target.TargetTests.test_normalizes_whitespace_and_case'\n"
-            f"for index in range({child_verifications}):\n"
-            " call = 'call-' + str(index)\n"
-            " tool_input = 'const r = await tools.exec_command({cmd:' + json.dumps(command) + '}); text(r.output);'\n"
-            " rows.append({'type': 'response_item', 'payload': {'type': 'custom_tool_call', 'name': 'exec', 'call_id': call, 'input': tool_input}})\n"
-            " rows.append({'type': 'response_item', 'payload': {'type': 'custom_tool_call_output', 'call_id': call, 'output': [{'type': 'input_text', 'text': 'Ran 1 test in 0.001s\\n\\nOK\\n'}]}})\n"
-            "rollout.write_text(''.join(json.dumps(row) + '\\n' for row in rows), encoding='utf-8')\n"
+            "if '--ephemeral' not in sys.argv:\n"
+            " sessions = candidate / 'sessions' / '2026' / '01' / '01'\n"
+            " sessions.mkdir(parents=True, exist_ok=True)\n"
+            " parent_rollout = sessions / 'rollout-parent.jsonl'\n"
+            " child_rollout = sessions / 'rollout-child.jsonl'\n"
+            + f" parent_id = {'foreign-parent' if foreign_parent_binding else 'parent-session'!r}\n"
+            + f" parent_model = {'gpt-5.6-luna' if foreign_parent_context else 'gpt-6-astra'!r}\n"
+            + f" parent_effort = {'medium' if foreign_parent_context else 'high'!r}\n"
+            + f" emit_parent = {not missing_parent!r}\n"
+            + f" emit_extra_child = {extra_child_rollout!r}\n"
+            " parent_rows = [\n"
+            "  {'type': 'session_meta', 'payload': {'session_id': session, 'id': parent_id, 'cwd': workspace, 'thread_source': 'user', 'source': 'exec'}},\n"
+            "  {'type': 'turn_context', 'payload': {'turn_id': 'parent-turn', 'model': parent_model, 'effort': parent_effort}},\n"
+            " ]\n"
+            " spawn = {'parent_thread_id': session, 'depth': 1, 'agent_path': '/root/' + task, 'agent_role': role}\n"
+            " rows = [\n"
+            "  {'type': 'session_meta', 'payload': {'session_id': session, 'id': 'child-session', 'parent_thread_id': session, 'cwd': workspace, 'thread_source': 'subagent', 'agent_role': role, 'agent_path': '/root/' + task, 'source': {'subagent': {'thread_spawn': spawn}}}},\n"
+            "  {'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': turn}},\n"
+            "  {'type': 'turn_context', 'payload': {'turn_id': turn, 'model': 'gpt-5.6-luna', 'effort': 'high'}},\n"
+            " ]\n"
+            " command = 'python3 -m unittest -v test_target.TargetTests.test_normalizes_whitespace_and_case'\n"
+            f" for index in range({child_verifications}):\n"
+            "  call = 'call-' + str(index)\n"
+            "  tool_input = 'const r = await tools.exec_command({cmd:' + json.dumps(command) + '}); text(r.output);'\n"
+            "  rows.append({'type': 'response_item', 'payload': {'type': 'custom_tool_call', 'name': 'exec', 'call_id': call, 'input': tool_input}})\n"
+            "  rows.append({'type': 'response_item', 'payload': {'type': 'custom_tool_call_output', 'call_id': call, 'output': [{'type': 'input_text', 'text': 'Ran 1 test in 0.001s\\n\\nOK\\n'}]}})\n"
+            " if emit_parent:\n"
+            "  parent_rollout.write_text(''.join(json.dumps(row) + '\\n' for row in parent_rows), encoding='utf-8')\n"
+            " child_rollout.write_text(''.join(json.dumps(row) + '\\n' for row in rows), encoding='utf-8')\n"
+            " if emit_extra_child:\n"
+            "  (sessions / 'rollout-extra-child.jsonl').write_text(''.join(json.dumps(row) + '\\n' for row in rows), encoding='utf-8')\n"
             "print(json.dumps({'type': 'thread.started', 'thread_id': session}))\n"
             "print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'The exact requested unittest passed (Ran 1 test). git diff -- target.py showed only the requested change.'}}))"
             + "\nprint(json.dumps({'event': 'completed', 'codex_home': os.environ.get('CODEX_HOME', '')}))\n",
@@ -132,6 +152,10 @@ class IsolatedDogfoodTests(unittest.TestCase):
         extra: list[str] | None = None,
         child_verifications: int = 1,
         foreign_child_binding: bool = False,
+        missing_parent: bool = False,
+        foreign_parent_binding: bool = False,
+        foreign_parent_context: bool = False,
+        extra_child_rollout: bool = False,
     ):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -142,6 +166,10 @@ class IsolatedDogfoodTests(unittest.TestCase):
                 behavior,
                 child_verifications=child_verifications,
                 foreign_child_binding=foreign_child_binding,
+                missing_parent=missing_parent,
+                foreign_parent_binding=foreign_parent_binding,
+                foreign_parent_context=foreign_parent_context,
+                extra_child_rollout=extra_child_rollout,
             )
             auth = root / "auth.json"
             auth.write_text("{}", encoding="utf-8")
@@ -159,13 +187,53 @@ class IsolatedDogfoodTests(unittest.TestCase):
                 extra_codex_args=["--test-expose-user-home", *(extra or [])],
             )
 
-    def test_returns_success_when_fresh_session_updates_only_target(self) -> None:
+    def test_accepts_bound_parent_and_child_rollouts(self) -> None:
         module = load_module()
         result = self.run_gate(
             module,
             behavior="target.write_text(\"def normalize(value):\\n    return value.strip().lower()\\n\", encoding='utf-8')",
         )
         self.assertEqual(result.exit_code, 0, result.diagnostic)
+
+    def test_rejects_missing_parent_rollout(self) -> None:
+        module = load_module()
+        result = self.run_gate(
+            module,
+            behavior="target.write_text(\"def normalize(value):\\n    return value.strip().lower()\\n\", encoding='utf-8')",
+            missing_parent=True,
+        )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("parent", result.diagnostic)
+
+    def test_rejects_foreign_parent_rollout(self) -> None:
+        module = load_module()
+        result = self.run_gate(
+            module,
+            behavior="target.write_text(\"def normalize(value):\\n    return value.strip().lower()\\n\", encoding='utf-8')",
+            foreign_parent_binding=True,
+        )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("rollout", result.diagnostic)
+
+    def test_rejects_wrong_parent_model_or_effort(self) -> None:
+        module = load_module()
+        result = self.run_gate(
+            module,
+            behavior="target.write_text(\"def normalize(value):\\n    return value.strip().lower()\\n\", encoding='utf-8')",
+            foreign_parent_context=True,
+        )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("Astra/high", result.diagnostic)
+
+    def test_rejects_extra_child_rollout(self) -> None:
+        module = load_module()
+        result = self.run_gate(
+            module,
+            behavior="target.write_text(\"def normalize(value):\\n    return value.strip().lower()\\n\", encoding='utf-8')",
+            extra_child_rollout=True,
+        )
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("rollout", result.diagnostic)
 
     def test_rejects_reported_targeted_evidence_without_bound_child_unittest(self) -> None:
         module = load_module()

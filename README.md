@@ -153,6 +153,10 @@ python3 scripts/verify_isolated_dogfood.py --auth-source /path/to/read-only-auth
 After installation, a fresh Codex process should discover the updated skill.
 No hook topology restart is required by this package.
 
+The isolated promotion check retains parent and child session evidence inside
+its temporary candidate home until verification finishes. It then removes
+that temporary environment unless `--keep-artifacts` was requested.
+
 ## Maintainer promotion and local deployment order
 
 `main` is the only deployable branch. Review this README against the skill,

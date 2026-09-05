@@ -90,7 +90,7 @@ policy-to-role model/effort binding without changing the target.
 `scripts/verify_isolated_dogfood.py` is a Python 3.11 stdlib-only gate for
 current POSIX macOS/Linux environments. It creates a temporary candidate
 `CODEX_HOME` and a separate temporary Git fixture, installs only into that
-candidate, and starts a fresh `codex exec --ephemeral --json` session with an
+candidate, and starts a fresh `codex exec --json` session with an
 objective lock limiting the task to `target.py`.
 
 The auth source is read only: the gate exposes it to the temporary candidate
@@ -102,7 +102,9 @@ user Codex home, and before/after fingerprints of the managed user installation
 surface match. The immutable fingerprint covers the installed skill, dispatcher,
 and roles. Native execution may append
 normal owner-only routing evidence under `state/`; runtime evidence is not an
-installation mutation and is evaluated by the audit tooling. Artifacts are
+installation mutation and is evaluated by the audit tooling. Parent and child
+session files persist only inside the temporary candidate so the gate can
+verify their model, effort, and bound test output. Artifacts are
 removed by default; use `--keep-artifacts` only to retain
 a failed fixture and its owner-only `fresh-output.jsonl` for local
 investigation. Treat that output as private session evidence and never publish

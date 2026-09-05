@@ -23,6 +23,9 @@ and this changelog. Release tags should use `v<version>`.
 - Update policy validation, audit model recognition, smoke configuration,
   release checks, and documentation for the new main authority. Historical
   Sol audit records remain readable.
+- Fixed the isolated promotion check for CLI session persistence: verify both
+  the Astra parent and its single Luna child from temporary session files,
+  instead of requesting ephemeral execution that omits those files.
 
 ## [0.8.1] - 2026-08-17
 

@@ -166,15 +166,44 @@ def validate_child_rollout(
     if sessions.is_symlink() or not sessions.is_dir():
         raise ValueError("candidate sessions directory is unavailable or unsafe")
     transcripts = sorted(sessions.rglob("*.jsonl"))
-    if len(transcripts) != 1:
-        raise ValueError(f"expected one isolated child rollout, observed {len(transcripts)}")
-    transcript = transcripts[0]
-    resolved = transcript.resolve(strict=True)
-    try:
-        resolved.relative_to(sessions.resolve(strict=True))
-    except ValueError as exc:
-        raise ValueError("child rollout escapes the candidate sessions directory") from exc
-    rows = read_jsonl(transcript)
+    if len(transcripts) != 2:
+        raise ValueError(f"expected one parent and one isolated child rollout, observed {len(transcripts)}")
+    parent_rows, child_rows = [], []
+    for transcript in transcripts:
+        resolved = transcript.resolve(strict=True)
+        try:
+            resolved.relative_to(sessions.resolve(strict=True))
+        except ValueError as exc:
+            raise ValueError("rollout escapes the candidate sessions directory") from exc
+        records = read_jsonl(transcript)
+        metadata = records[0].get("payload", {})
+        if records[0].get("type") != "session_meta" or not isinstance(metadata, dict):
+            raise ValueError("rollout is missing session metadata")
+        if metadata.get("id") == session_id:
+            if parent_rows or not (
+                metadata.get("session_id") == session_id
+                and metadata.get("thread_source") == "user"
+                and metadata.get("source") == "exec"
+                and metadata.get("parent_thread_id") is None
+                and metadata.get("cwd") == str(fixture.resolve())
+            ):
+                raise ValueError("parent rollout metadata does not match the fresh session")
+            parent_rows = records
+        else:
+            if child_rows:
+                raise ValueError("expected exactly one isolated child rollout")
+            child_rows = records
+    if not parent_rows or not child_rows:
+        raise ValueError("parent or child rollout is missing")
+    if not any(
+        row.get("type") == "turn_context"
+        and isinstance(row.get("payload"), dict)
+        and row["payload"].get("model") == "gpt-6-astra"
+        and row["payload"].get("effort") == "high"
+        for row in parent_rows
+    ):
+        raise ValueError("parent rollout model or effort does not match Astra/high")
+    rows = child_rows
     if not rows or rows[0].get("type") != "session_meta":
         raise ValueError("child rollout is missing session metadata")
     metadata = rows[0].get("payload")
@@ -406,13 +435,16 @@ Verification ceiling: do not run broad tests, inspect unrelated files, or perfor
 Launch exactly one native child with agent_type `adaptive-luna-maker-high`,
 reasoning effort `high`, fork_turns `none`, and task_name
 `adaptive_hook_free_dogfood`. The child alone edits and verifies target.py.
+Use a single child turn; do not send follow-up tasks or request repeated checks.
+Include the exact unittest result and target diff result in the initial child's
+report requirements, then use that report for the main's final evidence line.
 After sufficient evidence exists, do not perform additional reviews, repeated
 validation, repository-wide analysis, or optional model consultations.
 Stop condition: when that exact command passes and `git diff -- target.py` shows only the requested change, stop.
 Final evidence line (required exactly): The exact requested unittest passed (Ran 1 test — OK), and git diff -- target.py showed only the requested change.
 """
         invocation = [
-            "codex", "exec", "--ephemeral", "--json",
+            "codex", "exec", "--json",
             "--disable", "apps", "--disable", "plugins", "--sandbox",
             "workspace-write", "--model", "gpt-6-astra", "--config",
             'model_reasoning_effort="high"', "--config", 'approval_policy="never"',
