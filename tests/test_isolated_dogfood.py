@@ -90,6 +90,7 @@ class IsolatedDogfoodTests(unittest.TestCase):
         executable.write_text(
             f"#!{sys.executable}\n"
             "import json, os, pathlib, subprocess, sys\n"
+            "assert os.environ.get('PYTHONDONTWRITEBYTECODE') == '1'\n"
             "fixture = pathlib.Path.cwd()\n"
             "target = fixture / 'target.py'\n"
             + behavior

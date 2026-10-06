@@ -173,6 +173,8 @@ No hook topology restart is required by this package.
 The isolated promotion check retains parent and child session evidence inside
 its temporary candidate home until verification finishes. It then removes
 that temporary environment unless `--keep-artifacts` was requested.
+The candidate disables Python bytecode writes through its environment so the
+child can execute the exact declared test command without extra prefixes.
 
 ## Maintainer promotion and local deployment order
 

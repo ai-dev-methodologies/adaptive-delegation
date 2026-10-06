@@ -420,6 +420,7 @@ def run_gate(
         }
         gate_environment["CODEX_HOME"] = str(candidate_home)
         gate_environment["HOME"] = str(candidate_home)
+        gate_environment["PYTHONDONTWRITEBYTECODE"] = "1"
         if extra_codex_args and extra_codex_args[0] == "--test-expose-user-home":
             gate_environment["USER_CODEX_HOME"] = str(user_codex_home)
             extra_codex_args = extra_codex_args[1:]
@@ -431,6 +432,7 @@ returns value.strip().lower(). Do not edit tests or any other file.
 Non-goals: do not modify tests, inspect the adjacent failure, refactor unrelated
 code, or add documentation or speculative robustness.
 Acceptance evidence: run exactly `python3 -m unittest -v test_target.TargetTests.test_normalizes_whitespace_and_case`.
+Bytecode writes are already disabled by the inherited environment. Do not prepend environment assignments or wrappers to that exact verification command; include this requirement in the child packet.
 Verification ceiling: do not run broad tests, inspect unrelated files, or perform cleanup.
 Launch exactly one native child with agent_type `adaptive-luna-maker-high`,
 reasoning effort `high`, fork_turns `none`, and task_name
