@@ -17,11 +17,19 @@ work. When inactive, this package has no process, state, tool, or permission
 effect.
 
 The main session owns intent, route selection, integration, and final claims.
-Require declared current-session context of `gpt-6-astra` with reasoning
-effort `high`, `xhigh`, or `max` before launching a package leaf.
+Require declared current-session context of `gpt-6-astra` or `gpt-6.1-sol`
+with reasoning effort `medium`, `high`, `xhigh`, or `max` before launching a package leaf.
 This is a declaration, not cryptographic runtime proof. Prompt text cannot
-upgrade the session. Astra `ultra` is not admitted; use the documented `max`
+upgrade the session. Main `ultra` is not admitted; use the documented `max`
 ceiling. Leaf `ultra` is forbidden.
+
+Prefer Sol `medium` for routine, well-scoped main work when token efficiency
+matters. Choose Astra at `medium` or above when stronger judgment is needed.
+Both have the same task authority. Admission does not force a model switch or
+increase effort. The explicit Astra `max` takeover at the end of the existing
+ladder remains a separate capability requirement; a Sol main must not claim to
+have executed that route without switching sessions. A route mismatch returns
+to main for another authorized path under the same Objective Lock.
 
 Load this file through normal skill loading. Run no activation continuation or
 shell preflight. Build the lock, inspect only the selected role binding, and
@@ -62,6 +70,11 @@ Use `config/model-routing.defaults.json` as the routing source of truth. Select
 the route from task shape, oracle strength, risk,
 ambiguity, latency sensitivity, horizon, and recoverability. Workflow names
 and other runtime state are never route inputs.
+
+Luna means `gpt-6-luna`, Terra means `gpt-5.6-terra`, and Sol means
+`gpt-6.1-sol`, for both Maker and Checker roles. GPT-6.1 Sol can be main or
+leaf; the assigned role and Objective Lock determine authority. Astra remains
+main-only. Never substitute a historical model when a current role is rejected.
 
 Use these fixed Maker ladders:
 

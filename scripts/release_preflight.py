@@ -45,10 +45,10 @@ def _route_label(route_id: str, bindings: dict[str, Any]) -> str:
     effort = route.get("reasoning_effort")
     authority = route.get("authority")
     names = {
-        "gpt-5.6-luna": "Luna",
+        "gpt-6-luna": "Luna",
         "gpt-5.6-terra": "Terra",
-        "gpt-5.6-sol": "Sol",
         "gpt-6-astra": "Astra",
+        "gpt-6.1-sol": "Sol",
     }
     if model not in names or not isinstance(effort, str):
         raise PreflightError("policy route has an invalid model or effort")
@@ -69,7 +69,7 @@ def validate_readme_contract(
         "## Invocation and `ultra` reasoning behavior",
         "labels such as `Goal` or `Ultragoal` are not route inputs.",
         "Leaf `ultra` remains forbidden.",
-        "`gpt-6-astra` with `high`, `xhigh`, or `max` effort",
+        "`gpt-6-astra` or `gpt-6.1-sol` with `medium`, `high`, `xhigh`, or `max` effort",
         "## Maintainer promotion and local deployment order",
         "scripts/release_preflight.py --mode pre-merge",
         "scripts/release_preflight.py --mode deploy",
@@ -84,10 +84,16 @@ def validate_readme_contract(
     if f"## [{version}]" not in changelog:
         raise PreflightError("CHANGELOG has no entry for VERSION")
     allowed_efforts = policy.get("allowed_main_efforts")
+    allowed_models = policy.get("allowed_main_models")
     if policy.get("required_model") != "gpt-6-astra":
         raise PreflightError("main authority model changed without README review")
-    if allowed_efforts != ["high", "xhigh", "max"]:
+    if allowed_models != ["gpt-6-astra", "gpt-6.1-sol"]:
+        raise PreflightError("main authority model allowlist changed without README review")
+    if policy.get("minimum_reasoning_effort") != "medium" or allowed_efforts != ["medium", "high", "xhigh", "max"]:
         raise PreflightError("main authority efforts changed without README review")
+    strategy_main = policy.get("strategy", {}).get("main_authority")
+    if not isinstance(strategy_main, dict) or strategy_main.get("model") != "gpt-6-astra" or strategy_main.get("reasoning_effort") != "max":
+        raise PreflightError("main authority default changed without README review")
     bindings = policy.get("route_bindings")
     ladders = policy.get("escalation_ladders")
     if not isinstance(bindings, dict) or not isinstance(ladders, dict):
@@ -105,6 +111,7 @@ def validate_readme_contract(
     return {
         "version": version,
         "unique_policy_ladders": len(expected_ladders),
+        "main_models": allowed_models,
         "main_efforts": allowed_efforts,
     }
 

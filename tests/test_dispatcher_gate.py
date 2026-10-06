@@ -394,13 +394,37 @@ class DispatcherGateTests(unittest.TestCase):
 
     def test_child_success_remains_pending_until_integration_finalization(self) -> None:
         result, ledger = self.run_packet(
-            self.packet("portable-success", "gpt-6-astra", "high")
+            self.packet("portable-success", "gpt-6.1-sol", "medium")
         )
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertTrue(self.fake_log.is_file())
         rows = [json.loads(line) for line in ledger.read_text().splitlines()]
         self.assertEqual([row["event_type"] for row in rows], ["pre_decision"])
         self.assertEqual(self.fake_log.read_text(encoding="utf-8"), "isolated")
+
+    def test_current_model_cost_proxy_is_explicit_and_missing_factors_fail(self) -> None:
+        module = self.load_dispatcher_module()
+        _, audit = module._adaptive_modules()
+        with mock.patch.object(audit, "record_event"):
+            context, warning = module._start_adaptive_audit(
+                self.packet("current-cost", "gpt-6.1-sol", "medium"),
+                ledger=self.root / "cost-routing.jsonl",
+                review_dir=self.root / "reviews",
+                attestation_ledger=self.root / "dispatch.jsonl",
+            )
+        self.assertIsNone(warning)
+        status = {"weighted_tokens": 100, "execution_elapsed_ms": 1}
+        with mock.patch.object(context.audit_module, "record_event") as record:
+            for model, expected in (("gpt-6-luna", 5.0), ("gpt-6.1-sol", 100.0), ("gpt-5.6-terra", 120.0)):
+                with self.subTest(model=model):
+                    context.binding["model"] = model
+                    module._finish_adaptive_audit(context, status, 1)
+                    self.assertEqual(record.call_args.args[0]["cost_proxy"], expected)
+            record.reset_mock()
+            context.binding["model"] = "unpriced-model"
+            with self.assertRaisesRegex(RuntimeError, "cost proxy is unavailable"):
+                module._finish_adaptive_audit(context, status, 1)
+            record.assert_not_called()
 
     def test_execute_finalize_and_issue_report_records_acceptance(self) -> None:
         packet = self.packet("finalized-success", "gpt-6-astra", "high")
@@ -884,7 +908,7 @@ class DispatcherGateTests(unittest.TestCase):
                 "child_role",
                 {
                     "agent_type": "adaptive-sol-checker-medium",
-                    "model": "gpt-5.6-sol",
+                    "model": "gpt-6.1-sol",
                     "reasoning_effort": "medium",
                 },
             ),
@@ -894,7 +918,7 @@ class DispatcherGateTests(unittest.TestCase):
                 "role",
                 {
                     "agent_type": "unapproved-checker",
-                    "model": "gpt-5.6-sol",
+                    "model": "gpt-6.1-sol",
                     "reasoning_effort": "medium",
                 },
             ),
@@ -1275,7 +1299,7 @@ class DispatcherGateTests(unittest.TestCase):
                 "selection_basis": "failure_action",
                 "route_id": "luna_max",
                 "role": "adaptive-luna-maker-max",
-                "route_model": "gpt-5.6-luna",
+                "route_model": "gpt-6-luna",
                 "route_model_tier": "spark-tier",
                 "route_reasoning_effort": "max",
             }
@@ -1337,7 +1361,7 @@ class DispatcherGateTests(unittest.TestCase):
                 "selection_basis": "failure_action",
                 "route_id": "luna_xhigh",
                 "role": "adaptive-luna-maker-xhigh",
-                "route_model": "gpt-5.6-luna",
+                "route_model": "gpt-6-luna",
                 "route_model_tier": "spark-tier",
                 "route_reasoning_effort": "xhigh",
             }
@@ -1448,7 +1472,7 @@ class DispatcherGateTests(unittest.TestCase):
         packet = self.packet("override-ignored", "gpt-6-astra", "high")
         binding = module._role_binding(packet)
         self.assertIsNotNone(binding)
-        self.assertEqual(binding.model, "gpt-5.6-luna")
+        self.assertEqual(binding.model, "gpt-6-luna")
         self.assertEqual(binding.model_tier, "spark-tier")
 
         packet["model_tier"] = "standard-tier"
@@ -1457,9 +1481,9 @@ class DispatcherGateTests(unittest.TestCase):
     def test_fixed_leaf_agent_types_are_native_without_model_override(self) -> None:
         module = self.load_dispatcher_module()
         cases = (
-            ("adaptive-luna-maker-xhigh", "spark-tier", "gpt-5.6-luna", "xhigh"),
+            ("adaptive-luna-maker-xhigh", "spark-tier", "gpt-6-luna", "xhigh"),
             ("adaptive-terra-maker-high", "standard-tier", "gpt-5.6-terra", "high"),
-            ("adaptive-sol-maker-medium", "frontier-tier", "gpt-5.6-sol", "medium"),
+            ("adaptive-sol-maker-medium", "frontier-tier", "gpt-6.1-sol", "medium"),
         )
         for agent_type, model_tier, model, effort in cases:
             with self.subTest(agent_type=agent_type):
@@ -1705,7 +1729,7 @@ class DispatcherGateTests(unittest.TestCase):
             override_reason="Bounded fallback substitution regression setup.",
             route_id="sol_medium",
             role="adaptive-sol-maker-medium",
-            route_model="gpt-5.6-sol",
+            route_model="gpt-6.1-sol",
             route_model_tier="frontier-tier",
             route_reasoning_effort="medium",
         )

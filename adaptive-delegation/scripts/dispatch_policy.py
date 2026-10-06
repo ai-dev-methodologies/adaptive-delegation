@@ -24,6 +24,8 @@ MAX_TEXT_LENGTH = 256
 MAX_ID_LENGTH = 128
 SUPPORTED_ENFORCEMENT_MODE = "fail-closed-declared-context"
 MAIN_AUTHORITY_MODEL = "gpt-6-astra"
+MAIN_AUTHORITY_MODELS = ("gpt-6-astra", "gpt-6.1-sol")
+MAIN_AUTHORITY_EFFORTS = ("medium", "high", "xhigh", "max")
 MAIN_AUTHORITY_ROUTE = ("main-authority", MAIN_AUTHORITY_MODEL, "max")
 TASK_CLASSES = frozenset({
     "simple_lookup_or_extraction", "clear_implementation_or_transformation",
@@ -109,7 +111,7 @@ def validate_policy_routes(policy: Mapping[str, Any]) -> dict[str, dict[str, str
     if policy.get("decision_contract") != expected_decision:
         raise _route_error(
             "DECISION_CONTRACT_INVALID",
-            "main Astra at high, xhigh, or max must classify each bounded slice before launch; labels alone cannot select a route",
+            "main authority at medium or higher must classify each bounded slice before launch; labels alone cannot select a route",
         )
     roles = policy.get("role_bindings")
     routes = policy.get("route_bindings")
@@ -313,16 +315,22 @@ def route_transition(policy: Mapping[str, Any], task_class: str, oracle_strength
 def _policy_settings(policy: Mapping[str, Any]) -> dict[str, Any]:
     package_owned_roles(policy)
     validate_policy_routes(policy)
-    required, minimum, allowed = policy.get("required_model"), policy.get("minimum_reasoning_effort"), policy.get("allowed_main_efforts")
-    if not isinstance(required, str) or not required:
-        raise PolicyContractError("POLICY_REQUIRED_MODEL_INVALID", "policy.required_model is required")
-    if minimum not in EFFORT_RANK or not isinstance(allowed, list) or not allowed or len(allowed) != len(set(allowed)) or any(item not in EFFORT_RANK for item in allowed) or minimum not in allowed or any(not effort_at_least(item, minimum) for item in allowed):
-        raise PolicyContractError("POLICY_ALLOWED_EFFORTS_INVALID", "policy allowed efforts are inconsistent")
+    required, allowed_models, minimum, allowed = (policy.get(name) for name in
+        ("required_model", "allowed_main_models", "minimum_reasoning_effort", "allowed_main_efforts"))
+    if (not isinstance(allowed_models, list) or not allowed_models or
+            not all(isinstance(item, str) and item for item in allowed_models)
+            or len(allowed_models) != len(set(allowed_models))
+            or set(allowed_models) != set(MAIN_AUTHORITY_MODELS)):
+        raise PolicyContractError("POLICY_ALLOWED_MODELS_INVALID", "policy.allowed_main_models must contain exactly the supported main models")
+    if not isinstance(required, str) or not required or required not in allowed_models:
+        raise PolicyContractError("POLICY_REQUIRED_MODEL_INVALID", "policy.required_model must be an allowed main model")
+    if minimum != "medium" or allowed != list(MAIN_AUTHORITY_EFFORTS):
+        raise PolicyContractError("POLICY_ALLOWED_EFFORTS_INVALID", "policy allowed efforts must be medium, high, xhigh, and max")
     if policy.get("enforcement_mode") != SUPPORTED_ENFORCEMENT_MODE:
         raise PolicyContractError("POLICY_ENFORCEMENT_MODE_INVALID", "unsupported enforcement mode")
     if policy.get("parent_model_mutation") is not False:
         raise PolicyContractError("POLICY_PARENT_MUTATION_INVALID", "parent model mutation must be false")
-    return {"required_model": required, "minimum_reasoning_effort": minimum, "allowed_main_efforts": tuple(allowed)}
+    return {"required_model": required, "allowed_main_models": tuple(allowed_models), "minimum_reasoning_effort": minimum, "allowed_main_efforts": tuple(allowed)}
 
 
 def _authority_value(authority: Any, field: str) -> str:
@@ -331,8 +339,9 @@ def _authority_value(authority: Any, field: str) -> str:
 
 
 def _warning(authority: Any, settings: Mapping[str, Any]) -> str:
+    models = " or ".join(settings["allowed_main_models"])
     allowed = ", ".join(settings["allowed_main_efforts"])
-    return (f"Adaptive Delegation blocked: main authority must be {settings['required_model']} with reasoning_effort one of {allowed}. Current: {_authority_value(authority, 'model')}/{_authority_value(authority, 'reasoning_effort')}. No child was launched. Switch the main session to {settings['required_model']} with reasoning_effort one of {allowed}, then invoke $adaptive-delegation again.")
+    return (f"Adaptive Delegation blocked: main authority must be {models} with reasoning_effort one of {allowed}. Current: {_authority_value(authority, 'model')}/{_authority_value(authority, 'reasoning_effort')}. No child was launched. Switch the main session to {models} with reasoning_effort one of {allowed}, then invoke $adaptive-delegation again.")
 
 
 def enforce_main_authority(policy: Mapping[str, Any], role: str, main_authority: Mapping[str, Any] | None) -> AuthorityDecision:
@@ -343,7 +352,7 @@ def enforce_main_authority(policy: Mapping[str, Any], role: str, main_authority:
     settings = _policy_settings(policy)
     if main_authority is None:
         code = "MAIN_AUTHORITY_MISSING"
-    elif not isinstance(main_authority, Mapping) or model != settings["required_model"] or effort not in EFFORT_RANK:
+    elif not isinstance(main_authority, Mapping) or model not in settings["allowed_main_models"] or effort not in EFFORT_RANK:
         code = "MAIN_AUTHORITY_UNKNOWN"
     elif not effort_at_least(effort, settings["minimum_reasoning_effort"]):
         code = "MAIN_AUTHORITY_BELOW_MINIMUM"

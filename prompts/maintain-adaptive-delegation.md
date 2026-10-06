@@ -31,8 +31,8 @@ Luna escalation, Terra `medium`/`high` latency/scoped intermediates, the
 quota-first Terra `xhigh`/`max` latency-insensitive long-horizon route after
 observable Luna failure, fixed
 Native Luna/Terra/Sol leaf role bindings, passive Terra use-mode telemetry
-without paired A/B runs, the Sol
-`high`-or-above main gate, leaf-`ultra` prohibition, observable-evidence escalation, machine-local
+without paired A/B runs, the Astra or GPT-6.1 Sol
+`medium`-or-above main gate, leaf-`ultra` prohibition, observable-evidence escalation, machine-local
 logs/state exclusion, and the repository-as-canonical rule. Do not add
 dependencies or alter product behavior without an explicit envelope. Model or
 reasoning escalation changes capability, not authority or scope. Stop when the

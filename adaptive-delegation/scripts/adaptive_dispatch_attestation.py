@@ -7,6 +7,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 import queue
 import re
@@ -2396,9 +2397,16 @@ def _finish_adaptive_audit(
     weighted_tokens = status.get("weighted_tokens")
     if not isinstance(weighted_tokens, int) or isinstance(weighted_tokens, bool):
         weighted_tokens = 0
-    price = context.policy.get("price_evidence", {})
-    fractions = price.get("sol_equivalent_price_fraction", {})
-    fraction = float(fractions.get(context.binding["model"], 1.0))
+    cost_proxy = context.policy.get("routing_cost_proxy")
+    fractions = cost_proxy.get("model_fractions") if isinstance(cost_proxy, dict) else None
+    fraction = fractions.get(context.binding["model"]) if isinstance(fractions, dict) else None
+    if (
+        isinstance(fraction, bool)
+        or not isinstance(fraction, (int, float))
+        or not math.isfinite(float(fraction))
+        or fraction < 0
+    ):
+        raise RuntimeError("current routing cost proxy is unavailable for the bound model")
     elapsed_ms = status.get("execution_elapsed_ms")
     if (
         isinstance(elapsed_ms, bool)
@@ -2424,7 +2432,7 @@ def _finish_adaptive_audit(
         "final_role": context.routing["role"],
         "elapsed_ms": elapsed_ms,
         "weighted_tokens": weighted_tokens,
-        "cost_proxy": round(weighted_tokens * fraction, 6),
+        "cost_proxy": round(weighted_tokens * float(fraction), 6),
         "post_result_detail": {
             "observable_result_signals": signals,
             "evidence_references": [str(context.attestation_ledger)],

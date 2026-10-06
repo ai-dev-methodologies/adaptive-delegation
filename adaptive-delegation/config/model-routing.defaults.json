@@ -1,12 +1,13 @@
 {
   "schema_version": "0.6.0",
   "status": "provisional-evidence-seeking",
-  "policy_id": "adaptive-delegation-luna-terra-sol-v0.6",
+  "policy_id": "adaptive-delegation-luna-terra-sol-v0.7",
   "policy_source": "package-default",
   "policy_ssot": "package-default",
   "required_model": "gpt-6-astra",
-  "minimum_reasoning_effort": "high",
-  "allowed_main_efforts": ["high", "xhigh", "max"],
+  "allowed_main_models": ["gpt-6-astra", "gpt-6.1-sol"],
+  "minimum_reasoning_effort": "medium",
+  "allowed_main_efforts": ["medium", "high", "xhigh", "max"],
   "enforcement_mode": "fail-closed-declared-context",
   "parent_model_mutation": false,
   "strategy": {
@@ -85,28 +86,40 @@
   },
   "current_api_price_evidence": {
     "kind": "official-api-token-price",
-    "as_of": "2026-09-05",
+    "as_of": "2026-10-06",
     "currency": "USD",
     "unit": "per-million-tokens",
+    "scope": "Standard speed, up to 272K input tokens, uncached input and output only",
     "input_per_million": {
       "gpt-6-astra": 10.0,
-      "gpt-5.6-sol": 4.0,
+      "gpt-6.1-sol": 2.0,
       "gpt-5.6-terra": 2.0,
-      "gpt-5.6-luna": 0.2
+      "gpt-6-luna": 0.1
     },
     "output_per_million": {
       "gpt-6-astra": 50.0,
-      "gpt-5.6-sol": 20.0,
+      "gpt-6.1-sol": 10.0,
       "gpt-5.6-terra": 12.0,
-      "gpt-5.6-luna": 1.2
+      "gpt-6-luna": 0.5
     },
     "source_urls": {
-      "gpt-6-astra": "https://developers.openai.com/api/docs/models/gpt-6-astra",
-      "gpt-5.6-sol": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-      "gpt-5.6-terra": "https://developers.openai.com/api/docs/models/gpt-5.6-terra",
-      "gpt-5.6-luna": "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+      "gpt-6-astra": "https://developers.openai.com/api/docs/pricing",
+      "gpt-6.1-sol": "https://developers.openai.com/api/docs/pricing",
+      "gpt-5.6-terra": "https://developers.openai.com/api/docs/pricing",
+      "gpt-6-luna": "https://developers.openai.com/api/docs/pricing"
     },
-    "cost_proxy_note": "Current API prices are reported independently; no Astra-to-Sol-equivalent scalar is inferred."
+    "cost_proxy_note": "API prices are reference evidence, not a conversion to Codex credits or subscription usage."
+  },
+  "routing_cost_proxy": {
+    "basis": "standard-short-context-output-price-relative-to-gpt-6.1-sol",
+    "reference_model": "gpt-6.1-sol",
+    "model_fractions": {
+      "gpt-6-luna": 0.05,
+      "gpt-5.6-terra": 1.2,
+      "gpt-6.1-sol": 1.0,
+      "gpt-6-astra": 5.0
+    },
+    "note": "Weighted-token routing heuristic only, not billing or Codex credits. Output-price normalization ignores model input/output ratio differences, caches, speed tiers, and context premiums. Historical proxies are not directly comparable."
   },
   "model_capabilities": {
     "gpt-5.6-luna": {
@@ -129,48 +142,58 @@
       "allowed_efforts": ["low", "medium", "high", "xhigh", "max"],
       "long_context_risk": "reference",
       "main_only": true
+    },
+    "gpt-6.1-sol": {
+      "model_tier": "frontier-tier",
+      "allowed_efforts": ["low", "medium", "high", "xhigh", "max"],
+      "long_context_risk": "reference"
+    },
+    "gpt-6-luna": {
+      "model_tier": "spark-tier",
+      "allowed_efforts": ["low", "medium", "high", "xhigh", "max"],
+      "long_context_risk": "unverified"
     }
   },
   "route_bindings": {
     "luna_medium": {
       "authority": "leaf",
       "role": "adaptive-luna-maker-medium",
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "model_tier": "spark-tier",
       "reasoning_effort": "medium"
     },
     "luna_high": {
       "authority": "leaf",
       "role": "adaptive-luna-maker-high",
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "model_tier": "spark-tier",
       "reasoning_effort": "high"
     },
     "luna_xhigh": {
       "authority": "leaf",
       "role": "adaptive-luna-maker-xhigh",
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "model_tier": "spark-tier",
       "reasoning_effort": "xhigh"
     },
     "luna_max": {
       "authority": "leaf",
       "role": "adaptive-luna-maker-max",
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "model_tier": "spark-tier",
       "reasoning_effort": "max"
     },
     "sol_medium": {
       "authority": "leaf",
       "role": "adaptive-sol-maker-medium",
-      "model": "gpt-5.6-sol",
+      "model": "gpt-6.1-sol",
       "model_tier": "frontier-tier",
       "reasoning_effort": "medium"
     },
     "sol_high": {
       "authority": "leaf",
       "role": "adaptive-sol-maker-high",
-      "model": "gpt-5.6-sol",
+      "model": "gpt-6.1-sol",
       "model_tier": "frontier-tier",
       "reasoning_effort": "high"
     },
@@ -205,28 +228,28 @@
     "checker_luna_xhigh": {
       "authority": "leaf",
       "role": "adaptive-luna-checker-xhigh",
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "model_tier": "spark-tier",
       "reasoning_effort": "xhigh"
     },
     "checker_luna_max": {
       "authority": "leaf",
       "role": "adaptive-luna-checker-max",
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "model_tier": "spark-tier",
       "reasoning_effort": "max"
     },
     "checker_sol_medium": {
       "authority": "leaf",
       "role": "adaptive-sol-checker-medium",
-      "model": "gpt-5.6-sol",
+      "model": "gpt-6.1-sol",
       "model_tier": "frontier-tier",
       "reasoning_effort": "medium"
     },
     "checker_sol_high": {
       "authority": "leaf",
       "role": "adaptive-sol-checker-high",
-      "model": "gpt-5.6-sol",
+      "model": "gpt-6.1-sol",
       "model_tier": "frontier-tier",
       "reasoning_effort": "high"
     },
@@ -382,52 +405,52 @@
   "role_bindings": {
     "adaptive-luna-maker-medium": {
       "model_tier": "spark-tier",
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "reasoning_effort": "medium"
     },
     "adaptive-luna-maker-high": {
       "model_tier": "spark-tier",
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "reasoning_effort": "high"
     },
     "adaptive-luna-maker-xhigh": {
       "model_tier": "spark-tier",
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "reasoning_effort": "xhigh"
     },
     "adaptive-luna-maker-max": {
       "model_tier": "spark-tier",
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "reasoning_effort": "max"
     },
     "adaptive-luna-checker-xhigh": {
       "model_tier": "spark-tier",
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "reasoning_effort": "xhigh"
     },
     "adaptive-luna-checker-max": {
       "model_tier": "spark-tier",
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "reasoning_effort": "max"
     },
     "adaptive-sol-maker-medium": {
       "model_tier": "frontier-tier",
-      "model": "gpt-5.6-sol",
+      "model": "gpt-6.1-sol",
       "reasoning_effort": "medium"
     },
     "adaptive-sol-maker-high": {
       "model_tier": "frontier-tier",
-      "model": "gpt-5.6-sol",
+      "model": "gpt-6.1-sol",
       "reasoning_effort": "high"
     },
     "adaptive-sol-checker-medium": {
       "model_tier": "frontier-tier",
-      "model": "gpt-5.6-sol",
+      "model": "gpt-6.1-sol",
       "reasoning_effort": "medium"
     },
     "adaptive-sol-checker-high": {
       "model_tier": "frontier-tier",
-      "model": "gpt-5.6-sol",
+      "model": "gpt-6.1-sol",
       "reasoning_effort": "high"
     },
     "adaptive-terra-maker-medium": {

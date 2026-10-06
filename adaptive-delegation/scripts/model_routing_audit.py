@@ -72,7 +72,7 @@ CANONICAL_ISSUE_REPOSITORY = "ai-dev-methodologies/adaptive-delegation"
 MODE_FILE = 0o600
 MODE_DIRECTORY = 0o700
 
-MODELS = ("gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra")
+MODELS = ("gpt-5.6-luna", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra", "gpt-6.1-sol")
 MODEL_TIERS = ("spark-tier", "standard-tier", "frontier-tier")
 EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
 MAIN_MODELS = MODELS + ("unknown",)
@@ -482,6 +482,11 @@ def _load_policy() -> dict[str, Any]:
         raise AuditError(f"cannot load model-routing defaults: {exc}") from exc
     if not isinstance(policy, dict):
         raise AuditError("model-routing defaults must be a JSON object")
+    if _route_policy is not None:
+        try:
+            _route_policy._policy_settings(policy)
+        except _route_policy.PolicyContractError as exc:
+            raise AuditError(f"model-routing policy contract is invalid: {exc}") from exc
     return policy
 
 
@@ -683,7 +688,7 @@ def validate_event(event: Any) -> dict[str, Any]:
     if strict_current and event["event_type"] == "post_result" and any(
         event.get(field) for field in ("accepted", "execution_completed", "integration_accepted")
     ) and (
-        event["main_model"] != policy.get("required_model")
+        event["main_model"] not in policy.get("allowed_main_models", [])
         or event["main_reasoning_effort"] not in policy.get("allowed_main_efforts", [])
     ):
         raise AuditError("main authority does not satisfy the current package policy")
@@ -1459,11 +1464,11 @@ def _rate(numerator: int, denominator: int) -> float:
 
 
 def _is_sol(model: str) -> bool:
-    return model == "gpt-5.6-sol"
+    return model in {"gpt-5.6-sol", "gpt-6.1-sol"}
 
 
 def _is_cheap(model: str) -> bool:
-    return model == "gpt-5.6-luna"
+    return model in {"gpt-5.6-luna", "gpt-6-luna"}
 
 
 def _derive_sol_rescue(pre: dict[str, Any], post: dict[str, Any]) -> bool:

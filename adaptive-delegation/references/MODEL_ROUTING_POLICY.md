@@ -17,6 +17,31 @@ this document explains its evidence basis and operating rules without
 overriding it. Repository files are canonical; installed files are deployment
 targets and are not additional policy sources.
 
+## Main admission and model choice
+
+Main admission accepts declared `gpt-6-astra` or `gpt-6.1-sol` at `medium`,
+`high`, `xhigh`, or `max`. Prefer Sol/medium for token-efficient routine work;
+choose Astra/medium or above for tasks needing stronger judgment. Neither
+choice changes authority, scope, or the Objective Lock. The gate never changes
+the running parent model or effort. Main `low`, `none`, and `ultra` are not
+admitted. Codex Ultra is a subagent execution mode, not an extra portable
+single-model reasoning level.
+
+`allowed_main_models` is the admission allowlist. The retained `required_model`
+and `strategy.main_authority` fields describe the legacy Astra takeover
+baseline, not an exclusive admission requirement or an automatic session default.
+
+The fixed leaf ladders below and their final Astra/max takeover are unchanged.
+Their active model bindings are GPT-6 Luna (`gpt-6-luna`), GPT-5.6 Terra
+(`gpt-5.6-terra`), and GPT-6.1 Sol (`gpt-6.1-sol`). Sol can serve as main or
+as a fixed leaf; model identity alone grants no main authority. Astra is
+main-only. Historical GPT-5.6 Luna/Sol records remain readable but are not
+current execution bindings.
+That named takeover is a separate capability requirement, not the minimum for
+ordinary main work. A Sol session cannot claim an Astra/max attempt. An
+unavailable takeover returns to main for another authorized lane under the
+same lock; prompt text cannot switch the session.
+
 ## Primary invariant: portable Objective Lock
 
 Before the first child launch, derive one self-contained Objective Lock from
@@ -100,10 +125,10 @@ quality failure, followed by bounded Sol leaf escalation:
 
 | Work shape | Default route |
 | --- | --- |
-| Simple lookup or extraction | `gpt-5.6-luna/medium` |
-| Clear implementation or transformation | `gpt-5.6-luna/high` |
-| Bounded complex implementation or verification | `gpt-5.6-luna/xhigh` |
-| Latency-insensitive long-horizon goal with strong oracle | `gpt-5.6-luna/max` |
+| Simple lookup or extraction | `gpt-6-luna/medium` |
+| Clear implementation or transformation | `gpt-6-luna/high` |
+| Bounded complex implementation or verification | `gpt-6-luna/xhigh` |
+| Latency-insensitive long-horizon goal with strong oracle | `gpt-6-luna/max` |
 | Weak oracle, ambiguous/high-risk, or long contract | main-authoritative `gpt-6-astra/max` |
 
 Effort is increased before changing model tier when the failure evidence is
@@ -144,17 +169,29 @@ escalation ladder.
 The package records
 [OpenAI's published API token prices](https://openai.com/index/advancing-the-price-performance-frontier-with-gpt-5-6/)
 as a historical 2026-07-30 reference: Sol `$5/$30`, Terra `$2/$12`, and Luna `$0.2/$1.2` per
-million input/output tokens. The routing cost proxy normalizes them to
+million input/output tokens. The historical routing cost proxy normalized them to
 Sol-equivalent factors of `1.0`, `0.4`, and `0.04`. Model-relative price
 factors are never aggregated across models as if they were provider invoices;
 Codex quota or credit units are not provider-token equivalents. Effort can
 change token use and latency, so compare total cost per accepted task, not
 price per token alone.
 
-The separate `current_api_price_evidence` table records the 2026-09-05
-model-page prices, including Astra and Sol's promotion. The historical
-scalar is not current billing and has no Astra entry; do not extrapolate it
-to the new main model or silently treat missing usage as zero.
+The separate `current_api_price_evidence` table records the 2026-10-06
+[official Standard API prices](https://developers.openai.com/api/docs/pricing)
+for up to 272K input tokens: Astra `$10/$50`, Sol 6.1 `$2/$10`, Terra 5.6
+`$2/$12`, and Luna 6 `$0.10/$0.50` per million input/output tokens.
+
+`routing_cost_proxy` uses output-price factors relative to Sol 6.1:
+Luna `0.05`, Terra `1.2`, Sol `1.0`, and Astra `5.0`. Multiply weighted tokens
+by that explicit factor; never default an unknown model to `1.0`. This is a
+routing heuristic, not a billing estimate or Codex credit conversion. It
+ignores input/output price-ratio differences, caching, service tiers, and
+context premiums. Compare only within the current policy; historical costs
+retain their original basis. Missing token usage remains unavailable.
+
+Terra is no longer cheaper per output token than current Sol. Its retained
+intermediate route is a provisional quality/latency hypothesis, not a claim
+of a universal cost or capability ordering.
 
 Terra `xhigh` and `max` are restricted to the quota-first long-horizon ladder
 and require preceding Luna failure. Ordinary runs passively record

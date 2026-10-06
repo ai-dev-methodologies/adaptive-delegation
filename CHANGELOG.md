@@ -14,6 +14,29 @@ and routing contracts are still being validated in real Codex use:
 Every installable package change must update both `adaptive-delegation/VERSION`
 and this changelog. Release tags should use `v<version>`.
 
+## [0.11.0] - 2026-10-06
+
+- Upgrade all Luna Maker/Checker bindings to GPT-6 Luna and all Sol
+  Maker/Checker bindings to GPT-6.1 Sol. Keep GPT-5.6 Terra, the existing
+  effort-first ladders, and Astra-only final takeover.
+- Preserve Astra/Sol main admission at medium through max. Sol may now execute
+  fixed leaf roles without inheriting main authority; leaf ultra stays forbidden.
+- Update route validation, audit model-family recognition, installation and
+  isolated-session checks, while retaining historical GPT-5.6 audit records.
+- Refresh official API price evidence and use an explicit output-price-based
+  routing proxy for current models instead of defaulting missing factors to 1.
+  This proxy is not provider billing or Codex subscription usage.
+
+## [0.10.0] - 2026-10-06
+
+- Admit declared GPT-6 Astra and GPT-6.1 Sol main sessions at `medium`, `high`,
+  `xhigh`, or `max`; recommend Sol/medium for token-efficient routine work.
+- Validate the explicit main-model allowlist in dispatch and current-policy
+  audit acceptance while retaining historical audit readability. Unknown
+  models, lower efforts, and main/leaf `ultra` remain rejected.
+- Preserve fixed GPT-5.6 leaf roles and the separate Astra/max final takeover;
+  admission does not mutate the running model, effort, or task authority.
+
 ## [0.9.0] - 2026-09-05
 
 - Require declared GPT-6 Astra main authority at `high`, `xhigh`, or `max`,

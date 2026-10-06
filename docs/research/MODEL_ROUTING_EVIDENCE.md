@@ -9,6 +9,70 @@ skill: `SKILL.md` stays short enough for runtime use, while this dossier keeps
 the sources, measurements, conflicts, confidence, and review triggers needed
 to change policy later.
 
+## 2026-10-06 current Luna/Sol leaf migration
+
+The user authorized upgrading the remaining leaf models after dual-model main
+admission. All Luna Maker/Checker bindings move to `gpt-6-luna`; all Sol
+Maker/Checker bindings move to `gpt-6.1-sol`. Terra remains `gpt-5.6-terra`,
+which is still documented as available; no newer Terra replacement was
+established by the official sources read. Role efforts, Luna-first routing,
+the Terra intermediates, and Astra/max takeover remain unchanged. Sol is now
+valid for either main or fixed leaf authority; role and lock determine scope.
+
+Sources fetched on 2026-10-06:
+[Codex models](https://learn.chatgpt.com/docs/models#recommended-models),
+[GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna),
+[GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol),
+[GPT-5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra), and
+[API pricing](https://developers.openai.com/api/docs/pricing).
+Standard short-context input/output prices per million tokens are Luna
+`$0.10/$0.50`, Sol `$2/$10`, Terra `$2/$12`, and Astra `$10/$50`.
+Current routing uses an explicitly labeled output-price proxy rather than
+reusing historical GPT-5.6 scalars. Terra's output-token rate exceeds new Sol's;
+retaining its lane does not establish cost superiority.
+
+Latest local review: 2026-10-06T08:30:16.543597Z, one current-policy pair and
+three total pairs. The latest attempt was neither accepted nor integrated;
+no integration-accepted record was found. This does not justify changing
+the escalation ladder or asserting measured quality/token savings.
+
+Implementation envelope: config, ten Luna/Sol role bindings, main/leaf checks,
+audit family recognition and explicit cost proxy, release and isolated-session
+checks, associated tests, version/changelog, and active docs. Non-goals:
+deployment, Git mutations, global settings, historical log rewriting, and
+effort/ladder redesign. Acceptance: required dry run and unittest suites,
+isolated-verifier unit tests, exact role/config agreement, historical-read
+regressions, relative links, diff check, and one bounded independent review.
+Stop when these pass; no live provider performance claim is made.
+
+## 2026-10-06 dual-model main admission
+
+The user authorized GPT-6 Astra and GPT-6.1 Sol main sessions at `medium` or
+above for token-efficient work that does not always need maximum reasoning.
+The explicit admitted efforts are `medium`, `high`, `xhigh`, and `max`.
+[Official Codex guidance](https://developers.openai.com/codex/models) recommends
+GPT-6.1 Sol for complex coding and agentic work and reserves Astra for the most
+demanding work. Both model pages document medium through max reasoning:
+[Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) and
+[Sol 6.1](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
+These sources were read on 2026-10-06. This is admission policy, not a local
+performance or token-savings claim, and does not mutate the running session.
+
+The latest local review remains 2026-09-03T15:13:26.351632Z with two paired
+attempts. The latest post-result was not accepted or integration-accepted;
+no integration-accepted attempt was found. This provides no basis to change
+the fixed leaf ladder or the explicit Astra/max final takeover. Historical
+records and historical model/price evidence below remain unchanged.
+
+Implementation envelope: main admission policy, dispatcher validation,
+current-policy audit acceptance, release contract checks, corresponding tests,
+and active documentation. Non-goals: leaf replacements, installation, global
+model settings, and Git publication. Acceptance: the required installer dry
+run and unittest suites, regression coverage of both models and invalid
+admissions, relative-link/diff checks, and bounded independent review of the
+authority boundary. Stop when these checks pass; no live model benchmark is
+claimed.
+
 ## 2026-09-05 Astra main migration
 
 The user selected GPT-6 Astra as main authority. Repository HEAD and GitHub

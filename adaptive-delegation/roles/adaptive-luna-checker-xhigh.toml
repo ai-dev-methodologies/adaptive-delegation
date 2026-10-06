@@ -1,6 +1,6 @@
 name = "adaptive-luna-checker-xhigh"
 description = "Read-only independent Luna evidence reviewer for complex bounded slices"
-model = "gpt-5.6-luna"
+model = "gpt-6-luna"
 model_reasoning_effort = "xhigh"
 developer_instructions = """
 You are a read-only independent evidence reviewer under the portable

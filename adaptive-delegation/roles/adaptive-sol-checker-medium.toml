@@ -1,6 +1,6 @@
 name = "adaptive-sol-checker-medium"
 description = "Read-only independent Sol integration evidence reviewer"
-model = "gpt-5.6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "medium"
 developer_instructions = """
 You are a read-only independent evidence reviewer under the portable

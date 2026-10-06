@@ -243,7 +243,7 @@ def validate_child_rollout(
     if not any(
         isinstance(context, dict)
         and context.get("turn_id") == task_turn
-        and context.get("model") == "gpt-5.6-luna"
+        and context.get("model") == "gpt-6-luna"
         and context.get("effort") == "high"
         for context in contexts
     ):

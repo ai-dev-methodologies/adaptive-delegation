@@ -118,10 +118,14 @@ class ModelRoutingAuditTests(unittest.TestCase):
             "model": model,
             "model_tier": {
                 "gpt-5.6-luna": "spark-tier",
+                "gpt-6-luna": "spark-tier",
                 "gpt-5.6-terra": "standard-tier",
                 "gpt-5.6-sol": "frontier-tier",
+                "gpt-6.1-sol": "frontier-tier",
             }[model],
-            "reasoning_effort": "xhigh" if model != "gpt-5.6-sol" else "ultra",
+            "reasoning_effort": (
+                "ultra" if model == "gpt-5.6-sol" else "xhigh"
+            ),
             "rationale": {
                 "task_class": task_class,
                 "oracle_strength": "strong",
@@ -1998,8 +2002,13 @@ class ModelRoutingAuditTests(unittest.TestCase):
                 idempotent=True,
             )
 
-    def test_current_audit_requires_astra_main_but_preserves_sol_history(self):
-        for model, effort in (("gpt-5.6-sol", "ultra"), ("gpt-6-astra", "ultra"), ("gpt-6-astra", "medium")):
+    def test_current_audit_accepts_both_main_models_and_rejects_invalid_execution(self):
+        for model, effort in (
+            ("gpt-5.6-luna", "medium"),
+            ("gpt-5.6-sol", "medium"),
+            ("gpt-6-astra", "ultra"),
+            ("gpt-6.1-sol", "ultra"),
+        ):
             with self.subTest(model=model, effort=effort):
                 pre = self.current_pre("main-admission", "main-admission")
                 pre.update(main_model=model, main_reasoning_effort=effort)
@@ -2008,9 +2017,87 @@ class ModelRoutingAuditTests(unittest.TestCase):
                 event.update(main_model=model, main_reasoning_effort=effort)
                 with self.assertRaisesRegex(audit.AuditError, "main authority"):
                     audit.validate_event(event)
-        audit.validate_event(self.current_pre("astra-valid", "astra-valid"))
+        for model in ("gpt-6-astra", "gpt-6.1-sol"):
+            with self.subTest(model=model):
+                audit.validate_event(
+                    self.current_pre(
+                        f"{model}-valid", f"{model}-valid",
+                        main_model=model, main_reasoning_effort="medium",
+                    )
+                )
+                audit.validate_event(
+                    self.current_post(
+                        f"{model}-accepted", f"{model}-accepted",
+                        main_model=model,
+                        main_reasoning_effort="medium",
+                        accepted=True,
+                        failure_class="none",
+                        execution_completed=True,
+                        oracle_verdict="pass",
+                        integration_accepted=True,
+                        post_result_detail={
+                            "observable_result_signals": ["tests_passed"],
+                            "evidence_references": [f"receipt-{model}"],
+                            "route_assessment": "correct",
+                            "next_action": "stop",
+                        },
+                    )
+                )
         audit.validate_event(self.linked_pre("sol-history", "sol-history"))
         audit.validate_event(self.linked_post("sol-history", "sol-history"))
+
+    def test_current_audit_accepts_new_luna_and_sol_leaf_routes(self):
+        for route_id, model in (
+            ("luna_high", "gpt-6-luna"),
+            ("sol_medium", "gpt-6.1-sol"),
+        ):
+            with self.subTest(route_id=route_id):
+                index = 1 if route_id == "luna_high" else 2
+                pre = self.current_pre(
+                    f"{route_id}-current", f"{route_id}-current",
+                    index=index, route_id=route_id,
+                )
+                self.assertEqual(pre["model"], model)
+                audit.validate_event(pre)
+                post = self.current_post(
+                    f"{route_id}-current", f"{route_id}-current",
+                    index=index,
+                )
+                post.update(
+                    final_model=pre["model"],
+                    final_model_tier=pre["model_tier"],
+                    final_reasoning_effort=pre["reasoning_effort"],
+                    final_route_id=pre["route_id"],
+                    final_role=pre["role"],
+                )
+                post.update(
+                    accepted=True,
+                    failure_class="none",
+                    execution_completed=True,
+                    oracle_verdict="pass",
+                    integration_accepted=True,
+                    post_result_detail={
+                        "observable_result_signals": ["tests_passed"],
+                        "evidence_references": [f"receipt-{route_id}"],
+                        "route_assessment": "correct",
+                        "next_action": "stop",
+                    },
+                )
+                self.assertEqual(post["final_model"], model)
+                audit.validate_event(post)
+
+    def test_current_audit_rejects_malformed_main_model_allowlist(self):
+        policy = json.loads(
+            (SKILL_ROOT / "config" / "model-routing.defaults.json").read_text()
+        )
+        policy["allowed_main_models"] = ["gpt-6-astra"]
+        candidate = self.root / "malformed-policy.json"
+        candidate.write_text(json.dumps(policy), encoding="utf-8")
+        previous = audit.DEFAULT_CONFIG
+        audit.DEFAULT_CONFIG = candidate
+        self.addCleanup(setattr, audit, "DEFAULT_CONFIG", previous)
+        with self.assertRaisesRegex(audit.AuditError, "policy contract"):
+            audit.validate_event(self.current_post("malformed-policy", "malformed-policy"))
 
     def test_review_reports_linked_coverage_and_grouping(self):
         self.record("linked-one-pre.json", self.linked_pre("linked-one", "task-one"))

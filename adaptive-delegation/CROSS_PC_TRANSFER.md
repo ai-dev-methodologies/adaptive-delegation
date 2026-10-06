@@ -52,7 +52,15 @@ behavior, and installer portability without using state from the source
 computer. Codex normally detects the skill after installation; restart only if
 the skill is not visible.
 
-The current policy is Luna-first and effort-first. After observable Luna
+The main gate admits `gpt-6-astra` or `gpt-6.1-sol` with `medium`, `high`,
+`xhigh`, or `max`. Sol/medium is the token-efficient routine starting point;
+Astra/medium or above is available for more demanding main work. This does
+not change the running session or the separate Astra/max final takeover.
+
+The current policy is Luna-first and effort-first. Luna roles bind
+`gpt-6-luna`, Sol roles bind `gpt-6.1-sol`, and Terra roles bind
+`gpt-5.6-terra`. Sol's main admission does not grant authority to its leaf
+sessions. After observable Luna
 acceptance/quality failure, scoped implementation/transformation uses Terra
 medium and bounded complex/debug/review uses Terra high before Sol leaf routes.
 Any bounded slice that is latency-insensitive, long-horizon, low/medium risk,

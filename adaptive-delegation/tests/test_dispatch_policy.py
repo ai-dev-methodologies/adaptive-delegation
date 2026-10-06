@@ -15,10 +15,10 @@ import dispatch_policy as contract  # noqa: E402
 
 ROLE = "adaptive-luna-maker-xhigh"
 WARNING = (
-    "Adaptive Delegation blocked: main authority must be gpt-6-astra with "
-    "reasoning_effort one of high, xhigh, max. Current: {current}. No child was "
-    "launched. Switch the main session to gpt-6-astra with reasoning_effort one "
-    "of high, xhigh, max, then invoke "
+    "Adaptive Delegation blocked: main authority must be gpt-6-astra or gpt-6.1-sol with "
+    "reasoning_effort one of medium, high, xhigh, max. Current: {current}. No child was "
+    "launched. Switch the main session to gpt-6-astra or gpt-6.1-sol with reasoning_effort one "
+    "of medium, high, xhigh, max, then invoke "
     "$adaptive-delegation again."
 )
 
@@ -59,32 +59,48 @@ class DispatchPolicyTests(unittest.TestCase):
 
     def test_missing_wrong_and_below_minimum_authority_are_blocked(self):
         self.assert_blocked(None, "MAIN_AUTHORITY_MISSING", "unknown/unknown")
+        for model in ("gpt-5.6-luna", "gpt-5.6-sol"):
+            with self.subTest(model=model):
+                self.assert_blocked(
+                    authority(model), "MAIN_AUTHORITY_UNKNOWN", f"{model}/high"
+                )
         self.assert_blocked(
-            authority("gpt-5.6-luna"), "MAIN_AUTHORITY_UNKNOWN", "gpt-5.6-luna/high"
-        )
-        self.assert_blocked(
-            authority(effort="medium"),
+            authority(effort="low"),
             "MAIN_AUTHORITY_BELOW_MINIMUM",
-            "gpt-6-astra/medium",
+            "gpt-6-astra/low",
         )
 
-    def test_high_xhigh_and_max_pass_but_ultra_and_sol_are_rejected(self):
-        for effort in ("high", "xhigh", "max"):
-            with self.subTest(effort=effort):
-                decision = contract.enforce_main_authority(
-                    load_policy(), ROLE, authority(effort=effort)
-                )
-                self.assertTrue(decision.enforced)
-                self.assertEqual(decision.reasoning_effort, effort)
+    def test_both_main_models_accept_medium_through_max(self):
+        for model in ("gpt-6-astra", "gpt-6.1-sol"):
+            for effort in ("medium", "high", "xhigh", "max"):
+                with self.subTest(model=model, effort=effort):
+                    decision = contract.enforce_main_authority(
+                        load_policy(), ROLE, authority(model, effort)
+                    )
+                    self.assertTrue(decision.enforced)
+                    self.assertEqual(decision.model, model)
+                    self.assertEqual(decision.reasoning_effort, effort)
+
+    def test_low_none_ultra_and_unknown_authority_values_are_rejected(self):
         self.assert_blocked(
-            authority("gpt-5.6-sol", "high"),
-            "MAIN_AUTHORITY_UNKNOWN",
-            "gpt-5.6-sol/high",
+            authority("gpt-6-astra", "low"),
+            "MAIN_AUTHORITY_BELOW_MINIMUM",
+            "gpt-6-astra/low",
         )
         self.assert_blocked(
-            authority("gpt-6-astra", "ultra"),
+            authority("gpt-6.1-sol", None),
+            "MAIN_AUTHORITY_UNKNOWN",
+            "gpt-6.1-sol/unknown",
+        )
+        self.assert_blocked(
+            authority("gpt-6.1-sol", "ultra"),
             "MAIN_AUTHORITY_EFFORT_NOT_ALLOWED",
-            "gpt-6-astra/ultra",
+            "gpt-6.1-sol/ultra",
+        )
+        self.assert_blocked(
+            authority("unknown-model", "high"),
+            "MAIN_AUTHORITY_UNKNOWN",
+            "unknown-model/high",
         )
 
     def test_non_package_role_bypasses_authority_settings(self):
@@ -95,16 +111,31 @@ class DispatchPolicyTests(unittest.TestCase):
 
     def test_operational_values_are_policy_driven(self):
         policy = copy.deepcopy(load_policy())
-        policy["required_model"] = "test-main"
-        policy["minimum_reasoning_effort"] = "xhigh"
-        policy["allowed_main_efforts"] = ["xhigh", "max"]
+        policy["required_model"] = "gpt-6.1-sol"
         decision = contract.enforce_main_authority(
-            policy, ROLE, authority("test-main", "max")
+            policy, ROLE, authority("gpt-6.1-sol", "max")
         )
         self.assertTrue(decision.enforced)
         with self.assertRaises(contract.PolicyContractError) as caught:
-            contract.enforce_main_authority(policy, ROLE, authority("test-main", "high"))
-        self.assertIn("test-main with reasoning_effort one of xhigh, max", caught.exception.warning)
+            contract.enforce_main_authority(policy, ROLE, authority("gpt-6.1-sol", "low"))
+        self.assertIn("gpt-6-astra or gpt-6.1-sol with reasoning_effort one of medium", caught.exception.warning)
+
+    def test_main_model_allowlist_is_exact_and_fail_closed(self):
+        for malformed in (
+            None,
+            "gpt-6-astra",
+            [],
+            ["gpt-6-astra"],
+            ["gpt-6-astra", "gpt-6.1-sol", "gpt-5.6-sol"],
+            ["gpt-6-astra", "gpt-6-astra"],
+            ["gpt-6-astra", {}],
+        ):
+            with self.subTest(malformed=malformed):
+                policy = copy.deepcopy(load_policy())
+                policy["allowed_main_models"] = malformed
+                with self.assertRaises(contract.PolicyContractError) as caught:
+                    contract.enforce_main_authority(policy, ROLE, authority())
+                self.assertEqual(caught.exception.code, "POLICY_ALLOWED_MODELS_INVALID")
 
     def test_policy_consistency_is_fail_closed(self):
         for field, value in (
@@ -244,7 +275,8 @@ class DispatchPolicyTests(unittest.TestCase):
         decision = policy["decision_contract"]
         self.assertEqual(decision["owner"], "main_session")
         self.assertEqual(policy["required_model"], "gpt-6-astra")
-        self.assertEqual(policy["minimum_reasoning_effort"], "high")
+        self.assertEqual(policy["allowed_main_models"], ["gpt-6-astra", "gpt-6.1-sol"])
+        self.assertEqual(policy["minimum_reasoning_effort"], "medium")
         self.assertTrue(decision["classify_before_child_launch"])
         self.assertTrue(decision["classify_each_bounded_slice"])
         self.assertTrue(decision["workflow_labels_are_not_route_inputs"])
@@ -270,9 +302,10 @@ class DispatchPolicyTests(unittest.TestCase):
             contract.validate_policy_routes(label_selected)
         self.assertEqual(caught.exception.code, "DECISION_CONTRACT_INVALID")
 
-    def test_astra_is_main_only_and_main_routes_require_max(self):
+    def test_astra_is_main_only_and_sol_leaf_routes_are_allowed(self):
         policy = load_policy()
         self.assertTrue(policy["model_capabilities"]["gpt-6-astra"]["main_only"])
+        self.assertNotIn("main_only", policy["model_capabilities"]["gpt-6.1-sol"])
 
         invalid_leaf = copy.deepcopy(policy)
         invalid_leaf["role_bindings"]["adaptive-astra-maker-high"] = {
@@ -290,6 +323,13 @@ class DispatchPolicyTests(unittest.TestCase):
         with self.assertRaises(contract.PolicyContractError) as caught:
             contract.validate_policy_routes(invalid_leaf)
         self.assertEqual(caught.exception.code, "MAIN_MODEL_LEAF_FORBIDDEN")
+
+        routes = contract.validate_policy_routes(policy)
+        self.assertEqual(routes["sol_medium"]["authority"], "leaf")
+        self.assertEqual(routes["sol_medium"]["model"], "gpt-6.1-sol")
+        self.assertEqual(
+            routes["sol_medium"]["role"], "adaptive-sol-maker-medium"
+        )
 
         invalid_main = copy.deepcopy(policy)
         invalid_main["route_bindings"]["main_takeover_astra_high"] = {
@@ -441,7 +481,7 @@ class DispatchPolicyTests(unittest.TestCase):
 
     def test_module_has_no_content_or_event_builder_surface(self):
         source = (PACKAGE_ROOT / "scripts" / "dispatch_policy.py").read_text()
-        self.assertLessEqual(len(source.splitlines()), 435)
+        self.assertLessEqual(len(source.splitlines()), 445)
         for name in (
             "build_pre_decision_event",
             "build_post_result_event",

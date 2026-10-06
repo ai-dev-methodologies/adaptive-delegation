@@ -6,9 +6,13 @@ executable sources of truth when this explanation differs from runtime code.
 
 ## Role ownership
 
+Fixed Maker and Checker bindings use GPT-6 Luna, GPT-5.6 Terra, and GPT-6.1
+Sol. A Sol leaf has only its packet's authority even when main also uses Sol.
+Astra remains main-only; existing effort and escalation steps are unchanged.
+
 | Role | Responsibility | Invocation point | May change scope or route? |
 | --- | --- | --- | --- |
-| Main authority | Build the Objective Lock, classify each bounded slice, select routes, orchestrate leaves, integrate returned evidence, decide retry/escalation/takeover, and make the final claim. | Normal skill loading for a `$adaptive-delegation`-prefixed prompt with declared `gpt-6-astra` at `high`, `xhigh`, or `max`. The package installs no hook; non-prefix mentions do not activate. | Main direct work requires a bounded authority or context justification, or exhausted-ladder takeover. Generic convenience is insufficient. |
+| Main authority | Build the Objective Lock, classify each bounded slice, select routes, orchestrate leaves, integrate returned evidence, decide retry/escalation/takeover, and make the final claim. | Normal skill loading for a `$adaptive-delegation`-prefixed prompt with declared `gpt-6-astra` or `gpt-6.1-sol` at `medium`, `high`, `xhigh`, or `max`. The package installs no hook; non-prefix mentions do not activate. | Main direct work requires a bounded authority or context justification, or exhausted-ladder takeover. Generic convenience is insufficient. |
 | Maker leaf | Perform one bounded implementation, transformation, lookup, or other owned change. | Main launches the exact package role selected by the task-class ladder. | No. It reports evidence and returns control to main. |
 | Checker leaf | Independently test declared acceptance evidence without owning the Maker's change. | Main uses a distinct session when risk warrants independent checking. Package-owned integration finalization specifically requires `adaptive-sol-checker-medium` as the receipt issuer. | No. Checker routes do not join or alter the Maker escalation ladder. |
 | Final verifier | No separate package role exists. | Not invoked as an additional mandatory stage. | Not applicable. Checker supplies independent leaf evidence; main owns final integration acceptance and stopping. |
@@ -23,7 +27,7 @@ distinct, observable responsibility.
 
 ```mermaid
 flowchart TD
-    U[Explicit adaptive-delegation request] --> M[Astra high, xhigh, or max main controller]
+    U[Explicit adaptive-delegation request] --> M[Astra or GPT-6.1 Sol medium, high, xhigh, or max main controller]
     M --> G{Declared main-authority gate passes?}
     G -- No --> S0[Stop: no child launched]
     G -- Metadata omitted --> D[Stop before child launch;<br/>report authority mismatch]

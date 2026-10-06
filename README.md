@@ -4,7 +4,7 @@
 delegation through Codex native subagents. Claude Code and other agent runtimes
 are unsupported execution targets.
 
-Current installable package version: `0.9.0`.
+Current installable package version: `0.11.0`.
 
 `adaptive-delegation` is explicit and opt-in, and it is hook-free. A prompt activates it
 only when its first non-whitespace token is `$adaptive-delegation`. It installs
@@ -16,8 +16,18 @@ language mentions do not activate it.
 The main session is controller-only in the sense that it owns intent, routing,
 integration, and final claims; this is a skill procedure, not a global hook
 that blocks tools. The package requires declared current-session context of
-`gpt-6-astra` with `high`, `xhigh`, or `max` effort before a package
+`gpt-6-astra` or `gpt-6.1-sol` with `medium`, `high`, `xhigh`, or `max` effort before a package
 leaf launches. Prompt text cannot upgrade the session. Model or reasoning escalation changes capability, not authority or scope.
+
+For token-efficient routine work, start the main session with GPT-6.1 Sol at
+`medium`. Use Astra at `medium` or above when the task needs stronger judgment.
+Both models have the same main authority; the package does not switch your
+running model or effort. The explicit Astra/max final takeover is separate
+from main admission and cannot be claimed by a Sol session. If that route is
+unavailable, main retains the Objective Lock and considers another authorized
+path. Luna Maker/Checker roles use `gpt-6-luna`; Sol Maker/Checker roles use
+`gpt-6.1-sol`. Terra roles remain `gpt-5.6-terra`. Sol's main or leaf authority
+comes from its assigned role and task contract, not its model name.
 
 The central rule is one portable Objective Lock per terminal outcome. It binds
 the terminal outcome, non-goals, read/write/network authority, authorized
@@ -76,8 +86,8 @@ Skill activation and reasoning effort are separate decisions.
 
 | Request | Result |
 | --- | --- |
-| `$adaptive-delegation ...` | Explicit activation; declared Astra at high, xhigh, or max main applies the routing policy. |
-| `$adaptive-delegation ... Use ultra reasoning.` | Activates the skill, but Astra main accepts only `high`, `xhigh`, or `max`; `ultra` is rejected. Prompt text cannot upgrade the session. Leaf `ultra` remains forbidden. |
+| `$adaptive-delegation ...` | Explicit activation; declared Astra or GPT-6.1 Sol at medium, high, xhigh, or max main applies the routing policy. |
+| `$adaptive-delegation ... Use ultra reasoning.` | Activates the skill, but both main models accept only `medium`, `high`, `xhigh`, or `max`; `ultra` is rejected. Prompt text cannot upgrade the session. Leaf `ultra` remains forbidden. |
 | A bare mention or quotation | Does not activate this skill by itself. |
 | A localized token-efficiency phrase | Discovery only; does not activate this skill by itself. |
 | `Use ultra reasoning.` | Does not activate this skill by itself. |
@@ -107,6 +117,13 @@ optional helper for hard-cap, receipt, or audit scenarios. It is not a hook and
 does not activate the skill. Its weighted budget is
 `ceil(input_tokens / 4) + output_tokens`, a routing proxy rather than provider
 billing.
+
+Current routing cost estimates use an explicit output-price factor relative to
+GPT-6.1 Sol: Luna `0.05`, Terra `1.2`, Sol `1.0`, Astra `5.0`, multiplied by
+weighted tokens. This is a heuristic, not API billing or Codex credits; it
+ignores cache, input/output ratio, speed, and context premiums. Historical
+GPT-5.6 price evidence and recorded costs remain unchanged and are not directly
+comparable to the new proxy.
 
 Read-only aggregate health is available through:
 
